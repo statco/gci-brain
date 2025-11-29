@@ -1,0 +1,95 @@
+import fetch from 'node-fetch';
+
+export default async function handler(req, res) {
+  // 1. Handle CORS (Allow your Shopify site to talk to this)
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  const { car, location } = req.body;
+
+  try {
+    // 2. ASK PERPLEXITY (The Researcher)
+    const perplexityReq = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3-sonar-large-32k-online',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a tire expert. Return JSON only. No markdown.'
+          },
+          {
+            role: 'user',
+            content: `Recommend the single best winter tire for a ${car} in ${location}. Return a JSON object with fields: "tireName" (string), "reason" (short persuasive sentence).`
+          }
+        ]
+      })
+    });
+
+    const perplexityData = await perplexityReq.json();
+    // Parse the JSON content from Perplexity
+    let aiResult = {};
+    try {
+        aiResult = JSON.parse(perplexityData.choices[0].message.content);
+    } catch (e) {
+        // Fallback if AI returns text instead of clean JSON
+        aiResult = { tireName: "Michelin X-Ice Snow", reason: "Top rated for ice braking and longevity." };
+    }
+
+    // 3. SEARCH YOUR SHOPIFY INVENTORY
+    const shopifyReq = await fetch(`https://${process.env.SHOPIFY_DOMAIN}/api/2024-01/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_TOKEN
+      },
+      body: JSON.stringify({
+        query: `{
+          products(first: 1, query: "title:${aiResult.tireName}* AND available_for_sale:true") {
+            edges {
+              node {
+                title
+                handle
+                featuredImage { url }
+                priceRange { minVariantPrice { amount currencyCode } }
+                variants(first: 1) { edges { node { id } } }
+              }
+            }
+          }
+        }`
+      })
+    });
+
+    const shopifyData = await shopifyReq.json();
+    const productNode = shopifyData.data.products.edges[0]?.node;
+
+    if (productNode) {
+      res.status(200).json({
+        found: true,
+        title: productNode.title,
+        price: productNode.priceRange.minVariantPrice.amount,
+        image: productNode.featuredImage?.url,
+        variantId: productNode.variants.edges[0].node.id.split('/').pop(), // Clean ID
+        reason: aiResult.reason
+      });
+    } else {
+      // Fallback if out of stock
+      res.status(200).json({ found: false, reason: "Specific tire out of stock, try searching for 'Winter Tires'." });
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error processing request' });
+  }
+}
