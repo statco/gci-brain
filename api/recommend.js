@@ -1,0 +1,116 @@
+// api/recommend.js
+
+export default async function handler(req, res) {
+  // 1. Handle CORS (Essential for Shopify connection)
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // 2. Safety Check: Are keys present?
+  if (!process.env.PERPLEXITY_API_KEY || !process.env.SHOPIFY_STOREFRONT_TOKEN || !process.env.SHOPIFY_DOMAIN) {
+    console.error("Missing Environment Variables in Vercel!");
+    return res.status(500).json({ error: "Server Misconfiguration: Missing API Keys" });
+  }
+
+  const { car, location } = req.body;
+
+  try {
+    console.log(`Thinking about: ${car} in ${location}...`);
+
+    // 3. ASK PERPLEXITY
+    const perplexityReq = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3-sonar-large-32k-online',
+        messages: [
+          { role: 'system', content: 'Return strictly valid JSON only. No markdown formatting.' },
+          { role: 'user', content: `Recommend the best winter tire for a ${car} in ${location}. Return JSON with: {"tireName": "Exact Product Name", "reason": "Why it is good"}` }
+        ]
+      })
+    });
+
+    if (!perplexityReq.ok) {
+      const err = await perplexityReq.text();
+      throw new Error(`Perplexity API Failed: ${err}`);
+    }
+
+    const perplexityData = await perplexityReq.json();
+    let aiResult = {};
+    
+    // Clean the AI response (remove Markdown if present)
+    try {
+      const rawText = perplexityData.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+      aiResult = JSON.parse(rawText);
+    } catch (e) {
+      console.error("Failed to parse AI JSON:", perplexityData.choices[0].message.content);
+      // Fallback
+      aiResult = { tireName: "Winter Tire", reason: "Recommended for your vehicle." };
+    }
+
+    console.log(`AI Suggests: ${aiResult.tireName}`);
+
+    // 4. SEARCH SHOPIFY
+    // Note: Ensure SHOPIFY_DOMAIN does NOT have https://
+    const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2024-01/graphql.json`;
+    
+    const shopifyReq = await fetch(shopifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_STOREFRONT_TOKEN
+      },
+      body: JSON.stringify({
+        query: `{
+          products(first: 1, query: "title:${aiResult.tireName}* AND available_for_sale:true") {
+            edges {
+              node {
+                title
+                handle
+                featuredImage { url }
+                priceRange { minVariantPrice { amount currencyCode } }
+                variants(first: 1) { edges { node { id } } }
+              }
+            }
+          }
+        }`
+      })
+    });
+
+    if (!shopifyReq.ok) {
+      const err = await shopifyReq.text();
+      throw new Error(`Shopify API Failed: ${err}`);
+    }
+
+    const shopifyData = await shopifyReq.json();
+    const productNode = shopifyData.data?.products?.edges[0]?.node;
+
+    if (productNode) {
+      return res.status(200).json({
+        found: true,
+        title: productNode.title,
+        price: productNode.priceRange.minVariantPrice.amount,
+        image: productNode.featuredImage?.url,
+        variantId: productNode.variants.edges[0].node.id.split('/').pop(),
+        reason: aiResult.reason
+      });
+    } else {
+      return res.status(200).json({ 
+        found: false, 
+        reason: `We recommend ${aiResult.tireName}, but it is currently out of stock.` 
+      });
+    }
+
+  } catch (error) {
+    console.error("CRITICAL ERROR:", error);
+    return res.status(500).json({ error: error.message });
+  }
+}
