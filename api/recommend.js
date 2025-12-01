@@ -29,7 +29,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'sonar-large-online', // FIXED: Using the robust model
+        model: 'sonar', // FIXED: Using the robust model
         messages: [
           { role: 'system', content: 'Return strictly valid JSON only. No markdown formatting.' },
           { role: 'user', content: `Recommend the single best winter tire for a ${car} in ${location}. Return JSON with fields: "tireName" and "reason" (short persuasive sentence).` }
