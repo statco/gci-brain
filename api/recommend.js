@@ -1,6 +1,4 @@
 // api/recommend.js
-import fetch from 'node-fetch';
-
 export default async function handler(req, res) {
   // 1. Handle CORS (Essential for Shopify connection)
   res.setHeader('Access-Control-Allow-Credentials', true);
