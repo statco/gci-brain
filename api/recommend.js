@@ -1,11 +1,12 @@
 // api/recommend.js
+import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
   // 1. Handle CORS (Essential for Shopify connection)
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Shopify-Storefront-Access-Token');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -29,7 +30,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'sonar', // FIXED: Using the robust model
+        model: 'sonar-large-online',
         messages: [
           { role: 'system', content: 'Return strictly valid JSON only. No markdown formatting.' },
           { role: 'user', content: `Recommend the single best winter tire for a ${car} in ${location}. Return JSON with fields: "tireName" and "reason" (short persuasive sentence).` }
@@ -50,15 +51,14 @@ export default async function handler(req, res) {
       const rawText = perplexityData.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
       aiResult = JSON.parse(rawText);
     } catch (e) {
-      // Fallback in case AI returns malformed JSON
+      // Fallback if AI returns malformed JSON
       aiResult = { tireName: "Michelin X-Ice Snow", reason: "Top pick based on reliability and ice traction." };
     }
 
     console.log(`AI Suggests: ${aiResult.tireName}`);
 
-    // 4. SEARCH YOUR SHOPIFY INVENTORY
-    // FIX: Using the most current stable API version (2025-01) for the Storefront GraphQL endpoint.
-    const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2025-01/graphql.json`;
+    // 4. SEARCH YOUR SHOPIFY INVENTORY (FIXED API VERSION TO STABLE 2024-10)
+    const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2024-10/graphql.json`;
     
     const shopifyReq = await fetch(shopifyUrl, {
       method: 'POST',
