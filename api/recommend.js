@@ -3,26 +3,24 @@
 export default async function handler(req, res) {
   // 1. Handle CORS (Essential for Shopify connection)
   res.setHeader('Access-Control-Allow-Credentials', true);
-res.setHeader('Access-Control-Allow-Origin', '*'); // Allows any domain
-res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Content-Type, ...');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // 2. Safety Check: Are keys present?
-  if (!process.env.PERPLEXITY_API_KEY || !process.env.SHOPIFY_STOREFRONT_TOKEN || !process.env.SHOPIFY_DOMAIN) {
-    console.error("Missing Environment Variables in Vercel!");
-    return res.status(500).json({ error: "Server Misconfiguration: Missing API Keys" });
+  // 2. Safely parse the query input
+  const { car, location } = req.body || {}; 
+  
+  if (!car || !location) {
+      // Handles cases where the front-end sends an empty body
+      return res.status(400).json({ error: "Missing 'car' or 'location' data in request." });
   }
 
-  const { car, location } = req.body;
-
   try {
-    console.log(`Thinking about: ${car} in ${location}...`);
-
-    // 3. ASK PERPLEXITY
+    // 3. ASK PERPLEXITY (The Researcher)
     const perplexityReq = await fetch('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
       headers: {
@@ -33,33 +31,29 @@ res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, A
         model: 'llama-3-sonar-large-32k-online',
         messages: [
           { role: 'system', content: 'Return strictly valid JSON only. No markdown formatting.' },
-          { role: 'user', content: `Recommend the best winter tire for a ${car} in ${location}. Return JSON with: {"tireName": "Exact Product Name", "reason": "Why it is good"}` }
+          { role: 'user', content: `Recommend the single best winter tire for a ${car} in ${location}. Return JSON with fields: "tireName" and "reason" (short persuasive sentence).` }
         ]
       })
     });
 
     if (!perplexityReq.ok) {
       const err = await perplexityReq.text();
-      throw new Error(`Perplexity API Failed: ${err}`);
+      // Throw an error with the HTTP status and content for better logging
+      throw new Error(`Perplexity API Failed: ${perplexityReq.status} - ${err}`);
     }
 
     const perplexityData = await perplexityReq.json();
     let aiResult = {};
     
-    // Clean the AI response (remove Markdown if present)
+    // Attempt to parse the AI's JSON response
     try {
       const rawText = perplexityData.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
       aiResult = JSON.parse(rawText);
     } catch (e) {
-      console.error("Failed to parse AI JSON:", perplexityData.choices[0].message.content);
-      // Fallback
-      aiResult = { tireName: "Winter Tire", reason: "Recommended for your vehicle." };
+      throw new Error("AI returned malformed JSON. Cannot parse recommendation.");
     }
 
-    console.log(`AI Suggests: ${aiResult.tireName}`);
-
-    // 4. SEARCH SHOPIFY
-    // Note: Ensure SHOPIFY_DOMAIN does NOT have https://
+    // 4. SEARCH YOUR SHOPIFY INVENTORY
     const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2024-01/graphql.json`;
     
     const shopifyReq = await fetch(shopifyUrl, {
@@ -87,7 +81,7 @@ res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, A
 
     if (!shopifyReq.ok) {
       const err = await shopifyReq.text();
-      throw new Error(`Shopify API Failed: ${err}`);
+      throw new Error(`Shopify API Failed: ${shopifyReq.status} - ${err}`);
     }
 
     const shopifyData = await shopifyReq.json();
@@ -105,12 +99,13 @@ res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, A
     } else {
       return res.status(200).json({ 
         found: false, 
-        reason: `We recommend ${aiResult.tireName}, but it is currently out of stock.` 
+        reason: `Nous recommandons ${aiResult.tireName}, mais il est présentement hors inventaire.` 
       });
     }
 
   } catch (error) {
     console.error("CRITICAL ERROR:", error);
-    return res.status(500).json({ error: error.message });
+    // Return the specific error message to aid debugging from the browser console
+    return res.status(500).json({ error: error.message }); 
   }
 }
