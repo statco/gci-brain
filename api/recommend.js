@@ -59,16 +59,6 @@ export default async function handler(req, res) {
 
     // 4. SEARCH YOUR SHOPIFY INVENTORY (FIXED API VERSION TO STABLE 2024-10)
     const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2024-10/graphql.json`;
-    console.log('Shopify URL:', shopifyUrl);
-const res = await fetch(shopifyUrl, options);
-const text = await res.text();
-console.log('Shopify status:', res.status);
-console.log('Shopify response body:', text);
-
-if (!res.ok) {
-  throw new Error(`Shopify API Failed: ${res.status} - ${text}`);
-}
-
     const shopifyReq = await fetch(shopifyUrl, {
       method: 'POST',
       headers: {
