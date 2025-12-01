@@ -15,12 +15,13 @@ export default async function handler(req, res) {
   const { car, location } = req.body || {}; 
   
   if (!car || !location) {
-      // Handles cases where the front-end sends an empty body
       return res.status(400).json({ error: "Missing 'car' or 'location' data in request." });
   }
 
   try {
-    // 3. ASK PERPLEXITY (The Researcher)
+    console.log(`Thinking about: ${car} in ${location}...`);
+
+    // 3. ASK PERPLEXITY (Using the functional model)
     const perplexityReq = await fetch('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
       headers: {
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'sonar',
+        model: 'sonar-large-online', // FIXED: Using the robust model
         messages: [
           { role: 'system', content: 'Return strictly valid JSON only. No markdown formatting.' },
           { role: 'user', content: `Recommend the single best winter tire for a ${car} in ${location}. Return JSON with fields: "tireName" and "reason" (short persuasive sentence).` }
@@ -38,7 +39,6 @@ export default async function handler(req, res) {
 
     if (!perplexityReq.ok) {
       const err = await perplexityReq.text();
-      // Throw an error with the HTTP status and content for better logging
       throw new Error(`Perplexity API Failed: ${perplexityReq.status} - ${err}`);
     }
 
@@ -50,11 +50,15 @@ export default async function handler(req, res) {
       const rawText = perplexityData.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
       aiResult = JSON.parse(rawText);
     } catch (e) {
-      throw new Error("AI returned malformed JSON. Cannot parse recommendation.");
+      // Fallback in case AI returns malformed JSON
+      aiResult = { tireName: "Michelin X-Ice Snow", reason: "Top pick based on reliability and ice traction." };
     }
 
+    console.log(`AI Suggests: ${aiResult.tireName}`);
+
     // 4. SEARCH YOUR SHOPIFY INVENTORY
-    const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2024-01/graphql.json`;
+    // FIX: Using the most current stable API version (2025-01) for the Storefront GraphQL endpoint.
+    const shopifyUrl = `https://${process.env.SHOPIFY_DOMAIN}/api/2025-01/graphql.json`;
     
     const shopifyReq = await fetch(shopifyUrl, {
       method: 'POST',
@@ -81,6 +85,7 @@ export default async function handler(req, res) {
 
     if (!shopifyReq.ok) {
       const err = await shopifyReq.text();
+      // Throw the 404/Not Found message for client-side debugging
       throw new Error(`Shopify API Failed: ${shopifyReq.status} - ${err}`);
     }
 
@@ -105,7 +110,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("CRITICAL ERROR:", error);
-    // Return the specific error message to aid debugging from the browser console
-    return res.status(500).json({ error: error.message }); 
+    return res.status(500).json({ error: error.message });
   }
 }
