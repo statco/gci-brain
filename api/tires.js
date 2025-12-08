@@ -14,6 +14,19 @@ const FALLBACK_OE_TIRE_PRICE = 210.00;
 
 // Main Handler: Orchestrates the entire flow
 export default async function handler(req, res) {
+    // 1. Set CORS Headers (For all responses, including errors)
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    // During testing/development, allow all origins. 
+    // CHANGE THIS TO YOUR FINAL PRODUCTION DOMAIN LATER!
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+    
+    // 2. Handle Preflight Request (OPTIONS)
+    // Browsers send an OPTIONS request first to check permissions.
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
