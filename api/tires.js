@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Credentials', true);
     // During testing/development, allow all origins. 
     // CHANGE THIS TO YOUR FINAL PRODUCTION DOMAIN LATER!
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
+    res.setHeader('Access-Control-Allow-Origin', 'https://www.gci-tires.com'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader(
         'Access-Control-Allow-Headers',
