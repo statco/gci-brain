@@ -1,21 +1,9 @@
+// package.json
+
 {
   "name": "gci-brain",
-  "version": "1.0.0",
-  "description": "GCI Consensus Engine for Tire Recommendations and Fitment Verification.",
-  "main": "api/tires.js",
-  "scripts": {
-    "start": "node api/tires.js",
-    "deploy": "vercel deploy --prod"
-  },
-  "keywords": [
-    "vercel",
-    "serverless",
-    "node",
-    "fetch",
-    "api"
-  ],
-  "author": "statco",
-  "license": "ISC",
+  // ... other fields
+  "main": "tires.js",  // <--- CHANGE THIS LINE
   "dependencies": {
     "node-fetch": "3.3.2"
   },
