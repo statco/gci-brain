@@ -1,11 +1,9 @@
-// package.json
-
 {
   "name": "gci-brain",
+  "version": "1.0.0",
   // ... other fields
-  "main": "tires.js",  // <--- CHANGE THIS LINE
   "dependencies": {
-    "node-fetch": "3.3.2"
+    "node-fetch": "3.3.2" 
   },
   "engines": {
     "node": "20.x"
