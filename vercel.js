@@ -1,21 +1,23 @@
+// vercel.json
+
 {
   "functions": {
-    "api/tires.js": {
+    "tires.js": {
       "runtime": "nodejs20.x",
       "memory": 256,
-      "maxDuration": 30 // Set to 30 seconds for complex API chain
+      "maxDuration": 30
     }
   },
   "rewrites": [
-    // 1. Direct API access (http://gcitire.com/api/tires)
+    // Route 1: Maps the base domain (/) to your tires function
     {
-      "source": "/api/tires",
-      "destination": "/api/tires"
+      "source": "/",
+      "destination": "/tires" 
     },
-    // 2. Catch-all: Redirects the confusing root path (/) and any other path to your API function
+    // Route 2: Maps any other path (like /anything) to your tires function
     {
       "source": "/(.*)",
-      "destination": "/api/tires"
+      "destination": "/tires" 
     }
   ]
 }
