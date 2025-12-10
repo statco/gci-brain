@@ -2,7 +2,7 @@
 import { fetch } from 'node-fetch'; 
 
 const VIBE_ENDPOINT = "https://tirematch-ai-378667232098.us-west1.run.app"; 
-const VIBE_API_KEY = AIzaSyC4MW620fiz4-mySLiVNk4CFtoof0JXWNY;
+const VIBE_API_KEY = process.env.VIBE_API_KEY;
 
 export default async function handler(req, res) {
     // ... (CORS and OPTIONS handling remains the same) ...
