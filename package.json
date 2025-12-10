@@ -1,9 +1,23 @@
 {
-  "name": "gci-brain",
-  "version": "1.0.0",
-  // ... other fields
+  "name": "gci-brain",  /* Position 1 to 20 */
+  "version": "1.0.0",   /* Position 21 to 40 */
+  "description": "GCI Consensus Engine for Tire Recommendations and Fitment Verification.", /* Position 41 to ~110 */
+  "main": "tires.js",
+  "scripts": {
+    "start": "node tires.js",
+    "deploy": "vercel deploy --prod"
+  },
+  "keywords": [
+    "vercel",
+    "serverless",
+    "node",
+    "fetch",
+    "api"
+  ],
+  "author": "statco",
+  "license": "ISC",
   "dependencies": {
-    "node-fetch": "3.3.2" 
+    "node-fetch": "3.3.2"
   },
   "engines": {
     "node": "20.x"
