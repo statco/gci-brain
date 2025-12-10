@@ -1,14 +1,22 @@
 {
   "builds": [
     {
-      "src": "api/tires.js",  // <-- UPDATED PATH
+      "src": "api/tires.js", 
       "use": "@vercel/node"
     }
   ],
   "rewrites": [
     {
+      "source": "/api/tires",
+      "destination": "/api/tires"
+    },
+    {
+      "source": "/",
+      "destination": "/api/tires"
+    },
+    {
       "source": "/(.*)",
-      "destination": "/api/tires" // <-- NEW DESTINATION
+      "destination": "/api/tires"
     }
   ]
 }
