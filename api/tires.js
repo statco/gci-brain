@@ -7,26 +7,11 @@ const VIBE_ENDPOINT = "https://tirematch-ai-378667232098.us-west1.run.app";
 const VIBE_API_KEY = process.env.VIBE_API_KEY; // Loaded from Vercel Environment Variables
 
 export default async function handler(req, res) {
-    // ----------------------------------------------------
-    // 1. CORS HEADERS: TEMPORARY WILDCARD FIX
-    // ----------------------------------------------------
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    // **WILDCARD FIX: Allows any domain to access the API during testing**
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-    );
-
-    // 2. Handle CORS preflight request
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-    // ----------------------------------------------------
+    // NOTE: CORS handling is now managed by the 'headers' block in vercel.json 
+    // to prevent 'Failed to fetch' errors from the Shopify storefront.
     
     if (req.method !== 'POST') {
+        // Return 405 for any method other than POST
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
@@ -42,10 +27,9 @@ export default async function handler(req, res) {
             body: JSON.stringify(req.body) 
         });
 
-        // Error check (Vibe App Failure)
+        // Error check (Vibe App Failure - 502 Bad Gateway)
         if (!vibeResponse.ok) {
             console.error("Vibe App Error:", vibeResponse.status, await vibeResponse.text());
-            // Pass the 502 status back to the client
             return res.status(502).json({ error: 'Failed to get recommendation from AI Studio Vibe.' });
         }
 
