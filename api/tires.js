@@ -8,11 +8,11 @@ const VIBE_API_KEY = process.env.VIBE_API_KEY; // Loaded from Vercel Environment
 
 export default async function handler(req, res) {
     // ----------------------------------------------------
-    // 1. CORS HEADERS: Fixes the "Failed to fetch" error from gcitires.com
+    // 1. CORS HEADERS: TEMPORARY WILDCARD FIX
     // ----------------------------------------------------
     res.setHeader('Access-Control-Allow-Credentials', true);
-    // **MUST MATCH YOUR SHOPIFY DOMAIN**
-    res.setHeader('Access-Control-Allow-Origin', 'https://gcitires.com'); 
+    // **WILDCARD FIX: Allows any domain to access the API during testing**
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
     res.setHeader(
         'Access-Control-Allow-Headers',
