@@ -5,12 +5,6 @@
       "use": "@vercel/node"
     }
   ],
-  "routes": [
-    {
-      "src": "^/api/tires$",
-      "dest": "/api/tires.js"
-    }
-  ],
   "rewrites": [
     {
       "source": "/(.*)",
