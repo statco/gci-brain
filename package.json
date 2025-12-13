@@ -1,6 +1,8 @@
- {"scripts":
-  "dev": "next dev",     
-  "build": "next build", 
-  "start": "next start", 
-  "deploy": "vercel deploy --prod"
+{
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy": "vercel deploy --prod"
+  }
 }
