@@ -1,7 +1,7 @@
 {
   "builds": [
     {
-      "src": "api/tires.js",
+      "src": "server/tires.js",  <-- CHANGED FROM api/tires.js
       "use": "@vercel/node"
     }
   ]
