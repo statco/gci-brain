@@ -3,5 +3,4 @@
   "build": "next build", 
   "start": "next start", 
   "deploy": "vercel deploy --prod"
-},
-
+}
