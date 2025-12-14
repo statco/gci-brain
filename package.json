@@ -1,15 +1,18 @@
 {
+  "name": "gci-brain",
+  "version": "1.0.0",
+  "private": true,
   "dependencies": {
-    "next": "^14.1.0", 
+    "next": "^14.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "node-fetch": "^2.6.7", 
-    // ... other dependencies
+    "node-fetch": "^2.6.7" 
+    /* ADD ANY OTHER DEPENDENCIES HERE, separated by commas */
   },
   "scripts": {
     "dev": "next dev",
-    "build": "./node_modules/.bin/next build", // Keep this fix!
-    // ...
+    "build": "./node_modules/.bin/next build",
+    "start": "next start"
+    /* ADD ANY OTHER SCRIPTS HERE, separated by commas */
   }
-  // ... ensure no trailing commas or comments outside of strings
 }
