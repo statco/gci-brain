@@ -1,45 +1,31 @@
-// File: api/tires.js (CORRECTED VERSION)
-
-// 🛑 FIX for Issue #2: Correct Node-Fetch import syntax.
-import fetch from 'node-fetch'; 
-
-// --- CONFIGURATION ---
-// 🛑 FIX for Issue #1: Endpoint must include the required path.
-// NOTE: If '/predict' fails with 404, you must replace it with the correct path.
-const VIBE_ENDPOINT = "https://tirematch-ai-378667232098.us-west1.run.app/predict"; 
-const VIBE_API_KEY = process.env.VIBE_API_KEY; 
+// pages/api/tires.js
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method Not Allowed' });
-    }
+  // Set CORS headers for all responses (including preflight and actual POST)
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', 'https://gcitires.com');  // Or '*' for testing (less secure)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization');
 
-    try {
-        const vibeResponse = await fetch(VIBE_ENDPOINT, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                // Use the secure API Key/Token for authentication
-                'Authorization': `Bearer ${VIBE_API_KEY}`, 
-            },
-            body: JSON.stringify(req.body) 
-        });
+  // Explicitly handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();  // Or res.status(204).end();
+    return;
+  }
 
-        // Error check (Vibe App Failure - 502 Bad Gateway)
-        if (!vibeResponse.ok) {
-            const errorBody = await vibeResponse.text().catch(() => "No error text provided.");
-            console.error("Vibe App Error:", vibeResponse.status, errorBody);
-            return res.status(502).json({ 
-                error: 'Failed to get recommendation from AI Studio Vibe.',
-                details: `Vibe Status: ${vibeResponse.status}` 
-            });
-        }
+  // Only proceed to your main logic if it's POST (or whatever method you expect)
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
+  }
 
-        const finalData = await vibeResponse.json();
-        return res.status(200).json(finalData);
-
-    } catch (error) {
-        console.error("Proxy Fatal Error:", error);
-        return res.status(500).json({ error: 'Internal server error during proxy operation.' });
-    }
-} 
+  // Your existing tire-matching / Google AI Studio logic here...
+  try {
+    // e.g., process req.body, call AI API, etc.
+    // const result = await yourFunction(req.body);
+    // res.status(200).json(result);
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+}
