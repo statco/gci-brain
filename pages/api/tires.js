@@ -42,4 +42,4 @@ export default async function handler(req, res) {
         console.error("Proxy Fatal Error:", error);
         return res.status(500).json({ error: 'Internal server error during proxy operation.' });
     }
-}
+} 
