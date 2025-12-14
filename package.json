@@ -1,7 +1,8 @@
 {
   "scripts": {
-  "dev": "next dev",
-  "build": "./node_modules/.bin/next build",
-  "start": "next start"
-},
+    "dev": "next dev",
+    "build": "./node_modules/.bin/next build",
+    "start": "next start",
+    "deploy": "vercel deploy --prod" 
+  } // NO TRAILING COMMA HERE
 }
