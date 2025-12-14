@@ -6,13 +6,11 @@
     "next": "^14.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "node-fetch": "^2.6.7" 
-    /* ADD ANY OTHER DEPENDENCIES HERE, separated by commas */
+    "node-fetch": "^2.6.7"
   },
   "scripts": {
     "dev": "next dev",
     "build": "./node_modules/.bin/next build",
     "start": "next start"
-    /* ADD ANY OTHER SCRIPTS HERE, separated by commas */
   }
 }
