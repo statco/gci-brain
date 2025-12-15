@@ -31,4 +31,3 @@ export const config = {
     bodyParser: true, // Enable if sending JSON body
   },
 };
-//Add API as standard Vercel serverless function
