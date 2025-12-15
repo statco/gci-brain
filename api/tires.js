@@ -1,27 +1,33 @@
-// app/api/tires/route.js
-import { NextResponse } from 'next/server';
+// Standard Vercel Serverless Function (Node.js)
+export default function handler(req, res) {
+  // CORS headers for all responses
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', 'https://gcitires.com'); // Or '*' for testing
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization');
 
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Origin': 'https://gcitires.com',  // Or '*' temp
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization',
-    },
-  });
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
+  }
+
+  // Your main Google AI Studio logic here
+  // Example:
+  // const body = req.body;
+  // ... call Gemini API with @google/genai
+  // const result = await yourAiLogic(body);
+
+  res.status(200).json({ /* your result here */ });
 }
 
-export async function POST(request) {
-  // Your main logic here
-  // const body = await request.json();
-  // ... process with Google AI Studio
-
-  return NextResponse.json({ /* result */ }, {
-    headers: {
-      'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Origin': 'https://gcitires.com',
-    },
-  });
-}// This is the lattest
+// Required for Vercel serverless
+export const config = {
+  api: {
+    bodyParser: true, // Enable if sending JSON body
+  },
+};
