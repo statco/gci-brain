@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { TireProduct, Review, Language } from "../types";
+import { TireProduct, Review, Language, VehicleInfo } from "../types";
 import { fetchShopifyInventory, verifyVehicleFitment } from "./integrationService";
 
 // Helper to generate realistic looking reviews
@@ -97,7 +97,8 @@ const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { gen
     // Merge AI insights with Real Inventory Data
     
     // 1. Official Product Image (from Shopify/Inventory)
-    const productImageUrl = match.imageUrl || "";
+    // If missing, use a generic reliable placeholder
+    const productImageUrl = match.imageUrl || "https://images.unsplash.com/photo-1578844251758-2f71da645217?auto=format&fit=crop&w=400&q=80";
     
     // 2. AI Generated Visualization (if available)
     const visualizationUrl = aiTire.generatedImage || undefined;
@@ -136,23 +137,58 @@ const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { gen
   });
 };
 
-export const getTireRecommendations = async (userRequest: string, lang: Language): Promise<TireProduct[]> => {
-  // 1. Fetch Real/Fallback Inventory (This method handles its own errors)
-  const inventory = await fetchShopifyInventory();
-  
-  // 2. Verify Vehicle (This method handles its own errors)
-  const vehicleInfo = await verifyVehicleFitment(userRequest);
-  const fallbackVehicleDesc = vehicleInfo.detected 
-      ? `${vehicleInfo.year} ${vehicleInfo.make} ${vehicleInfo.model}` 
-      : "Vehicle";
+// --- BACKUP SEARCH ENGINES ---
 
-  let parsedData: { identifiedVehicle: string, recommendations: any[] };
+async function callPerplexity(prompt: string): Promise<string> {
+    const apiKey = process.env.PERPLEXITY_API_KEY;
+    if (!apiKey) throw new Error("Perplexity API Key missing");
 
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const model = "gemini-2.5-flash";
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: "llama-3.1-sonar-large-128k-online",
+            messages: [
+                { role: "system", content: "You are a helpful tire expert. Return valid JSON only. Do not wrap in markdown." },
+                { role: "user", content: prompt }
+            ]
+        })
+    });
 
-    // Serialize for AI Context
+    if (!response.ok) throw new Error("Perplexity API failed");
+    const data = await response.json();
+    return data.choices[0].message.content;
+}
+
+async function callGrok(prompt: string): Promise<string> {
+    const apiKey = process.env.GROK_API_KEY;
+    if (!apiKey) throw new Error("Grok API Key missing");
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: "grok-beta",
+            messages: [
+                { role: "system", content: "You are a helpful tire expert. Return valid JSON only. Do not wrap in markdown." },
+                { role: "user", content: prompt }
+            ]
+        })
+    });
+
+    if (!response.ok) throw new Error("Grok API failed");
+    const data = await response.json();
+    return data.choices[0].message.content;
+}
+
+// Helper to construct prompts
+const buildAiPrompt = (userRequest: string, lang: Language, inventory: any[]) => {
     const inventoryString = JSON.stringify(inventory.map(t => ({
       brand: t.brand,
       model: t.model,
@@ -160,7 +196,7 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       type: t.type
     })));
 
-    const prompt = `
+    return `
       You are the GCI Tire Match AI, a bilingual expert (English/French).
       User Language Context: ${lang === 'fr' ? 'FRENCH (Français)' : 'ENGLISH'}.
       
@@ -168,16 +204,10 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       "${userRequest}"
 
       TASK:
-      1. **Analyze Request**: Determine if the user is looking for a **Specific Tire** (e.g. they typed "Michelin Pilot Sport 4S", "Toyo Open Country", or a specific size like "265/70R17") OR if they are asking for **General Recommendations** based on driving needs.
-      
-      2. **Vehicle Context**: Extract Year, Make, Model from request string if present.
-
-      3. **Inventory Matching**:
-         - **IF SPECIFIC TIRE REQUESTED**: Filter the **AVAILABLE INVENTORY** below to find that EXACT Brand/Model or Size. Prioritize exact matches. If the specific tire is found, it MUST be the #1 recommendation with a 100% match score.
-         - **IF GENERAL RECOMMENDATION**: Select the top 3 tires based on vehicle and driving conditions as a Tire Expert would.
-      
-      4. **Reasoning**: Assign a match score (0-100) and provide a technical description.
-         **IMPORTANT**: The 'description' field MUST be in ${lang === 'fr' ? 'FRENCH' : 'ENGLISH'}.
+      1. **Analyze Request**: Determine if the user is looking for a **Specific Tire** or **General Recommendations**.
+      2. **Vehicle Context**: Extract Year, Make, Model.
+      3. **Inventory Matching**: Filter the **AVAILABLE INVENTORY** below. Prioritize exact matches. Select top 3.
+      4. **Reasoning**: Assign a match score (0-100) and provide a technical description in ${lang === 'fr' ? 'FRENCH' : 'ENGLISH'}.
 
       AVAILABLE INVENTORY:
       ${inventoryString}
@@ -185,69 +215,52 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       OUTPUT:
       Return a JSON object with this structure:
       {
-        "identifiedVehicle": "The extracted vehicle string (e.g., '2019 Ford F-150' or 'Generic Vehicle')",
-        "recommendations": [{ "brand": string, "model": string, "matchScore": number, "description": "Translated description..." }]
+        "identifiedVehicle": "extracted vehicle string",
+        "recommendations": [{ "brand": "string", "model": "string", "matchScore": number, "description": "string" }]
       }
       
-      CRITICAL: Return ONLY the JSON string inside a markdown code block.
+      CRITICAL: Return ONLY valid JSON.
     `;
+};
 
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
-      config: {
-        temperature: 0.1, // Lower temperature for more precise matching of specific requests
-      },
-    });
-
-    const text = response.text;
-    
-    // Extract JSON from markdown code block
-    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```([\s\S]*?)```/);
-    let jsonString = jsonMatch ? jsonMatch[1] : text;
-    
-    // Sanitize JSON string (remove potential leading text if regex failed to capture cleanly)
-    if (jsonString.includes('{')) {
-        jsonString = jsonString.substring(jsonString.indexOf('{'));
-        if (jsonString.lastIndexOf('}') !== -1) {
-            jsonString = jsonString.substring(0, jsonString.lastIndexOf('}') + 1);
+// Helper to parse potential markdown JSON
+const cleanAndParseJSON = (text: string, fallbackVehicle: string) => {
+    try {
+        const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```([\s\S]*?)```/);
+        let jsonString = jsonMatch ? jsonMatch[1] : text;
+        
+        if (jsonString.includes('{')) {
+            jsonString = jsonString.substring(jsonString.indexOf('{'));
+            if (jsonString.lastIndexOf('}') !== -1) {
+                jsonString = jsonString.substring(0, jsonString.lastIndexOf('}') + 1);
+            }
         }
+        
+        let data = JSON.parse(jsonString);
+        if (Array.isArray(data)) {
+            data = { identifiedVehicle: fallbackVehicle, recommendations: data };
+        }
+        return data;
+    } catch (e) {
+        throw new Error("JSON Parse Error");
     }
-    
-    parsedData = JSON.parse(jsonString);
-      
-    // Handle legacy array response just in case model ignores instructions
-    if (Array.isArray(parsedData)) {
-        parsedData = { identifiedVehicle: fallbackVehicleDesc, recommendations: parsedData };
-    }
-    
-    // Validate recommendations structure
-    if (!parsedData.recommendations || !Array.isArray(parsedData.recommendations)) {
-        throw new Error("Invalid response structure from AI");
-    }
+};
 
-  } catch (error) {
-    console.warn("AI Service Unavailable (likely network/CSP), using local heuristic fallback.", error);
-    
-    // LOCAL FALLBACK LOGIC
-    // If the AI API fails (e.g. "Failed to fetch"), we fallback to a simple keyword match
-    // to ensure the user still gets results.
-    
+// Helper for Local Heuristic Fallback
+const runLocalFallback = (userRequest: string, inventory: any[], lang: Language, vehicleDesc: string) => {
     const lowerReq = userRequest.toLowerCase();
     
     const scoredInventory = inventory.map(item => {
         let score = 60; // Base score
         
-        // Boost score based on simple keyword matching
-        if (item.brand && lowerReq.includes(item.brand.toLowerCase())) score += 30; // Higher boost for brand match
-        if (item.model && lowerReq.includes(item.model.toLowerCase())) score += 30; // Higher boost for model match
+        if (item.brand && lowerReq.includes(item.brand.toLowerCase())) score += 30;
+        if (item.model && lowerReq.includes(item.model.toLowerCase())) score += 30;
         
         if (item.type && lowerReq.includes(item.type.toLowerCase())) score += 15;
         if (lowerReq.includes("winter") && item.type === "Winter") score += 25;
         if (lowerReq.includes("mud") && (item.type?.includes("Mud") || item.model?.includes("M/T"))) score += 20;
         if (lowerReq.includes("all-terrain") && item.type === "All-Terrain") score += 20;
         
-        // Penalize slightly if price is high and user asked for "cheap"
         if ((lowerReq.includes("cheap") || lowerReq.includes("budget")) && (item.pricePerUnit || 0) > 250) score -= 20;
 
         return {
@@ -256,12 +269,10 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
         };
     });
 
-    // Sort by calculated score descending
     scoredInventory.sort((a, b) => b._calcScore - a._calcScore);
 
-    // Take top 3
-    parsedData = {
-        identifiedVehicle: fallbackVehicleDesc,
+    return {
+        identifiedVehicle: vehicleDesc,
         recommendations: scoredInventory.slice(0, 3).map(t => ({
             brand: t.brand,
             model: t.model,
@@ -269,14 +280,82 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
             description: t.description || (lang === 'fr' ? "Excellent choix basé sur vos critères." : "Excellent choice based on your criteria.")
         }))
     };
+};
+
+export const getTireRecommendations = async (userRequest: string, lang: Language): Promise<TireProduct[]> => {
+  // 1. Fetch Real/Fallback Inventory (This method handles its own errors)
+  const inventory = await fetchShopifyInventory();
+  
+  // 2. Verify Vehicle (Safeguarded against external failures)
+  let vehicleInfo: VehicleInfo = { detected: false, year: '', make: '', model: '' };
+  try {
+      vehicleInfo = await verifyVehicleFitment(userRequest);
+  } catch (e) {
+      console.warn("Vehicle fitment verification failed, proceeding with extraction only.", e);
+  }
+
+  const fallbackVehicleDesc = vehicleInfo.detected 
+      ? `${vehicleInfo.year || ''} ${vehicleInfo.make || ''} ${vehicleInfo.model || ''}`.trim() 
+      : "Vehicle";
+
+  let parsedData: { identifiedVehicle: string, recommendations: any[] } | null = null;
+  const prompt = buildAiPrompt(userRequest, lang, inventory);
+
+  // 3. AI Cascade: Gemini -> Perplexity -> Grok -> Local
+  try {
+    // Attempt 1: Gemini
+    try {
+        console.log("Attempting Gemini Search...");
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { temperature: 0.1 },
+        });
+        
+        if (!response.text) throw new Error("Empty response from Gemini");
+        parsedData = cleanAndParseJSON(response.text, fallbackVehicleDesc);
+
+    } catch (geminiError) {
+        console.warn("Gemini Service Failed. Attempting Backup (Perplexity)...", geminiError);
+        
+        // Attempt 2: Perplexity
+        try {
+             const pplxResponse = await callPerplexity(prompt);
+             parsedData = cleanAndParseJSON(pplxResponse, fallbackVehicleDesc);
+             console.log("Perplexity Search Successful");
+        } catch (pplxError) {
+             console.warn("Perplexity Failed. Attempting Backup (Grok)...", pplxError);
+             
+             // Attempt 3: Grok
+             try {
+                 const grokResponse = await callGrok(prompt);
+                 parsedData = cleanAndParseJSON(grokResponse, fallbackVehicleDesc);
+                 console.log("Grok Search Successful");
+             } catch (grokError) {
+                 throw new Error("All AI Services Unavailable");
+             }
+        }
+    }
+  } catch (allAiFailed) {
+    console.error("All AI Clouds Failed. Using Local Heuristic.", allAiFailed);
+    parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
+  }
+
+  // Ensure parsedData exists
+  if (!parsedData) {
+      parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
   }
 
   // Generate visualizations for the top recommendations (with their own internal error handling)
-  const suggestionsWithImages = await Promise.all(parsedData.recommendations.map(async (suggestion) => {
+  // Ensure parsedData and recommendations exist before mapping
+  const recsToProcess = (parsedData && Array.isArray(parsedData.recommendations)) ? parsedData.recommendations : [];
+
+  const suggestionsWithImages = await Promise.all(recsToProcess.map(async (suggestion) => {
       let generatedUrl: string | null = null;
       
       // Determine the best vehicle description to use for the image
-      let vehicleForImage = parsedData.identifiedVehicle;
+      let vehicleForImage = parsedData!.identifiedVehicle;
       
       // If AI returned "Generic Vehicle" but our Regex detector found something, use Regex
       if ((!vehicleForImage || vehicleForImage.includes("Generic")) && vehicleInfo.detected) {
@@ -284,12 +363,11 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       }
 
       // Only generate if we have a vehicle description or the request was descriptive enough
+      // We try Gemini Image model. If Gemini Text failed, this might also fail, but it's isolated in its own try/catch in generateTireVisualization
       if (vehicleForImage && !vehicleForImage.includes("Generic") && !vehicleForImage.includes("Vehicle")) {
             const tireName = `${suggestion.brand} ${suggestion.model}`;
             generatedUrl = await generateTireVisualization(vehicleForImage, tireName);
       } else if (userRequest.length > 20 && !userRequest.includes("|")) { 
-            // Only try if the userRequest itself seems specific (simple length heuristic) AND isn't our structured "Vehicle: ... | Request: ..." string
-            // We avoid passing the structured string directly to the image generator to prevent confusion
             const tireName = `${suggestion.brand} ${suggestion.model}`;
             generatedUrl = await generateTireVisualization(userRequest, tireName);
       }
