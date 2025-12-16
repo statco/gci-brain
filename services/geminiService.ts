@@ -24,6 +24,7 @@ const generateReviews = (count: number): Review[] => {
 };
 
 // Generates a photorealistic image of the vehicle with specific tires
+// NOTE: We still use Gemini for image generation as Perplexity is text-focused.
 const generateTireVisualization = async (vehicleDesc: string, tireName: string): Promise<string | null> => {
   // STRICT COMPLIANCE: Do not generate "irrelevant" images. 
   // If we don't know the vehicle, we do not show a random car.
@@ -137,7 +138,7 @@ const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { gen
   });
 };
 
-// --- BACKUP SEARCH ENGINES ---
+// --- SEARCH ENGINES ---
 
 async function callPerplexity(prompt: string): Promise<string> {
     const apiKey = process.env.PERPLEXITY_API_KEY;
@@ -159,30 +160,6 @@ async function callPerplexity(prompt: string): Promise<string> {
     });
 
     if (!response.ok) throw new Error("Perplexity API failed");
-    const data = await response.json();
-    return data.choices[0].message.content;
-}
-
-async function callGrok(prompt: string): Promise<string> {
-    const apiKey = process.env.GROK_API_KEY;
-    if (!apiKey) throw new Error("Grok API Key missing");
-
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: "grok-beta",
-            messages: [
-                { role: "system", content: "You are a helpful tire expert. Return valid JSON only. Do not wrap in markdown." },
-                { role: "user", content: prompt }
-            ]
-        })
-    });
-
-    if (!response.ok) throw new Error("Grok API failed");
     const data = await response.json();
     return data.choices[0].message.content;
 }
@@ -286,7 +263,7 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
   // 1. Fetch Real/Fallback Inventory (This method handles its own errors)
   const inventory = await fetchShopifyInventory();
   
-  // 2. Verify Vehicle (Safeguarded against external failures)
+  // 2. Verify Vehicle (Using Wheel-Size API only via verifyVehicleFitment)
   let vehicleInfo: VehicleInfo = { detected: false, year: '', make: '', model: '' };
   try {
       vehicleInfo = await verifyVehicleFitment(userRequest);
@@ -301,44 +278,15 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
   let parsedData: { identifiedVehicle: string, recommendations: any[] } | null = null;
   const prompt = buildAiPrompt(userRequest, lang, inventory);
 
-  // 3. AI Cascade: Gemini -> Perplexity -> Grok -> Local
+  // 3. AI Search: Perplexity (Exclusive for web search/reasoning) -> Local Fallback
   try {
-    // Attempt 1: Gemini
-    try {
-        console.log("Attempting Gemini Search...");
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { temperature: 0.1 },
-        });
-        
-        if (!response.text) throw new Error("Empty response from Gemini");
-        parsedData = cleanAndParseJSON(response.text, fallbackVehicleDesc);
+        console.log("Attempting Perplexity Search...");
+        const responseText = await callPerplexity(prompt);
+        parsedData = cleanAndParseJSON(responseText, fallbackVehicleDesc);
+        console.log("Perplexity Search Successful");
 
-    } catch (geminiError) {
-        console.warn("Gemini Service Failed. Attempting Backup (Perplexity)...", geminiError);
-        
-        // Attempt 2: Perplexity
-        try {
-             const pplxResponse = await callPerplexity(prompt);
-             parsedData = cleanAndParseJSON(pplxResponse, fallbackVehicleDesc);
-             console.log("Perplexity Search Successful");
-        } catch (pplxError) {
-             console.warn("Perplexity Failed. Attempting Backup (Grok)...", pplxError);
-             
-             // Attempt 3: Grok
-             try {
-                 const grokResponse = await callGrok(prompt);
-                 parsedData = cleanAndParseJSON(grokResponse, fallbackVehicleDesc);
-                 console.log("Grok Search Successful");
-             } catch (grokError) {
-                 throw new Error("All AI Services Unavailable");
-             }
-        }
-    }
-  } catch (allAiFailed) {
-    console.error("All AI Clouds Failed. Using Local Heuristic.", allAiFailed);
+  } catch (error) {
+    console.error("Perplexity Service Failed. Using Local Heuristic.", error);
     parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
   }
 
@@ -347,7 +295,7 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
   }
 
-  // Generate visualizations for the top recommendations (with their own internal error handling)
+  // Generate visualizations (Gemini Image Model - Kept for visuals only)
   // Ensure parsedData and recommendations exist before mapping
   const recsToProcess = (parsedData && Array.isArray(parsedData.recommendations)) ? parsedData.recommendations : [];
 
@@ -363,7 +311,6 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       }
 
       // Only generate if we have a vehicle description or the request was descriptive enough
-      // We try Gemini Image model. If Gemini Text failed, this might also fail, but it's isolated in its own try/catch in generateTireVisualization
       if (vehicleForImage && !vehicleForImage.includes("Generic") && !vehicleForImage.includes("Vehicle")) {
             const tireName = `${suggestion.brand} ${suggestion.model}`;
             generatedUrl = await generateTireVisualization(vehicleForImage, tireName);
