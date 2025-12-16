@@ -151,7 +151,7 @@ async function callPerplexity(prompt: string): Promise<string> {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: "llama-3.1-sonar-large-128k-online",
+            model: "sonar-pro", // Using Sonar Pro for advanced reasoning (replaces llama-3.1-sonar-large-128k-online)
             messages: [
                 { role: "system", content: "You are a helpful tire expert. Return valid JSON only. Do not wrap in markdown." },
                 { role: "user", content: prompt }
@@ -162,6 +162,23 @@ async function callPerplexity(prompt: string): Promise<string> {
     if (!response.ok) throw new Error("Perplexity API failed");
     const data = await response.json();
     return data.choices[0].message.content;
+}
+
+// Fallback to Gemini if Perplexity is unavailable
+async function callGeminiFallback(prompt: string): Promise<string> {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) throw new Error("Gemini API Key missing");
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+            responseMimeType: 'application/json'
+        }
+    });
+
+    return response.text || "{}";
 }
 
 // Helper to construct prompts
@@ -278,20 +295,35 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
   let parsedData: { identifiedVehicle: string, recommendations: any[] } | null = null;
   const prompt = buildAiPrompt(userRequest, lang, inventory);
 
-  // 3. AI Search: Perplexity (Exclusive for web search/reasoning) -> Local Fallback
-  try {
-        console.log("Attempting Perplexity Search...");
-        const responseText = await callPerplexity(prompt);
-        parsedData = cleanAndParseJSON(responseText, fallbackVehicleDesc);
-        console.log("Perplexity Search Successful");
-
-  } catch (error) {
-    console.error("Perplexity Service Failed. Using Local Heuristic.", error);
-    parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
+  // 3. AI Search: Perplexity -> Gemini -> Local Fallback
+  
+  // Attempt Perplexity First
+  if (process.env.PERPLEXITY_API_KEY) {
+      try {
+            console.log("Attempting Perplexity Search...");
+            const responseText = await callPerplexity(prompt);
+            parsedData = cleanAndParseJSON(responseText, fallbackVehicleDesc);
+            console.log("Perplexity Search Successful");
+      } catch (error) {
+            console.warn("Perplexity Service Failed, failing over to Gemini...", error);
+      }
   }
 
-  // Ensure parsedData exists
+  // Fallback to Gemini if Perplexity unavailable or failed
+  if (!parsedData && process.env.API_KEY) {
+      try {
+            console.log("Attempting Gemini Search...");
+            const responseText = await callGeminiFallback(prompt);
+            parsedData = cleanAndParseJSON(responseText, fallbackVehicleDesc);
+            console.log("Gemini Search Successful");
+      } catch (error) {
+            console.warn("Gemini Service Failed, failing over to Local Heuristic...", error);
+      }
+  }
+
+  // Final Fallback: Local Heuristic
   if (!parsedData) {
+      console.log("Using Local Heuristic Fallback");
       parsedData = runLocalFallback(userRequest, inventory, lang, fallbackVehicleDesc);
   }
 
