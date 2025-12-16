@@ -11,23 +11,6 @@ import { getTireRecommendations } from './services/geminiService';
 import { AppState, ProcessingLog, ProcessingStage, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 
-// Add this in your React app (e.g., in App.tsx useEffect)
-useEffect(() => {
-  const sendHeight = () => {
-    window.parent.postMessage({ height: document.body.scrollHeight + 100 }, '*');
-  };
-  sendHeight();
-  window.addEventListener('resize', sendHeight);
-  return () => window.removeEventListener('resize', sendHeight);
-}, []);
-
-// Optional: Read language from URL and apply it
-useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  const lang = params.get('lang') || 'en';
-  // Apply lang to your app state
-  setLang(lang as Language);
-}, []);
 // UPDATE THIS VERSION WHENEVER YOU DEPLOY A NEW BUILD TO FORCE STATE RESET
 const APP_VERSION = '2.2.0'; 
 
