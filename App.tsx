@@ -11,9 +11,6 @@ import { getTireRecommendations } from './services/geminiService';
 import { AppState, ProcessingLog, ProcessingStage, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 
-// UPDATE THIS VERSION WHENEVER YOU DEPLOY A NEW BUILD TO FORCE STATE RESET
-const APP_VERSION = '2.2.0'; 
-
 function App() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
@@ -26,26 +23,11 @@ function App() {
   const [activeModal, setActiveModal] = useState<'reviews' | 'compare' | 'favorites' | null>(null);
   const [reviewTire, setReviewTire] = useState<TireProduct | null>(null);
   const [lang, setLang] = useState<Language>('en');
-  const [isNewVersion, setIsNewVersion] = useState(false);
 
-  // Debugging & Versioning
+  // 1. Load state from local storage on mount (Persistence)
   useEffect(() => {
-    console.log(`GCI Tire Match App v${APP_VERSION} Loaded`);
-  }, []);
-
-  // 1. Load state from local storage on mount (Persistence) with Version Check
-  useEffect(() => {
-    const savedVersion = localStorage.getItem('gci_app_version');
     const savedState = localStorage.getItem('gci_app_state_v2');
-
-    // If version mismatch, clear old state to ensure users see the new app structure
-    if (savedVersion !== APP_VERSION) {
-        console.log("New version detected. Clearing stale cache.");
-        localStorage.removeItem('gci_app_state_v2');
-        localStorage.setItem('gci_app_version', APP_VERSION);
-        setIsNewVersion(true);
-        // We preserve favorites if possible in a real app, but for now we reset to ensure cleanliness
-    } else if (savedState) {
+    if (savedState) {
       try {
         const parsed = JSON.parse(savedState);
         
@@ -72,7 +54,7 @@ function App() {
   useEffect(() => {
     const stateToSave = {
       // If currently processing, save as IDLE to avoid getting stuck on reload
-      appState: (appState === AppState.PROCESSING || appState === AppState.ERROR) ? AppState.IDLE : appState, 
+      appState: (appState === AppState.PROCESSING) ? AppState.IDLE : appState, 
       recommendations,
       selectedTire,
       favorites,
@@ -80,7 +62,6 @@ function App() {
       lang
     };
     localStorage.setItem('gci_app_state_v2', JSON.stringify(stateToSave));
-    localStorage.setItem('gci_app_version', APP_VERSION);
   }, [appState, recommendations, selectedTire, favorites, compareList, lang]);
 
   // 3. Sync language with URL parameters (Shopify integration) - Priority over storage
@@ -136,8 +117,6 @@ function App() {
     } catch (error) {
       console.error(error);
       setAppState(AppState.ERROR);
-      alert("We encountered an issue finding tires. Please try again.");
-      setAppState(AppState.IDLE);
     }
   };
 
@@ -198,10 +177,7 @@ function App() {
                 </div>
                 <div className="flex flex-col leading-none">
                     <span className="font-black text-lg tracking-tighter text-slate-900">GCI TIRE</span>
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-red-600 tracking-widest">AI MATCH 2.0</span>
-                        {isNewVersion && <span className="bg-blue-600 text-white text-[8px] px-1 rounded uppercase font-bold animate-pulse">New</span>}
-                    </div>
+                    <span className="text-xs font-bold text-red-600 tracking-widest">AI MATCH 2.0</span>
                 </div>
             </div>
             
@@ -245,21 +221,32 @@ function App() {
                </div>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {recommendations.map((tire) => (
-                <TireCard 
-                    key={tire.id} 
-                    tire={tire} 
-                    onSelect={handleSelectTire}
-                    isFavorite={favorites.some(f => f.id === tire.id)}
-                    onToggleFavorite={toggleFavorite}
-                    isCompareSelected={compareList.some(c => c.id === tire.id)}
-                    onToggleCompare={toggleCompare}
-                    onShowReviews={openReviews}
-                    lang={lang}
-                />
-              ))}
-            </div>
+            {recommendations.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {recommendations.map((tire) => (
+                    <TireCard 
+                        key={tire.id} 
+                        tire={tire} 
+                        onSelect={handleSelectTire}
+                        isFavorite={favorites.some(f => f.id === tire.id)}
+                        onToggleFavorite={toggleFavorite}
+                        isCompareSelected={compareList.some(c => c.id === tire.id)}
+                        onToggleCompare={toggleCompare}
+                        onShowReviews={openReviews}
+                        lang={lang}
+                    />
+                ))}
+                </div>
+            ) : (
+                <div className="bg-white rounded-lg p-10 text-center border border-slate-200 shadow-sm">
+                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-400">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900 mb-2">No tires found</h3>
+                    <p className="text-slate-500 mb-6 max-w-md mx-auto">We couldn't find any tires in our inventory matching your specific criteria. Try broadening your search terms.</p>
+                    <button onClick={resetApp} className="text-red-600 font-bold uppercase tracking-wide hover:underline">Try New Search</button>
+                </div>
+            )}
           </div>
         )}
 
@@ -299,6 +286,19 @@ function App() {
               lang={lang}
            />
         )}
+
+        {appState === AppState.ERROR && (
+           <div className="flex flex-col items-center justify-center min-h-[50vh] animate-fade-in-up">
+              <div className="bg-red-50 p-6 rounded-full mb-4 shadow-sm border border-red-100">
+                 <svg className="w-12 h-12 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2">Something went wrong</h3>
+              <p className="text-slate-500 mb-8 text-center max-w-md">We encountered an issue processing your request. Please check your connection and try again.</p>
+              <button onClick={resetApp} className="bg-slate-900 text-white px-8 py-3 rounded font-bold uppercase tracking-wide hover:bg-slate-800 transition-colors shadow-md">
+                 Try Again
+              </button>
+           </div>
+        )}
       </main>
 
       <footer className="mt-20 py-10 bg-slate-900 text-slate-400 text-center">
@@ -310,7 +310,7 @@ function App() {
                <a href="#" className="hover:text-white transition-colors">Privacy</a>
                <a href="#" className="hover:text-white transition-colors">Terms</a>
             </div>
-            <p className="text-[10px] text-slate-600 font-mono">v{APP_VERSION} (Live Build)</p>
+            <p className="text-[10px] text-slate-600 font-mono">v2.3.0 (Live Build)</p>
          </div>
       </footer>
 
