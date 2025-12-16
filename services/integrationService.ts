@@ -127,9 +127,21 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
 
         // Parse numeric variant ID from GID for permalinks
         // GID format: gid://shopify/ProductVariant/123456789
+        // Note: Shopify API often returns Base64 encoded IDs which need to be decoded first
         let variantId = "0";
         if (variantNode?.id) {
-            const matches = variantNode.id.match(/\/ProductVariant\/(\d+)/);
+            let rawId = variantNode.id;
+            
+            // Attempt to decode if it looks like Base64 (starts with Z or similar and no slashes)
+            if (!rawId.includes('/') && !rawId.startsWith('gid://')) {
+                try {
+                    rawId = atob(rawId);
+                } catch (e) {
+                    console.warn("Failed to decode Variant ID:", rawId);
+                }
+            }
+            
+            const matches = rawId.match(/\/ProductVariant\/(\d+)/);
             if (matches && matches[1]) {
                 variantId = matches[1];
             }
