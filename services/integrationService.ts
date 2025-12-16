@@ -1,13 +1,6 @@
 import { TireProduct, VehicleInfo, QualityTier, Installer } from "../types";
 
-// DRIVERIGHT DATA (DRD) CONFIGURATION
-const DRD_CREDENTIALS = {
-  username: "Patrick_GCI_API",
-  securityToken: "3d8ad7df70964df1abebf51914b68b8e",
-  baseUrl: "http://api.driverightdata.com/eu/swagger/ui/index#!/"
-};
-
-// WHEEL-SIZE API CONFIGURATION (Backup)
+// WHEEL-SIZE API CONFIGURATION
 const WHEEL_SIZE_CONFIG = {
   baseUrl: "https://api.wheel-size.com/v2",
   userKey: process.env.WHEEL_SIZE_API_KEY
@@ -170,12 +163,15 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
   }
 };
 
-// Backup Validation: Wheel-Size.com API
+// Validation: Wheel-Size.com API
 async function checkWheelSizeApi(year: string, make: string, model: string): Promise<boolean> {
-  if (!WHEEL_SIZE_CONFIG.userKey) return false;
+  if (!WHEEL_SIZE_CONFIG.userKey) {
+      console.warn("[Wheel-Size] API Key missing. Skipping verification.");
+      return false;
+  }
   
   try {
-    console.log(`[Wheel-Size] Querying backup verification for: ${year} ${make} ${model}`);
+    console.log(`[Wheel-Size] Querying verification for: ${year} ${make} ${model}`);
     const url = `${WHEEL_SIZE_CONFIG.baseUrl}/search/by_model/?make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}&year=${year}&user_key=${WHEEL_SIZE_CONFIG.userKey}`;
     
     const response = await fetch(url);
@@ -187,7 +183,7 @@ async function checkWheelSizeApi(year: string, make: string, model: string): Pro
     const data = await response.json();
     return Array.isArray(data) && data.length > 0;
   } catch (e) {
-    console.error("[Wheel-Size] Backup verification failed", e);
+    console.error("[Wheel-Size] Verification failed", e);
     return false;
   }
 }
@@ -220,34 +216,15 @@ export const verifyVehicleFitment = async (vehicleString: string): Promise<Vehic
     detected: !!(yearMatch || makeMatch || modelMatch)
   };
 
-  // 2. VERIFICATION CHAIN
-  // Primary: DriveRightData (Simulated)
-  // Backup: Wheel-Size.com (Real)
-
-  console.log(`[DRD] Authenticating with User: ${DRD_CREDENTIALS.username}`);
-  
-  // Simulate DRD Latency
-  await new Promise(r => setTimeout(r, 600));
-
-  // Determine if DRD found a match based on our local lists
-  const drdVerified = !!(yearMatch && makeMatch);
-
-  if (drdVerified) {
-      console.log(`[DRD] Match Verified: ${year} ${make} ${model}`);
-      return { ...extractedInfo, detected: true };
-  } else {
-      console.warn(`[DRD] No exact match found locally. Attempting Wheel-Size Backup...`);
-      
-      // Fallback: If we extracted at least a Year and Make, try the Wheel-Size API
-      if (yearMatch && make !== "Vehicle") {
-          // If model is unknown, we just verify the Make/Year exist, 
-          // or we try to pass the raw string parts if logic allows (simplified here)
-          const backupVerified = await checkWheelSizeApi(year, make, model === "Model" ? "" : model);
-          
-          if (backupVerified) {
-              console.log(`[Wheel-Size] Backup Verified!`);
-              return { ...extractedInfo, detected: true };
-          }
+  // 2. VERIFICATION: EXCLUSIVELY WHEEL-SIZE API
+  if (extractedInfo.detected && make !== "Vehicle") {
+      const verified = await checkWheelSizeApi(year, make, model === "Model" ? "" : model);
+      if (verified) {
+          console.log(`[Wheel-Size] Vehicle Verified: ${year} ${make} ${model}`);
+          return { ...extractedInfo, detected: true };
+      } else {
+          console.log(`[Wheel-Size] Verification returned no results for: ${year} ${make} ${model}`);
+          // We still return extracted info, but we know verification failed if specific logic relied on it
       }
   }
 
