@@ -55,6 +55,7 @@ export interface Installer {
   address: string;
   distance: string;
   rating: number;
+  url?: string;
   mapPosition?: { top: number; left: number };
 }
 
