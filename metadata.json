@@ -1,5 +1,8 @@
+
 {
   "name": "TireMatch AI 2.0",
   "description": "The upgraded intelligent tire recommendation agent for GCI Tires. Features state persistence, bilingual support, and direct inventory matching.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }
