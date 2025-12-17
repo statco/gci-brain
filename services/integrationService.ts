@@ -3,7 +3,7 @@ import { TireProduct, VehicleInfo, QualityTier, Installer } from "../types";
 // WHEEL-SIZE API CONFIGURATION
 const WHEEL_SIZE_CONFIG = {
   baseUrl: "https://api.wheel-size.com/v2",
-  userKey: process.env.WHEEL_SIZE_API_KEY
+  // We access process.env directly in the function to ensure it picks up the define from vite
 };
 
 // BUSINESS LOGIC CONSTANTS
@@ -89,6 +89,12 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
     // This removes CORS issues and keeps the API Token secure.
     const response = await fetch('/api/shopify-inventory');
 
+    // Handle static deployment case (Endpoint missing) without loud error
+    if (response.status === 404) {
+      console.info("API endpoint not found (Static Mode), using fallback inventory.");
+      return FALLBACK_INVENTORY;
+    }
+
     if (!response.ok) {
         throw new Error(`Integration API Error: ${response.statusText}`);
     }
@@ -164,27 +170,51 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
 };
 
 // Validation: Wheel-Size.com API
-async function checkWheelSizeApi(year: string, make: string, model: string): Promise<boolean> {
-  if (!WHEEL_SIZE_CONFIG.userKey) {
+// Returns list of potential tire sizes if verified, otherwise null
+async function checkWheelSizeApi(year: string, make: string, model: string): Promise<string[] | null> {
+  const userKey = process.env.WHEEL_SIZE_API_KEY; 
+  
+  if (!userKey) {
       console.warn("[Wheel-Size] API Key missing. Skipping verification.");
-      return false;
+      return null;
   }
   
   try {
     console.log(`[Wheel-Size] Querying verification for: ${year} ${make} ${model}`);
-    const url = `${WHEEL_SIZE_CONFIG.baseUrl}/search/by_model/?make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}&year=${year}&user_key=${WHEEL_SIZE_CONFIG.userKey}`;
+    const url = `${WHEEL_SIZE_CONFIG.baseUrl}/search/by_model/?make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}&year=${year}&user_key=${userKey}`;
     
     const response = await fetch(url);
     if (!response.ok) {
-        console.warn(`[Wheel-Size] API Request Failed: ${response.status}`);
-        return false;
+        console.warn(`[Wheel-Size] API Request Failed: ${response.status} ${response.statusText}`);
+        return null;
     }
     
     const data = await response.json();
-    return Array.isArray(data) && data.length > 0;
+    
+    if (Array.isArray(data) && data.length > 0) {
+        // Extract tire sizes from all matching vehicles/trims
+        const sizes = new Set<string>();
+        data.forEach((item: any) => {
+            // Check for standard structure (varies by API plan, covering common structures)
+            if (item.technical && item.technical.tires) {
+                if (item.technical.tires.front?.tire) sizes.add(item.technical.tires.front.tire);
+                if (item.technical.tires.rear?.tire) sizes.add(item.technical.tires.rear.tire);
+            }
+            // Check for potential flat structure or wheels array
+            if (item.wheels && Array.isArray(item.wheels)) {
+                item.wheels.forEach((w: any) => {
+                    if (w.front?.tire) sizes.add(w.front.tire);
+                    if (w.rear?.tire) sizes.add(w.rear.tire);
+                });
+            }
+        });
+        return Array.from(sizes);
+    }
+    
+    return null;
   } catch (e) {
     console.error("[Wheel-Size] Verification failed", e);
-    return false;
+    return null;
   }
 }
 
@@ -208,23 +238,24 @@ export const verifyVehicleFitment = async (vehicleString: string): Promise<Vehic
   const modelMatch = commonModels.find(m => vehicleString.toLowerCase().includes(m.toLowerCase()));
   const model = modelMatch || "Model";
 
-  const extractedInfo = {
+  const extractedInfo: VehicleInfo = {
     year,
     make,
     model,
     trim: "Base",
-    detected: !!(yearMatch || makeMatch || modelMatch)
+    detected: !!(yearMatch || makeMatch || modelMatch),
+    tireSizes: []
   };
 
   // 2. VERIFICATION: EXCLUSIVELY WHEEL-SIZE API
   if (extractedInfo.detected && make !== "Vehicle") {
-      const verified = await checkWheelSizeApi(year, make, model === "Model" ? "" : model);
-      if (verified) {
-          console.log(`[Wheel-Size] Vehicle Verified: ${year} ${make} ${model}`);
-          return { ...extractedInfo, detected: true };
+      const tireSizes = await checkWheelSizeApi(year, make, model === "Model" ? "" : model);
+      
+      if (tireSizes !== null) {
+          console.log(`[Wheel-Size] Vehicle Verified: ${year} ${make} ${model}. Found Sizes: ${tireSizes.join(', ')}`);
+          return { ...extractedInfo, detected: true, tireSizes: tireSizes };
       } else {
           console.log(`[Wheel-Size] Verification returned no results for: ${year} ${make} ${model}`);
-          // We still return extracted info, but we know verification failed if specific logic relied on it
       }
   }
 
@@ -235,8 +266,29 @@ export const fetchInstallers = async (): Promise<Installer[]> => {
   // SIMULATE SHOPIFY METAFIELD DB LOOKUP
   await new Promise(r => setTimeout(r, 500));
   return [
-    { id: 'inst-1', name: 'GCI Auto Center - Downtown', address: '1200 Main St, Cityville', distance: '1.2 miles', rating: 4.9 },
-    { id: 'inst-2', name: 'Westside Tire & Brake', address: '450 West Ave, Westtown', distance: '3.5 miles', rating: 4.7 },
-    { id: 'inst-3', name: 'Pro Performance Garage', address: '88 Speedway Blvd, Raceland', distance: '5.0 miles', rating: 4.8 }
+    { 
+      id: 'inst-1', 
+      name: 'GCI Auto Center - Downtown', 
+      address: '1200 Main St, Cityville', 
+      distance: '1.2 miles', 
+      rating: 4.9, 
+      mapPosition: { top: 30, left: 40 } 
+    },
+    { 
+      id: 'inst-2', 
+      name: 'Westside Tire & Brake', 
+      address: '450 West Ave, Westtown', 
+      distance: '3.5 miles', 
+      rating: 4.7, 
+      mapPosition: { top: 60, left: 20 }
+    },
+    { 
+      id: 'inst-3', 
+      name: 'Pro Performance Garage', 
+      address: '88 Speedway Blvd, Raceland', 
+      distance: '5.0 miles', 
+      rating: 4.8, 
+      mapPosition: { top: 50, left: 70 }
+    }
   ];
 };

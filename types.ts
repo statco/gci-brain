@@ -44,6 +44,7 @@ export interface VehicleInfo {
   model?: string;
   trim?: string;
   detected: boolean;
+  tireSizes?: string[]; // Retrieved from Wheel-Size API
 }
 
 export type QualityTier = 'Good' | 'Better' | 'Best';
@@ -54,6 +55,7 @@ export interface Installer {
   address: string;
   distance: string;
   rating: number;
+  mapPosition?: { top: number; left: number };
 }
 
 export interface TireProduct {
