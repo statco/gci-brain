@@ -23,12 +23,27 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ tire, quantity, withInsta
     // We strictly use the Variant ID provided by the Shopify API.
     // If for some reason the ID is missing (e.g. fallback data), we redirect to the search page.
     
-    const shopDomain = "gcitires-ca.myshopify.com";
+    // Use configured domain or fallback
+    const shopDomain = process.env.SHOPIFY_DOMAIN || "gcitires-ca.myshopify.com";
     
     if (tire.variantId && tire.variantId !== "0" && !tire.variantId.startsWith("mock")) {
         // Construct Shopify Cart Permalink
         // Format: https://{shop}.myshopify.com/cart/{variant_id}:{quantity}
-        const checkoutUrl = `https://${shopDomain}/cart/${tire.variantId}:${quantity}`;
+        let checkoutUrl = `https://${shopDomain}/cart/${tire.variantId}:${quantity}`;
+        
+        // Add attributes for merchant context
+        const params = new URLSearchParams();
+        params.append('ref', 'ai_match_v2');
+        
+        if (withInstallation) {
+           // Standard Shopify attribute format for permalinks
+           params.append('attributes[Installation Required]', 'Yes');
+           params.append('attributes[Installation Fee Per Unit]', tire.installationFeePerUnit.toString());
+        } else {
+           params.append('attributes[Installation Required]', 'No - Ship to Home');
+        }
+
+        checkoutUrl += `?${params.toString()}`;
         
         // Immediate redirect for commercial speed
         window.location.href = checkoutUrl;
@@ -94,6 +109,9 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ tire, quantity, withInsta
                     <div className="flex justify-between text-sm text-slate-600 font-medium">
                         <span>Installation Fees</span>
                         <span>${(tire.installationFeePerUnit * quantity).toFixed(2)}</span>
+                        <div className="text-[10px] text-slate-400 col-span-2 text-right w-full">
+                           (Added as order attribute)
+                        </div>
                     </div>
                 )}
                 <div className="flex justify-between text-sm text-slate-600 font-medium">

@@ -101,9 +101,9 @@ const TireCard: React.FC<TireCardProps> = ({
                     <button 
                         onClick={(e) => { e.stopPropagation(); setActiveImage(tire.visualizationUrl!); }}
                         className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${activeImage === tire.visualizationUrl ? 'border-red-600 scale-110 shadow-sm' : 'border-slate-200 opacity-60 hover:opacity-100'}`}
-                        title="View on Vehicle"
+                        title="AI Studio View"
                     >
-                        <img src={tire.visualizationUrl} className="w-full h-full object-cover" alt="Vehicle View" />
+                        <img src={tire.visualizationUrl} className="w-full h-full object-cover" alt="Studio View" />
                     </button>
                 )}
                 {tire.imageUrl && (

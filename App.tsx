@@ -52,16 +52,39 @@ function App() {
 
   // 2. Save state to local storage on change
   useEffect(() => {
+    // Sanitize function to remove heavy Base64 images which cause QuotaExceededError
+    const sanitizeTire = (tire: TireProduct): TireProduct => {
+      const clone = { ...tire };
+      // If visualizationUrl is a base64 string (large), remove it for storage.
+      // We keep standard URLs.
+      if (clone.visualizationUrl && clone.visualizationUrl.startsWith('data:')) {
+        clone.visualizationUrl = undefined;
+      }
+      return clone;
+    };
+
     const stateToSave = {
       // If currently processing, save as IDLE to avoid getting stuck on reload
       appState: (appState === AppState.PROCESSING) ? AppState.IDLE : appState, 
-      recommendations,
-      selectedTire,
-      favorites,
-      compareList,
+      recommendations: recommendations.map(sanitizeTire),
+      selectedTire: selectedTire ? { ...selectedTire, tire: sanitizeTire(selectedTire.tire) } : null,
+      favorites: favorites.map(sanitizeTire),
+      compareList: compareList.map(sanitizeTire),
       lang
     };
-    localStorage.setItem('gci_app_state_v2', JSON.stringify(stateToSave));
+    
+    try {
+      localStorage.setItem('gci_app_state_v2', JSON.stringify(stateToSave));
+    } catch (e) {
+      console.warn("LocalStorage Quota Exceeded. Clearing state to recover.", e);
+      // If quota exceeded, try to clear it or save only minimal state
+      try {
+        const minimalState = { lang, appState: AppState.IDLE };
+        localStorage.setItem('gci_app_state_v2', JSON.stringify(minimalState));
+      } catch (e2) {
+        // LocalStorage is completely broken or full
+      }
+    }
   }, [appState, recommendations, selectedTire, favorites, compareList, lang]);
 
   // 3. Sync language with URL parameters (Shopify integration) - Priority over storage
@@ -306,9 +329,9 @@ function App() {
             <p className="font-black text-2xl text-white mb-2">GCI TIRE</p>
             <p className="text-sm mb-6">Expert Service. Guaranteed Fitment. Best Prices.</p>
             <div className="border-t border-slate-800 pt-6 flex justify-center gap-8 text-xs uppercase tracking-widest font-bold mb-4">
-               <a href="#" className="hover:text-white transition-colors">{t.installerOnboarding} <span className="text-red-600 ml-1">{t.joinNetwork}</span></a>
-               <a href="#" className="hover:text-white transition-colors">Privacy</a>
-               <a href="#" className="hover:text-white transition-colors">Terms</a>
+               <a href="https://www.gcitires.com/pages/installer-application" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">{t.installerOnboarding} <span className="text-red-600 ml-1">{t.joinNetwork}</span></a>
+               <a href="https://www.gcitires.com/policies/privacy-policy" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Privacy</a>
+               <a href="https://www.gcitires.com/policies/terms-of-service" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Terms</a>
             </div>
             <p className="text-[10px] text-slate-600 font-mono">v2.3.0 (Live Build)</p>
          </div>

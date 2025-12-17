@@ -20,9 +20,36 @@ const InputForm: React.FC<InputFormProps> = ({ onSubmit, isLoading, lang, setLan
 
   const t = translations[lang];
 
+  // Robust validation helper
+  const validateTireSize = (value: string): boolean => {
+    if (!value) return true; // Optional field, so empty is valid
+    // Matches formats like:
+    // 225/45R17, 225/45 R 17, P225/45R17, LT245/75R16, 225/45ZR17
+    // Breakdown:
+    // ^(?:[A-Z]{1,3})?  -> Optional Prefix (P, LT, ST)
+    // \s*               -> Optional whitespace
+    // \d{3}             -> Width (e.g., 225)
+    // \s*               -> Optional whitespace
+    // \/                -> Slash separator
+    // \s*               -> Optional whitespace
+    // \d{2}             -> Aspect Ratio (e.g., 45)
+    // \s*               -> Optional whitespace
+    // [A-Z]{1,2}        -> Construction (R, ZR, B, D)
+    // \s*               -> Optional whitespace
+    // \d{2}             -> Rim Diameter (e.g., 17)
+    const regex = /^(?:[A-Z]{1,3})?\s*\d{3}\s*\/\s*\d{2}\s*[A-Z]{1,2}\s*\d{2}$/i;
+    return regex.test(value.trim());
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Validate Tire Size before processing
+    if (tireSize && !validateTireSize(tireSize)) {
+        setTireSizeError(true);
+        return;
+    }
+
     // Construct the combined request using distinct labels for the AI parser
     const parts = [];
     
@@ -52,11 +79,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSubmit, isLoading, lang, setLan
   };
 
   const handleTireSizeBlur = () => {
-    if (!tireSize) return;
-    // Regex matches formats like: 225/45R17, P225/45R17, LT245/75R16, 225/45ZR17
-    // Allows case-insensitive matching
-    const regex = /^(?:[A-Z]{1,3})?\d{3}\/\d{2}[A-Z]{1,2}\d{2}$/i;
-    setTireSizeError(!regex.test(tireSize));
+    setTireSizeError(!validateTireSize(tireSize));
   };
 
   const handleExampleClick = (text: string) => {
@@ -160,7 +183,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSubmit, isLoading, lang, setLan
                     onBlur={handleTireSizeBlur}
                     placeholder={t.tireSizePlaceholder}
                     className={`w-full p-2 text-sm border rounded focus:ring-0 outline-none transition-all font-bold text-slate-700 bg-white
-                        ${tireSizeError ? 'border-red-500 focus:border-red-600' : 'border-slate-200 focus:border-red-600'}`}
+                        ${tireSizeError ? 'border-red-500 focus:border-red-600 ring-1 ring-red-200' : 'border-slate-200 focus:border-red-600'}`}
                     disabled={isLoading}
                     />
                     {tireSizeError && <span className="text-[10px] text-red-500 font-bold mt-1 block animate-pulse">{t.invalidTireSize}</span>}

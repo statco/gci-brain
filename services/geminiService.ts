@@ -23,29 +23,23 @@ const generateReviews = (count: number): Review[] => {
   }));
 };
 
-// Generates a photorealistic image of the vehicle with specific tires
+// Generates a photorealistic image of the tire itself (Studio Shot)
 // NOTE: We still use Gemini for image generation as Perplexity is text-focused.
 const generateTireVisualization = async (vehicleDesc: string, tireName: string): Promise<string | null> => {
   // STRICT COMPLIANCE: Do not generate "irrelevant" images. 
-  // If we don't know the vehicle, we do not show a random car.
-  const isGeneric = !vehicleDesc || 
-                    vehicleDesc.toLowerCase().trim() === 'vehicle' || 
-                    vehicleDesc.toLowerCase().includes('generic') ||
-                    vehicleDesc.length < 4;
-
-  if (isGeneric) {
+  if (!tireName || tireName.length < 3 || tireName.includes("Unknown")) {
       return null;
   }
 
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    // We use the specific vehicle description provided.
+    // User requested: "only the actual proposed tire presented on a white background"
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [{ 
-            text: `A photorealistic high-quality automotive photography side-profile shot of a ${vehicleDesc} fitted with brand new ${tireName} tires. The vehicle is parked on a scenic paved road. The tires are clearly visible, showcasing the rugged tread pattern and sidewall design. Cinematic lighting, 4k resolution, highly detailed.` 
+            text: `A professional studio product photography shot of a ${tireName} tire isolated on a pure white background. The image must clearly showcase the specific rugged tread pattern and sidewall design of this model. High resolution, sharp focus, commercial advertisement style, 4k, no vehicle, no shadows, pure white background.` 
         }],
       },
     });
@@ -62,7 +56,37 @@ const generateTireVisualization = async (vehicleDesc: string, tireName: string):
   }
 };
 
-const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { generatedImage?: string })[], realInventory: Partial<TireProduct>[]): TireProduct[] => {
+// New Function: Find real product image from the web
+const findRealProductImage = async (brand: string, model: string): Promise<string | null> => {
+  if (!brand || !model || brand === "Generic" || model === "Tire") return null;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Find a direct, public image URL for the ${brand} ${model} tire (tread pattern view). 
+      The URL must directly point to an image file (ending in .jpg, .png, or .webp).
+      Prioritize official manufacturer sites or major tire retailers.
+      Return ONLY the URL string. Do not include markdown or explanations.`,
+      config: {
+        tools: [{ googleSearch: {} }]
+      }
+    });
+
+    const text = response.text || "";
+    // Regex to find a valid image url in the response
+    const urlRegex = /(https?:\/\/[^\s"']+\.(?:jpg|jpeg|png|webp))/i;
+    const match = text.match(urlRegex);
+    
+    if (match) return match[0];
+    return null;
+  } catch (e) {
+    console.warn("Failed to find real product image", e);
+    return null;
+  }
+};
+
+const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { generatedImage?: string, realFoundImage?: string })[], realInventory: Partial<TireProduct>[]): TireProduct[] => {
   // SAFETY CHECK: Ensure we have inventory to match against.
   if (!realInventory || realInventory.length === 0) {
       console.error("enrichWithInventoryData: realInventory is empty!");
@@ -78,30 +102,103 @@ const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { gen
   }
 
   return aiSuggestedTires.map((aiTire, index) => {
-    // Attempt to fuzzy match the AI suggestion with real inventory by Model name
-    // We safeguard the optional chaining to prevent any undefined access
-    const safeAiModel = (aiTire.model || "").toLowerCase();
+    const aiBrand = (aiTire.brand || "").toLowerCase().trim();
+    const aiModel = (aiTire.model || "").toLowerCase().trim();
+    const aiDesc = (aiTire.description || "").toLowerCase();
 
-    let match = realInventory.find(inv => {
-        const invModel = (inv.model || "").toLowerCase();
-        return invModel.includes(safeAiModel) || (safeAiModel.length > 3 && safeAiModel.includes(invModel));
-    });
+    // SCORING SYSTEM: Find the best match in inventory
+    let bestMatch: Partial<TireProduct> | null = null;
+    let highestScore = 0;
 
-    // Fallback if no specific match found - cyclically assign inventory items
-    if (!match) {
-        match = realInventory[index % realInventory.length];
+    for (const inv of realInventory) {
+        let score = 0;
+        const invBrand = (inv.brand || "").toLowerCase().trim();
+        const invModel = (inv.model || "").toLowerCase().trim();
+        const invType = (inv.type || "").toLowerCase();
+        const invPrice = inv.pricePerUnit || 0;
+
+        // 1. Brand Match (Critical - 40pts)
+        if (invBrand === aiBrand) {
+            score += 40;
+        } else if (invBrand.includes(aiBrand) || aiBrand.includes(invBrand)) {
+            score += 20; // Partial brand match
+        }
+
+        // 2. Model Match (Critical - 40pts)
+        if (invModel === aiModel) {
+            score += 40;
+        } else if (invModel.includes(aiModel) || aiModel.includes(invModel)) {
+            score += 25; // Substring match
+        } else {
+             // Token overlap matching for complex model names (e.g. "Pilot Sport 4S" vs "Pilot Sport 4 S")
+             const aiTokens = aiModel.split(/[\s-]+/);
+             const invTokens = invModel.split(/[\s-]+/);
+             const intersection = aiTokens.filter(t => t.length > 1 && invTokens.includes(t));
+             score += (intersection.length * 5);
+        }
+
+        // 3. Type/Category Relevance (Contextual - 15pts)
+        // Use the description from AI to infer intent and match with inventory type
+        if (aiDesc.includes("winter") && (invType.includes("winter") || invModel.includes("ice") || invModel.includes("snow"))) score += 15;
+        if ((aiDesc.includes("all-terrain") || aiDesc.includes("off-road")) && (invType.includes("all-terrain") || invType.includes("mud") || invModel.includes("a/t"))) score += 15;
+        if (aiDesc.includes("sport") && (invType.includes("performance") || invModel.includes("sport"))) score += 10;
+
+        // 4. Price Logic (Tie-breaker - 5pts)
+        // If query mentioned "budget" or "cheap", favor lower prices
+        if ((aiDesc.includes("budget") || aiDesc.includes("cheap") || aiDesc.includes("value")) && invPrice < 200) {
+            score += 5;
+        }
+        // If query mentioned "premium" or "best", favor higher prices
+        if ((aiDesc.includes("premium") || aiDesc.includes("best") || aiDesc.includes("performance")) && invPrice > 250) {
+            score += 5;
+        }
+
+        if (score > highestScore) {
+            highestScore = score;
+            bestMatch = inv;
+        }
+    }
+
+    // Fallback Selection Logic
+    // If no decent match found (score < 20), try to find ANY tire of the same brand, 
+    // otherwise fallback to cyclic assignment to ensure we show a tire.
+    let match = bestMatch;
+
+    if (!match || highestScore < 20) {
+        // Try simple brand fallback
+        match = realInventory.find(i => (i.brand || "").toLowerCase() === aiBrand);
+        
+        // If still no match, use cyclic fallback
+        if (!match) {
+            match = realInventory[index % realInventory.length];
+        }
     }
     
-    // FINAL SAFETY CHECK: If match is still somehow undefined (should be impossible due to check above), use the first item
+    // Final safety
     if (!match) match = realInventory[0];
 
     // Merge AI insights with Real Inventory Data
     
-    // 1. Official Product Image (from Shopify/Inventory)
-    // If missing, use a generic reliable placeholder
-    const productImageUrl = match.imageUrl || "https://images.unsplash.com/photo-1578844251758-2f71da645217?auto=format&fit=crop&w=400&q=80";
+    // Image Logic
+    // 1. Specific Inventory Image (if valid and not fallback)
+    // 2. Real Image Found Online
+    // 3. AI Generated Visualization
+    // 4. Generic Fallback
     
-    // 2. AI Generated Visualization (if available)
+    let productImageUrl = match.imageUrl;
+    const isGenericOrMissing = !productImageUrl || productImageUrl.includes("unsplash");
+    
+    if (isGenericOrMissing) {
+        if (aiTire.realFoundImage) {
+            productImageUrl = aiTire.realFoundImage;
+        } else if (aiTire.generatedImage) {
+            productImageUrl = aiTire.generatedImage;
+        } else {
+            productImageUrl = "https://images.unsplash.com/photo-1578844251758-2f71da645217?auto=format&fit=crop&w=400&q=80";
+        }
+    }
+
+    // 2. AI Generated Visualization (if available) - Can be used for toggle
     const visualizationUrl = aiTire.generatedImage || undefined;
 
     return {
@@ -113,7 +210,7 @@ const enrichWithInventoryData = (aiSuggestedTires: (Partial<TireProduct> & { gen
       description: match.description || aiTire.description || "",
       pricePerUnit: match.pricePerUnit || 210.00, // Safe fallback
       installationFeePerUnit: 25,
-      imageUrl: productImageUrl,
+      imageUrl: productImageUrl || "https://images.unsplash.com/photo-1578844251758-2f71da645217?auto=format&fit=crop&w=400&q=80",
       visualizationUrl: visualizationUrl,
       features: [...(match.features || []), ...(aiTire.features || [])].slice(0, 4),
       matchScore: aiTire.matchScore || (95 - index * 5),
@@ -182,7 +279,7 @@ async function callGeminiFallback(prompt: string): Promise<string> {
 }
 
 // Helper to construct prompts
-const buildAiPrompt = (userRequest: string, lang: Language, inventory: any[]) => {
+const buildAiPrompt = (userRequest: string, lang: Language, inventory: any[], vehicleInfo?: VehicleInfo) => {
     const inventoryString = JSON.stringify(inventory.map(t => ({
       brand: t.brand,
       model: t.model,
@@ -190,12 +287,17 @@ const buildAiPrompt = (userRequest: string, lang: Language, inventory: any[]) =>
       type: t.type
     })));
 
+    let contextStr = `"${userRequest}"`;
+    if (vehicleInfo && vehicleInfo.tireSizes && vehicleInfo.tireSizes.length > 0) {
+        contextStr += `\n\n[System Note: Detected Verified OEM Tire Sizes for this vehicle: ${vehicleInfo.tireSizes.join(', ')}. Use this to ensure accurate fitment recommendations.]`;
+    }
+
     return `
       You are the GCI Tire Match AI, a bilingual expert (English/French).
       User Language Context: ${lang === 'fr' ? 'FRENCH (Français)' : 'ENGLISH'}.
       
       User Request Data: 
-      "${userRequest}"
+      ${contextStr}
 
       TASK:
       1. **Analyze Request**: Determine if the user is looking for a **Specific Tire** or **General Recommendations**.
@@ -293,7 +395,7 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
       : "Vehicle";
 
   let parsedData: { identifiedVehicle: string, recommendations: any[] } | null = null;
-  const prompt = buildAiPrompt(userRequest, lang, inventory);
+  const prompt = buildAiPrompt(userRequest, lang, inventory, vehicleInfo);
 
   // 3. AI Search: Perplexity -> Gemini -> Local Fallback
   
@@ -333,6 +435,7 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
 
   const suggestionsWithImages = await Promise.all(recsToProcess.map(async (suggestion) => {
       let generatedUrl: string | null = null;
+      let realUrl: string | null = null;
       
       // Determine the best vehicle description to use for the image
       let vehicleForImage = parsedData!.identifiedVehicle;
@@ -342,18 +445,24 @@ export const getTireRecommendations = async (userRequest: string, lang: Language
           vehicleForImage = fallbackVehicleDesc;
       }
 
-      // Only generate if we have a vehicle description or the request was descriptive enough
-      if (vehicleForImage && !vehicleForImage.includes("Generic") && !vehicleForImage.includes("Vehicle")) {
-            const tireName = `${suggestion.brand} ${suggestion.model}`;
-            generatedUrl = await generateTireVisualization(vehicleForImage, tireName);
-      } else if (userRequest.length > 20 && !userRequest.includes("|")) { 
-            const tireName = `${suggestion.brand} ${suggestion.model}`;
-            generatedUrl = await generateTireVisualization(userRequest, tireName);
-      }
+      const tireName = `${suggestion.brand} ${suggestion.model}`;
+      const vehiclePrompt = (vehicleForImage && !vehicleForImage.includes("Generic") && !vehicleForImage.includes("Vehicle")) 
+        ? vehicleForImage 
+        : (userRequest.length > 20 && !userRequest.includes("|") ? userRequest : "studio background");
+
+      // Execute both visual fetchers in parallel
+      const [genResult, realResult] = await Promise.all([
+          generateTireVisualization(vehiclePrompt, tireName),
+          findRealProductImage(suggestion.brand, suggestion.model)
+      ]);
+      
+      generatedUrl = genResult;
+      realUrl = realResult;
       
       return {
           ...suggestion,
-          generatedImage: generatedUrl
+          generatedImage: generatedUrl,
+          realFoundImage: realUrl
       };
   }));
 
