@@ -1,7 +1,6 @@
-
 import { TireProduct, VehicleInfo, QualityTier, Installer } from "../types";
 import { findLocalInstallersWithMaps } from "./geminiService";
-
+import { fetchShopifyTireProducts } from "./shopifyService";
 const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
   { 
     id: "gci-001", variantId: "mock-1", brand: "Toyo", model: "Open Country A/T III", type: "All-Terrain", 
