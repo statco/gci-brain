@@ -18,6 +18,10 @@ let cachedShopifyInventory: Partial<TireProduct>[] | null = null;
 let cacheTimestamp: number = 0;
 const CACHE_DURATION = 5 * 60 * 1000;
 
+let cachedShopifyInventory: Partial<TireProduct>[] | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 5 * 60 * 1000;
+
 export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> => {
   const now = Date.now();
   
@@ -34,6 +38,18 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
       console.warn('⚠️ No products from Shopify, using fallback');
       return FALLBACK_INVENTORY;
     }
+
+    cachedShopifyInventory = products;
+    cacheTimestamp = now;
+    
+    console.log(`✅ Fetched ${products.length} products from Shopify`);
+    return products;
+    
+  } catch (error) {
+    console.error('❌ Shopify fetch error:', error);
+    return FALLBACK_INVENTORY;
+  }
+};
 
     cachedShopifyInventory = products;
     cacheTimestamp = now;
