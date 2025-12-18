@@ -1,5 +1,4 @@
-import { TireProduct, VehicleInfo, QualityTier, Installer } from "../types";
-import { findLocalInstallersWithMaps } from "./geminiService";
+import { TireProduct, VehicleInfo, Installer } from "../types";
 import { fetchShopifyTireProducts } from "./shopifyService";
 
 const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
@@ -85,8 +84,6 @@ export const verifyVehicleFitment = async (vehicleString: string): Promise<Vehic
 };
 
 export const fetchInstallers = async (lat?: number, lng?: number): Promise<Installer[]> => {
-  // Curated GCI Tire Installer Network
-  // Verified partners in the Abitibi-Témiscamingue region
   return [
     { 
       id: 'gci-rouyn', 
