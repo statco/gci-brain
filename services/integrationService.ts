@@ -13,10 +13,40 @@ const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
   }
 ];
 
+import { fetchShopifyTireProducts } from "./shopifyService";
+
+let cachedShopifyInventory: Partial<TireProduct>[] | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 5 * 60 * 1000;
+
 export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> => {
+  const now = Date.now();
+  
+  if (cachedShopifyInventory && (now - cacheTimestamp) < CACHE_DURATION) {
+    console.log('✅ Using cached Shopify inventory');
+    return cachedShopifyInventory;
+  }
+
   try {
-    const response = await fetch('/api/shopify-inventory');
-    if (response.status === 404) return FALLBACK_INVENTORY;
+    console.log('🔄 Fetching fresh Shopify inventory...');
+    const products = await fetchShopifyTireProducts();
+    
+    if (products.length === 0) {
+      console.warn('⚠️ No products from Shopify, using fallback');
+      return FALLBACK_INVENTORY;
+    }
+
+    cachedShopifyInventory = products;
+    cacheTimestamp = now;
+    
+    console.log(`✅ Fetched ${products.length} products from Shopify`);
+    return products;
+    
+  } catch (error) {
+    console.error('❌ Shopify fetch error:', error);
+    return FALLBACK_INVENTORY;
+  }
+};    if (response.status === 404) return FALLBACK_INVENTORY;
     const json = await response.json();
     return json.data.products.edges.map((edge: any) => ({
         id: edge.node.id,
