@@ -1,26 +1,37 @@
 import { TireProduct, VehicleInfo, QualityTier, Installer } from "../types";
 import { findLocalInstallersWithMaps } from "./geminiService";
 import { fetchShopifyTireProducts } from "./shopifyService";
+
 const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
   { 
-    id: "gci-001", variantId: "mock-1", brand: "Toyo", model: "Open Country A/T III", type: "All-Terrain", 
-    description: "Latest generation grippy all-terrain tire.", pricePerUnit: 245, features: ["Cut Chip Resistance"], tier: "Best", imageUrl: ""
+    id: "gci-001", 
+    variantId: "mock-1", 
+    brand: "Toyo", 
+    model: "Open Country A/T III", 
+    type: "All-Terrain", 
+    description: "Latest generation grippy all-terrain tire.", 
+    pricePerUnit: 245, 
+    features: ["Cut Chip Resistance"], 
+    tier: "Best", 
+    imageUrl: ""
   },
   { 
-    id: "gci-002", variantId: "mock-2", brand: "Nitto", model: "Ridge Grappler V2", type: "Hybrid Terrain", 
-    description: "Balance between mud aggression and comfort.", pricePerUnit: 310, features: ["Variable Pitch"], tier: "Best", imageUrl: ""
+    id: "gci-002", 
+    variantId: "mock-2", 
+    brand: "Nitto", 
+    model: "Ridge Grappler V2", 
+    type: "Hybrid Terrain", 
+    description: "Balance between mud aggression and comfort.", 
+    pricePerUnit: 310, 
+    features: ["Variable Pitch"], 
+    tier: "Best", 
+    imageUrl: ""
   }
 ];
 
-import { fetchShopifyTireProducts } from "./shopifyService";
-
 let cachedShopifyInventory: Partial<TireProduct>[] | null = null;
 let cacheTimestamp: number = 0;
-const CACHE_DURATION = 5 * 60 * 1000;
-
-let cachedShopifyInventory: Partial<TireProduct>[] | null = null;
-let cacheTimestamp: number = 0;
-const CACHE_DURATION = 5 * 60 * 1000;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> => {
   const now = Date.now();
@@ -47,31 +58,6 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
     
   } catch (error) {
     console.error('❌ Shopify fetch error:', error);
-    return FALLBACK_INVENTORY;
-  }
-};
-
-    cachedShopifyInventory = products;
-    cacheTimestamp = now;
-    
-    console.log(`✅ Fetched ${products.length} products from Shopify`);
-    return products;
-    
-  } catch (error) {
-    console.error('❌ Shopify fetch error:', error);
-    return FALLBACK_INVENTORY;
-  }
-};    if (response.status === 404) return FALLBACK_INVENTORY;
-    const json = await response.json();
-    return json.data.products.edges.map((edge: any) => ({
-        id: edge.node.id,
-        brand: edge.node.title.split(' ')[0],
-        model: edge.node.title.split(' ').slice(1).join(' '),
-        pricePerUnit: parseFloat(edge.node.variants.edges[0]?.node.price.amount || "200"),
-        imageUrl: edge.node.images.edges[0]?.node.url,
-        tier: "Good"
-    }));
-  } catch (error) {
     return FALLBACK_INVENTORY;
   }
 };
