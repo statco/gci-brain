@@ -13,7 +13,8 @@ import { getTireRecommendations } from './services/geminiService';
 import { AppState, ProcessingLog, ProcessingStage, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 
-function App() {
+// Main AI Match App Component
+function TireMatchApp() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [recommendations, setRecommendations] = useState<TireProduct[]>([]);
@@ -33,14 +34,10 @@ function App() {
       try {
         const parsed = JSON.parse(savedState);
         
-        // Restore language preference
         if (parsed.lang) setLang(parsed.lang);
-
-        // Restore favorites and compare list
         if (parsed.favorites) setFavorites(parsed.favorites);
         if (parsed.compareList) setCompareList(parsed.compareList);
 
-        // Only restore main app flow if not in a transient state
         if (parsed.appState && parsed.appState !== AppState.IDLE && parsed.appState !== AppState.PROCESSING && parsed.appState !== AppState.ERROR) {
            setAppState(parsed.appState);
            if (parsed.recommendations) setRecommendations(parsed.recommendations);
@@ -54,11 +51,8 @@ function App() {
 
   // 2. Save state to local storage on change
   useEffect(() => {
-    // Sanitize function to remove heavy Base64 images which cause QuotaExceededError
     const sanitizeTire = (tire: TireProduct): TireProduct => {
       const clone = { ...tire };
-      // If visualizationUrl is a base64 string (large), remove it for storage.
-      // We keep standard URLs.
       if (clone.visualizationUrl && clone.visualizationUrl.startsWith('data:')) {
         clone.visualizationUrl = undefined;
       }
@@ -66,7 +60,6 @@ function App() {
     };
 
     const stateToSave = {
-      // If currently processing, save as IDLE to avoid getting stuck on reload
       appState: (appState === AppState.PROCESSING) ? AppState.IDLE : appState, 
       recommendations: recommendations.map(sanitizeTire),
       selectedTire: selectedTire ? { ...selectedTire, tire: sanitizeTire(selectedTire.tire) } : null,
@@ -79,7 +72,6 @@ function App() {
       localStorage.setItem('gci_app_state_v2', JSON.stringify(stateToSave));
     } catch (e) {
       console.warn("LocalStorage Quota Exceeded. Clearing state to recover.", e);
-      // If quota exceeded, try to clear it or save only minimal state
       try {
         const minimalState = { lang, appState: AppState.IDLE };
         localStorage.setItem('gci_app_state_v2', JSON.stringify(minimalState));
@@ -89,7 +81,7 @@ function App() {
     }
   }, [appState, recommendations, selectedTire, favorites, compareList, lang]);
 
-  // 3. Sync language with URL parameters (Shopify integration) - Priority over storage
+  // 3. Sync language with URL parameters (Shopify integration)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlLang = params.get('lang') || params.get('locale');
@@ -109,7 +101,6 @@ function App() {
   const startProcessing = async (request: string) => {
     setAppState(AppState.PROCESSING);
     
-    // Initialize logs
     const initialLogs: ProcessingLog[] = [
       { stage: ProcessingStage.ANALYZING, message: lang === 'en' ? "Consulting expert databases..." : "Consultation des bases d'experts...", status: 'active' },
       { stage: ProcessingStage.VALIDATING, message: lang === 'en' ? "Verifying fitment with DriveRightData..." : "Vérification DriveRightData...", status: 'pending' },
@@ -120,7 +111,6 @@ function App() {
     try {
       const products = await getTireRecommendations(request, lang);
 
-      // Simulation Steps
       setLogs(prev => prev.map(log => 
         log.stage === ProcessingStage.ANALYZING ? { ...log, status: 'completed' } :
         log.stage === ProcessingStage.VALIDATING ? { ...log, status: 'active' } : log
@@ -160,10 +150,8 @@ function App() {
     setSelectedTire(null);
     setCompareList([]);
     setLogs([]);
-    // Note: We intentionally do NOT clear favorites here
   };
 
-  // Feature Handlers
   const toggleFavorite = (tire: TireProduct) => {
     if (favorites.some(f => f.id === tire.id)) {
       setFavorites(favorites.filter(f => f.id !== tire.id));
@@ -275,7 +263,6 @@ function App() {
           </div>
         )}
 
-        {/* Floating Compare Bar */}
         {compareList.length > 0 && appState === AppState.RESULTS && (
           <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-4 rounded shadow-2xl z-40 flex items-center gap-6 animate-fade-in-up border-b-4 border-red-600">
             <span className="font-bold text-sm">{compareList.length} tire{compareList.length > 1 ? 's' : ''} selected</span>
@@ -339,7 +326,6 @@ function App() {
          </div>
       </footer>
 
-      {/* Modals */}
       {activeModal === 'reviews' && reviewTire && (
         <ReviewsModal tire={reviewTire} onClose={() => setActiveModal(null)} />
       )}
@@ -367,6 +353,21 @@ function App() {
         />
       )}
     </div>
+  );
+}
+
+// Main App with Router
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Main AI Match Route */}
+        <Route path="/" element={<TireMatchApp />} />
+        
+        {/* Installer Application Route */}
+        <Route path="/installer-application" element={<InstallerApplicationForm />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
