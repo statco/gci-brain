@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
-import { addToCartAndGetCheckoutUrl, buildCartPermalink, CartItem } from '../services/shopifyCartService';
 import { createInstallationJob } from '../services/airtableService';
 
 interface CheckoutModalProps {
@@ -37,50 +36,40 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       console.log('🛒 Starting checkout process...');
 
-      const cartItems: CartItem[] = [
-        {
-          variantId: tire.variantId,
-          quantity: quantity
-        }
-      ];
+      // Extract numeric variant ID
+      let tireVariantId = tire.variantId;
+      if (tireVariantId.includes('gid://shopify/ProductVariant/')) {
+        tireVariantId = tireVariantId.split('/').pop() || tireVariantId;
+      }
 
+      console.log('🔍 Tire Variant ID:', tireVariantId);
+
+      // Build cart URL
+      let cartUrl = `https://gcitires.com/cart/${tireVariantId}:${quantity}`;
+
+      // Add installation if selected
       if (withInstallation) {
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
         if (installationVariantId) {
-          cartItems.push({
-            variantId: installationVariantId,
-            quantity: quantity
-          });
-        }
-      }
-
-      console.log('📦 Cart items:', cartItems);
-
-      let checkoutUrl: string;
-      
-      try {
-        console.log('🔄 Using Shopify Buy SDK...');
-        checkoutUrl = await addToCartAndGetCheckoutUrl(cartItems);
-        console.log('✅ Checkout URL from SDK:', checkoutUrl);
-      } catch (sdkError) {
-        console.warn('⚠️ SDK failed, using permalink fallback:', sdkError);
-        checkoutUrl = buildCartPermalink(cartItems);
-        console.log('🔗 Permalink URL:', checkoutUrl);
-      }
-
-      // If installation is included, create job in Airtable
-      if (withInstallation) {
-        console.log('📝 Creating installation job in Airtable...');
-        
-        try {
-          // Extract order ID from checkout URL (if available)
-          const checkoutId = checkoutUrl.split('/').pop()?.split('?')[0] || 'PENDING';
+          let installId = installationVariantId;
+          if (installId.includes('gid://shopify/ProductVariant/')) {
+            installId = installId.split('/').pop() || installId;
+          }
           
+          console.log('🔧 Installation Variant ID:', installId);
+          
+          // Add to cart: TIRE_ID:QTY,INSTALLATION_ID:QTY
+          cartUrl = `https://gcitires.com/cart/${tireVariantId}:${quantity},${installId}:${quantity}`;
+        }
+
+        // Create job in Airtable
+        console.log('📝 Creating installation job in Airtable...');
+        try {
           const jobResult = await createInstallationJob({
-            shopifyOrderId: checkoutId,
-            customerName: 'Customer', // Will be updated when order is placed
-            customerEmail: 'pending@gcitires.com', // Will be updated when order is placed
+            shopifyOrderId: `PENDING-${Date.now()}`,
+            customerName: 'Customer',
+            customerEmail: 'pending@gcitires.com',
             customerAddress: 'To be determined',
             tireBrand: tire.brand,
             tireModel: tire.model,
@@ -94,35 +83,36 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             console.log('✅ Installation job created:', jobResult.recordId);
           } else {
             console.warn('⚠️ Failed to create installation job:', jobResult.error);
-            // Don't block checkout if Airtable fails
           }
         } catch (airtableError) {
           console.error('❌ Airtable error (non-blocking):', airtableError);
-          // Continue with checkout even if Airtable fails
         }
       }
 
-      const url = new URL(checkoutUrl);
-      url.searchParams.append('ref', 'ai_match_v2');
+      // Add tracking parameters
+      const params = new URLSearchParams();
+      params.append('ref', 'ai_match_v2');
       if (withInstallation) {
-        url.searchParams.append('installation', 'true');
+        params.append('installation', 'true');
       }
-      
-      const finalUrl = url.toString();
-      console.log('🎯 Final checkout URL:', finalUrl);
 
+      cartUrl += `?${params.toString()}`;
+
+      console.log('🛒 Final cart URL:', cartUrl);
+
+      // Open cart in new tab or redirect
       setTimeout(() => {
-        const newWindow = window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        const newWindow = window.open(cartUrl, '_blank', 'noopener,noreferrer');
         
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
           console.warn('⚠️ Popup blocked, redirecting parent page');
           if (window.top) {
-            window.top.location.href = finalUrl;
+            window.top.location.href = cartUrl;
           } else {
-            window.location.href = finalUrl;
+            window.location.href = cartUrl;
           }
         } else {
-          console.log('✅ Checkout opened in new tab');
+          console.log('✅ Cart opened in new tab');
         }
         
         onConfirm();
@@ -150,10 +140,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Processing Checkout' : 'Traitement du paiement'}
+            {lang === 'en' ? 'Opening Cart' : 'Ouverture du panier'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Redirecting you to secure checkout...' : 'Redirection vers le paiement sécurisé...'}
+            {lang === 'en' ? 'Your cart will open in a new tab...' : 'Votre panier s\'ouvrira dans un nouvel onglet...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
             {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
@@ -261,11 +251,14 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
-              {t.proceedCheckout || (lang === 'en' ? 'Proceed to Checkout' : 'Procéder au paiement')}
+              {t.proceedCheckout || (lang === 'en' ? 'Add to Cart & Checkout' : 'Ajouter au panier')}
             </button>
             <div className="text-center">
               <p className="text-xs text-slate-400 font-medium">
-                {lang === 'en' ? 'Secure checkout powered by Shopify' : 'Paiement sécurisé par Shopify'}
+                {lang === 'en' 
+                  ? 'Cart will open in a new tab. Please allow popups if blocked.'
+                  : 'Le panier s\'ouvrira dans un nouvel onglet. Veuillez autoriser les popups si bloqués.'
+                }
               </p>
             </div>
           </div>
