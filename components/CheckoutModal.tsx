@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
+import { addToCartAndGetCheckoutUrl, buildCartPermalink, CartItem } from '../services/shopifyCartService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
@@ -34,18 +35,12 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         throw new Error('This tire is currently unavailable for online purchase. Please contact us for availability.');
       }
 
-      // Extract numeric ID from Shopify GID format
-      let variantId = tire.variantId;
-      if (variantId.includes('gid://shopify/ProductVariant/')) {
-        variantId = variantId.split('/').pop() || variantId;
-      }
+      console.log('🛒 Starting checkout process...');
 
-      console.log('🔍 Adding to cart - Tire Variant ID:', variantId);
-
-      // Build items array for cart
-      const items: Array<{ id: string; quantity: number }> = [
+      // Build cart items array
+      const cartItems: CartItem[] = [
         {
-          id: variantId,
+          variantId: tire.variantId,
           quantity: quantity
         }
       ];
@@ -55,65 +50,55 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
         if (installationVariantId) {
-          let installId = installationVariantId;
-          if (installId.includes('gid://shopify/ProductVariant/')) {
-            installId = installId.split('/').pop() || installId;
-          }
-          
-          console.log('🔧 Adding installation - Variant ID:', installId);
-          
-          items.push({
-            id: installId,
+          cartItems.push({
+            variantId: installationVariantId,
             quantity: quantity
           });
         }
       }
 
-      console.log('📦 Items to add:', items);
+      console.log('📦 Cart items:', cartItems);
 
-      // Use Shopify Ajax API to add items to cart
-      const response = await fetch('https://gcitires.com/cart/add.js', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ items })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('❌ Cart API Error:', errorData);
-        throw new Error(errorData.description || 'Failed to add items to cart');
+      // Try Shopify Buy SDK first (most reliable)
+      let checkoutUrl: string;
+      
+      try {
+        console.log('🔄 Using Shopify Buy SDK...');
+        checkoutUrl = await addToCartAndGetCheckoutUrl(cartItems);
+        console.log('✅ Checkout URL from SDK:', checkoutUrl);
+      } catch (sdkError) {
+        // Fallback to permalink if SDK fails
+        console.warn('⚠️ SDK failed, using permalink fallback:', sdkError);
+        checkoutUrl = buildCartPermalink(cartItems);
+        console.log('🔗 Permalink URL:', checkoutUrl);
       }
 
-      const cartData = await response.json();
-      console.log('✅ Successfully added to cart:', cartData);
-
-      // Build cart URL with tracking parameters
-      const params = new URLSearchParams();
-      params.append('ref', 'ai_match_v2');
+      // Add tracking parameters
+      const url = new URL(checkoutUrl);
+      url.searchParams.append('ref', 'ai_match_v2');
       if (withInstallation) {
-        params.append('installation', 'true');
+        url.searchParams.append('installation', 'true');
       }
+      
+      const finalUrl = url.toString();
+      console.log('🎯 Final checkout URL:', finalUrl);
 
-      const cartUrl = `https://gcitires.com/cart?${params.toString()}`;
-      console.log('🛒 Opening cart URL:', cartUrl);
-
-      // Small delay for better UX, then open cart
+      // Small delay for better UX, then open checkout
       setTimeout(() => {
         // Try to open in new tab
-        const newWindow = window.open(cartUrl, '_blank', 'noopener,noreferrer');
+        const newWindow = window.open(finalUrl, '_blank', 'noopener,noreferrer');
         
         // Check if popup was blocked
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          console.warn('⚠️ Popup blocked, redirecting parent page instead');
+          console.warn('⚠️ Popup blocked, redirecting parent page');
+          // Popup blocked - redirect parent/top window
           if (window.top) {
-            window.top.location.href = cartUrl;
+            window.top.location.href = finalUrl;
           } else {
-            window.location.href = cartUrl;
+            window.location.href = finalUrl;
           }
         } else {
-          console.log('✅ Cart opened in new tab');
+          console.log('✅ Checkout opened in new tab');
         }
         
         onConfirm();
@@ -124,7 +109,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setErrorMessage(
         error instanceof Error 
           ? error.message 
-          : 'Unable to add items to cart. Please try again.'
+          : 'Unable to process checkout. Please try again.'
       );
       setStep('error');
     }
@@ -142,10 +127,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Adding to Cart' : 'Ajout au panier'}
+            {lang === 'en' ? 'Processing Checkout' : 'Traitement du paiement'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Your cart will open in a new tab...' : 'Votre panier s\'ouvrira dans un nouvel onglet...'}
+            {lang === 'en' ? 'Redirecting you to secure checkout...' : 'Redirection vers le paiement sécurisé...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
             {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
@@ -257,13 +242,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
-              {t.proceedCheckout || (lang === 'en' ? 'Add to Cart & Checkout' : 'Ajouter au panier')}
+              {t.proceedCheckout || (lang === 'en' ? 'Proceed to Checkout' : 'Procéder au paiement')}
             </button>
             <div className="text-center">
               <p className="text-xs text-slate-400 font-medium">
                 {lang === 'en' 
-                  ? 'Cart will open in a new tab. Please allow popups if blocked.'
-                  : 'Le panier s\'ouvrira dans un nouvel onglet. Veuillez autoriser les popups si bloqués.'
+                  ? 'Secure checkout powered by Shopify'
+                  : 'Paiement sécurisé par Shopify'
                 }
               </p>
             </div>
