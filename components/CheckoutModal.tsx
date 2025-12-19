@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
-import { addToCartAndGetCheckoutUrl, buildCartPermalink, CartItem } from '../services/shopifyCartService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
@@ -26,7 +25,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const t = translations[lang];
 
-  const handleProceedToCheckout = async () => {
+  const handleProceedToCheckout = () => {
     setStep('redirecting');
 
     try {
@@ -35,72 +34,42 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         throw new Error('This tire is currently unavailable for online purchase. Please contact us for availability.');
       }
 
-      console.log('🛒 Starting checkout process...');
+      // Extract numeric ID from Shopify GID format
+      let variantId = tire.variantId;
+      if (variantId.includes('gid://shopify/ProductVariant/')) {
+        variantId = variantId.split('/').pop() || variantId;
+      }
 
-      // Build cart items array
-      const cartItems: CartItem[] = [
-        {
-          variantId: tire.variantId,
-          quantity: quantity
-        }
-      ];
+      // Build cart URL with items
+      let cartUrl = `https://gcitires.com/cart/${variantId}:${quantity}`;
 
       // Add installation service if selected
       if (withInstallation) {
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
         if (installationVariantId) {
-          cartItems.push({
-            variantId: installationVariantId,
-            quantity: quantity
-          });
+          let installId = installationVariantId;
+          if (installId.includes('gid://shopify/ProductVariant/')) {
+            installId = installId.split('/').pop() || installId;
+          }
+          cartUrl = `https://gcitires.com/cart/${variantId}:${quantity},${installId}:${quantity}`;
         }
-      }
-
-      console.log('📦 Cart items:', cartItems);
-
-      // Try Shopify Buy SDK first (most reliable)
-      let checkoutUrl: string;
-      
-      try {
-        console.log('🔄 Using Shopify Buy SDK...');
-        checkoutUrl = await addToCartAndGetCheckoutUrl(cartItems);
-        console.log('✅ Checkout URL from SDK:', checkoutUrl);
-      } catch (sdkError) {
-        // Fallback to permalink if SDK fails
-        console.warn('⚠️ SDK failed, using permalink fallback:', sdkError);
-        checkoutUrl = buildCartPermalink(cartItems);
-        console.log('🔗 Permalink URL:', checkoutUrl);
       }
 
       // Add tracking parameters
-      const url = new URL(checkoutUrl);
-      url.searchParams.append('ref', 'ai_match_v2');
+      const params = new URLSearchParams();
+      params.append('ref', 'ai_match_v2');
       if (withInstallation) {
-        url.searchParams.append('installation', 'true');
+        params.append('installation', 'true');
       }
-      
-      const finalUrl = url.toString();
-      console.log('🎯 Final checkout URL:', finalUrl);
 
-      // Small delay for better UX, then open checkout
+      cartUrl += `?${params.toString()}`;
+
+      console.log('🛒 Redirecting to cart:', cartUrl);
+
+      // Small delay for better UX, then redirect
       setTimeout(() => {
-        // Try to open in new tab
-        const newWindow = window.open(finalUrl, '_blank', 'noopener,noreferrer');
-        
-        // Check if popup was blocked
-        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          console.warn('⚠️ Popup blocked, redirecting parent page');
-          // Popup blocked - redirect parent/top window
-          if (window.top) {
-            window.top.location.href = finalUrl;
-          } else {
-            window.location.href = finalUrl;
-          }
-        } else {
-          console.log('✅ Checkout opened in new tab');
-        }
-        
+        window.location.href = cartUrl;
         onConfirm();
       }, 800);
 
@@ -109,7 +78,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setErrorMessage(
         error instanceof Error 
           ? error.message 
-          : 'Unable to process checkout. Please try again.'
+          : 'Unable to add items to cart. Please try again.'
       );
       setStep('error');
     }
@@ -127,13 +96,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Processing Checkout' : 'Traitement du paiement'}
+            {lang === 'en' ? 'Adding to Cart' : 'Ajout au panier'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Redirecting you to secure checkout...' : 'Redirection vers le paiement sécurisé...'}
+            {lang === 'en' ? 'Redirecting you to checkout...' : 'Redirection vers le paiement...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
-            {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
+            {lang === 'en' ? 'Please wait...' : 'Veuillez patienter...'}
           </div>
         </div>
       </div>
@@ -242,21 +211,4 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
-              {t.proceedCheckout || (lang === 'en' ? 'Proceed to Checkout' : 'Procéder au paiement')}
-            </button>
-            <div className="text-center">
-              <p className="text-xs text-slate-400 font-medium">
-                {lang === 'en' 
-                  ? 'Secure checkout powered by Shopify'
-                  : 'Paiement sécurisé par Shopify'
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default CheckoutModal;
+              {t.proceedCheckout || (lang === 'en' ? 'Add
