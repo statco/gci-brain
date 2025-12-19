@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
+import { addToCartAndGetCheckoutUrl, buildCartPermalink, CartItem } from '../services/shopifyCartService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
@@ -25,7 +26,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const t = translations[lang];
 
-  const handleProceedToCheckout = () => {
+  const handleProceedToCheckout = async () => {
     setStep('redirecting');
 
     try {
@@ -34,46 +35,72 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         throw new Error('This tire is currently unavailable for online purchase. Please contact us for availability.');
       }
 
-      // Extract numeric ID from Shopify GID format
-      // Format: gid://shopify/ProductVariant/12345678901234 → 12345678901234
-      let variantId = tire.variantId;
-      if (variantId.includes('gid://shopify/ProductVariant/')) {
-        variantId = variantId.split('/').pop() || variantId;
-      }
+      console.log('🛒 Starting checkout process...');
 
-      // Build cart URL with items
-      // Format: https://gcitires.com/cart/VARIANT_ID:QUANTITY
-      let cartUrl = `https://gcitires.com/cart/${variantId}:${quantity}`;
+      // Build cart items array
+      const cartItems: CartItem[] = [
+        {
+          variantId: tire.variantId,
+          quantity: quantity
+        }
+      ];
 
       // Add installation service if selected
       if (withInstallation) {
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
         if (installationVariantId) {
-          // Extract numeric ID from installation variant
-          let installId = installationVariantId;
-          if (installId.includes('gid://shopify/ProductVariant/')) {
-            installId = installId.split('/').pop() || installId;
-          }
-          // Add installation to cart: TIRE_ID:QTY,INSTALLATION_ID:QTY
-          cartUrl = `https://gcitires.com/cart/${variantId}:${quantity},${installId}:${quantity}`;
+          cartItems.push({
+            variantId: installationVariantId,
+            quantity: quantity
+          });
         }
       }
 
-      // Add tracking parameters
-      const params = new URLSearchParams();
-      params.append('ref', 'ai_match_v2');
-      if (withInstallation) {
-        params.append('installation', 'true');
+      console.log('📦 Cart items:', cartItems);
+
+      // Try Shopify Buy SDK first (most reliable)
+      let checkoutUrl: string;
+      
+      try {
+        console.log('🔄 Using Shopify Buy SDK...');
+        checkoutUrl = await addToCartAndGetCheckoutUrl(cartItems);
+        console.log('✅ Checkout URL from SDK:', checkoutUrl);
+      } catch (sdkError) {
+        // Fallback to permalink if SDK fails
+        console.warn('⚠️ SDK failed, using permalink fallback:', sdkError);
+        checkoutUrl = buildCartPermalink(cartItems);
+        console.log('🔗 Permalink URL:', checkoutUrl);
       }
 
-      cartUrl += `?${params.toString()}`;
+      // Add tracking parameters
+      const url = new URL(checkoutUrl);
+      url.searchParams.append('ref', 'ai_match_v2');
+      if (withInstallation) {
+        url.searchParams.append('installation', 'true');
+      }
+      
+      const finalUrl = url.toString();
+      console.log('🎯 Final checkout URL:', finalUrl);
 
-      console.log('🛒 Redirecting to cart:', cartUrl);
-
-      // Small delay for better UX, then redirect
+      // Small delay for better UX, then open checkout
       setTimeout(() => {
-        window.location.href = cartUrl;
+        // Try to open in new tab
+        const newWindow = window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        
+        // Check if popup was blocked
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+          console.warn('⚠️ Popup blocked, redirecting parent page');
+          // Popup blocked - redirect parent/top window
+          if (window.top) {
+            window.top.location.href = finalUrl;
+          } else {
+            window.location.href = finalUrl;
+          }
+        } else {
+          console.log('✅ Checkout opened in new tab');
+        }
+        
         onConfirm();
       }, 800);
 
@@ -82,7 +109,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setErrorMessage(
         error instanceof Error 
           ? error.message 
-          : 'Unable to add items to cart. Please try again.'
+          : 'Unable to process checkout. Please try again.'
       );
       setStep('error');
     }
@@ -100,13 +127,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Adding to Cart' : 'Ajout au panier'}
+            {lang === 'en' ? 'Processing Checkout' : 'Traitement du paiement'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Redirecting you to checkout...' : 'Redirection vers le paiement...'}
+            {lang === 'en' ? 'Redirecting you to secure checkout...' : 'Redirection vers le paiement sécurisé...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
-            {lang === 'en' ? 'Please wait...' : 'Veuillez patienter...'}
+            {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
           </div>
         </div>
       </div>
@@ -215,13 +242,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
-              {t.proceedCheckout || (lang === 'en' ? 'Add to Cart & Checkout' : 'Ajouter au panier')}
+              {t.proceedCheckout || (lang === 'en' ? 'Proceed to Checkout' : 'Procéder au paiement')}
             </button>
             <div className="text-center">
               <p className="text-xs text-slate-400 font-medium">
                 {lang === 'en' 
-                  ? 'You will be redirected to gcitires.com to complete your purchase'
-                  : 'Vous serez redirigé vers gcitires.com pour finaliser votre achat'
+                  ? 'Secure checkout powered by Shopify'
+                  : 'Paiement sécurisé par Shopify'
                 }
               </p>
             </div>
