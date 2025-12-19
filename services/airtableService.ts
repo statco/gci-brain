@@ -359,3 +359,4 @@ export async function approveInstaller(
     error: error instanceof Error ? error.message : 'Unknown error',
   };
 }
+  }
