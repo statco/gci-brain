@@ -338,11 +338,16 @@ export async function approveInstaller(
     });
 
     return { success: true };
-  } catch (error) {
-    console.error('Error approving installer:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+ } catch (error) {
+  console.error('Error submitting installer application:', error);
+  
+  // Log the full error for debugging
+  if (error instanceof Error) {
+    console.error('Error details:', error.message);
   }
+  
+  return {
+    success: false,
+    error: error instanceof Error ? error.message : 'Unknown error',
+  };
 }
