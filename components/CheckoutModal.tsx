@@ -69,11 +69,27 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       cartUrl += `?${params.toString()}`;
 
-      console.log('🛒 Redirecting to cart:', cartUrl);
+      console.log('🛒 Opening cart in new tab:', cartUrl);
 
-      // Small delay for better UX, then redirect
+      // Small delay for better UX, then open in new tab
       setTimeout(() => {
-        window.location.href = cartUrl;
+        // Try to open in new tab
+        const newWindow = window.open(cartUrl, '_blank', 'noopener,noreferrer');
+        
+        // Check if popup was blocked
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+          // Popup blocked - fallback to top-level redirect
+          console.warn('⚠️ Popup blocked, redirecting parent page instead');
+          if (window.top) {
+            window.top.location.href = cartUrl;
+          } else {
+            window.location.href = cartUrl;
+          }
+        } else {
+          // Success - new tab opened
+          console.log('✅ Cart opened in new tab');
+        }
+        
         onConfirm();
       }, 800);
 
@@ -100,13 +116,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Adding to Cart' : 'Ajout au panier'}
+            {lang === 'en' ? 'Opening Cart' : 'Ouverture du panier'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Redirecting you to checkout...' : 'Redirection vers le paiement...'}
+            {lang === 'en' ? 'Your cart will open in a new tab...' : 'Votre panier s\'ouvrira dans un nouvel onglet...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
-            {lang === 'en' ? 'Please wait...' : 'Veuillez patienter...'}
+            {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
           </div>
         </div>
       </div>
@@ -220,8 +236,8 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <div className="text-center">
               <p className="text-xs text-slate-400 font-medium">
                 {lang === 'en' 
-                  ? 'You will be redirected to gcitires.com to complete your purchase'
-                  : 'Vous serez redirigé vers gcitires.com pour finaliser votre achat'
+                  ? 'Cart will open in a new tab. Please allow popups if blocked.'
+                  : 'Le panier s\'ouvrira dans un nouvel onglet. Veuillez autoriser les popups si bloqués.'
                 }
               </p>
             </div>
