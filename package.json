@@ -9,18 +9,28 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "@google/genai": "^1.32.0",
-    "react-router-dom": "^6.28.0",
+    "react-router-dom": "6.28.0",
     "shopify-buy": "^2.17.1",
     "@vitejs/plugin-react": "^5.1.2"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
     "@types/node": "^22.14.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
 }
+```
+
+**Note:** Removed `^` from React packages to lock exact versions.
+
+## Fix 2: Find the JSON Parsing Error
+
+The error says:
+```
+SyntaxError: Expected ',' or '}' after property value in JSON at position 254 (line 8 column 6)
+at KA (index-KwuCZjMD.js:396:2009)
