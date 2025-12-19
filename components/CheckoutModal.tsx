@@ -25,7 +25,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const t = translations[lang];
 
-  const handleProceedToCheckout = () => {
+  const handleProceedToCheckout = async () => {
     setStep('redirecting');
 
     try {
@@ -35,50 +35,77 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
 
       // Extract numeric ID from Shopify GID format
-      // Format: gid://shopify/ProductVariant/12345678901234 → 12345678901234
       let variantId = tire.variantId;
       if (variantId.includes('gid://shopify/ProductVariant/')) {
         variantId = variantId.split('/').pop() || variantId;
       }
 
-      // Build cart URL with items
-      // Format: https://gcitires.com/cart/VARIANT_ID:QUANTITY
-      let cartUrl = `https://gcitires.com/cart/${variantId}:${quantity}`;
+      console.log('🔍 Adding to cart - Tire Variant ID:', variantId);
+
+      // Build items array for cart
+      const items: Array<{ id: string; quantity: number }> = [
+        {
+          id: variantId,
+          quantity: quantity
+        }
+      ];
 
       // Add installation service if selected
       if (withInstallation) {
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
         if (installationVariantId) {
-          // Extract numeric ID from installation variant
           let installId = installationVariantId;
           if (installId.includes('gid://shopify/ProductVariant/')) {
             installId = installId.split('/').pop() || installId;
           }
-          // Add installation to cart: TIRE_ID:QTY,INSTALLATION_ID:QTY
-          cartUrl = `https://gcitires.com/cart/${variantId}:${quantity},${installId}:${quantity}`;
+          
+          console.log('🔧 Adding installation - Variant ID:', installId);
+          
+          items.push({
+            id: installId,
+            quantity: quantity
+          });
         }
       }
 
-      // Add tracking parameters
+      console.log('📦 Items to add:', items);
+
+      // Use Shopify Ajax API to add items to cart
+      const response = await fetch('https://gcitires.com/cart/add.js', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ items })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ Cart API Error:', errorData);
+        throw new Error(errorData.description || 'Failed to add items to cart');
+      }
+
+      const cartData = await response.json();
+      console.log('✅ Successfully added to cart:', cartData);
+
+      // Build cart URL with tracking parameters
       const params = new URLSearchParams();
       params.append('ref', 'ai_match_v2');
       if (withInstallation) {
         params.append('installation', 'true');
       }
 
-      cartUrl += `?${params.toString()}`;
+      const cartUrl = `https://gcitires.com/cart?${params.toString()}`;
+      console.log('🛒 Opening cart URL:', cartUrl);
 
-      console.log('🛒 Opening cart in new tab:', cartUrl);
-
-      // Small delay for better UX, then open in new tab
+      // Small delay for better UX, then open cart
       setTimeout(() => {
         // Try to open in new tab
         const newWindow = window.open(cartUrl, '_blank', 'noopener,noreferrer');
         
         // Check if popup was blocked
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          // Popup blocked - fallback to top-level redirect
           console.warn('⚠️ Popup blocked, redirecting parent page instead');
           if (window.top) {
             window.top.location.href = cartUrl;
@@ -86,7 +113,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             window.location.href = cartUrl;
           }
         } else {
-          // Success - new tab opened
           console.log('✅ Cart opened in new tab');
         }
         
@@ -116,7 +142,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Opening Cart' : 'Ouverture du panier'}
+            {lang === 'en' ? 'Adding to Cart' : 'Ajout au panier'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
             {lang === 'en' ? 'Your cart will open in a new tab...' : 'Votre panier s\'ouvrira dans un nouvel onglet...'}
