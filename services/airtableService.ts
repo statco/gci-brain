@@ -71,11 +71,19 @@ async function airtableRequest(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    console.error('Airtable API Error:', error);
-    throw new Error(`Airtable API error: ${response.status}`);
+  const error = await response.json().catch(() => ({}));
+  console.error('Airtable API Error:', error);
+  
+  // Log detailed error info
+  if (error.error) {
+    console.error('Error type:', error.error.type);
+    console.error('Error message:', error.error.message);
   }
-
+  
+  throw new Error(
+    `Airtable API error: ${response.status} - ${error.error?.message || 'Unknown error'}`
+  );
+}
   return response.json();
 }
 
