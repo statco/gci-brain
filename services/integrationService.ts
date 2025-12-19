@@ -4,7 +4,7 @@ import { fetchShopifyTireProducts } from "./shopifyService";
 const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
   { 
     id: "gci-001", 
-    variantId: "mock-1", 
+    variantId: "42593751203888", 
     brand: "Toyo", 
     model: "Open Country A/T III", 
     type: "All-Terrain", 
@@ -12,11 +12,12 @@ const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
     pricePerUnit: 245, 
     features: ["Cut Chip Resistance"], 
     tier: "Best", 
-    imageUrl: ""
+    imageUrl: "",
+    inStock: true
   },
   { 
     id: "gci-002", 
-    variantId: "mock-2", 
+    variantId: "42593767915568", 
     brand: "Nitto", 
     model: "Ridge Grappler V2", 
     type: "Hybrid Terrain", 
@@ -24,7 +25,8 @@ const FALLBACK_INVENTORY: Partial<TireProduct>[] = [
     pricePerUnit: 310, 
     features: ["Variable Pitch"], 
     tier: "Best", 
-    imageUrl: ""
+    imageUrl: "",
+    inStock: true
   }
 ];
 
@@ -62,13 +64,21 @@ export const fetchShopifyInventory = async (): Promise<Partial<TireProduct>[]> =
 };
 
 async function checkWheelSizeApi(year: string, make: string, model: string): Promise<string[] | null> {
-  const userKey = process.env.WHEEL_SIZE_API_KEY; 
+  const userKey = import.meta.env.VITE_WHEEL_SIZE_API_KEY; 
   if (!userKey) return null;
+
   try {
     const response = await fetch(`https://api.wheel-size.com/v2/search/by_model/?make=${make}&model=${model}&year=${year}&user_key=${userKey}`);
+    
+    if (!response.ok) {
+      console.warn('⚠️ Wheel Size API error:', response.status);
+      return null;
+    }
+
     const data = await response.json();
     return data.length > 0 ? ["265/70R17"] : null;
   } catch (e) { 
+    console.error('❌ Wheel Size API failed:', e);
     return null; 
   }
 }
@@ -76,11 +86,19 @@ async function checkWheelSizeApi(year: string, make: string, model: string): Pro
 export const verifyVehicleFitment = async (vehicleString: string): Promise<VehicleInfo> => {
   const yearMatch = vehicleString.match(/\b(19|20)\d{2}\b/);
   const year = yearMatch ? yearMatch[0] : "2023";
+  
   const make = "Toyota";
   const model = "4Runner";
-
+  
   const tireSizes = await checkWheelSizeApi(year, make, model);
-  return { year, make, model, detected: true, tireSizes: tireSizes || [] };
+  
+  return { 
+    year, 
+    make, 
+    model, 
+    detected: true, 
+    tireSizes: tireSizes || [] 
+  };
 };
 
 export const fetchInstallers = async (lat?: number, lng?: number): Promise<Installer[]> => {
