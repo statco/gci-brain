@@ -12,10 +12,9 @@ const shopifyClient = axios.create({
   },
 });
 
-// GraphQL query to fetch products with CORRECT variant IDs
 const PRODUCTS_QUERY = `
   query getProducts($first: Int!) {
-    products(first: $first, query: "product_type:Tire") {
+    products(first: $first) {
       edges {
         node {
           id
@@ -63,7 +62,7 @@ export interface ShopifyProduct {
   vendor: string;
   productType: string;
   tags: string[];
-  variantId: string; // CRITICAL: This must be the numeric ID
+  variantId: string;
   price: number;
   compareAtPrice?: number;
   imageUrl: string;
@@ -71,14 +70,26 @@ export interface ShopifyProduct {
   quantityAvailable: number;
 }
 
-// Extract numeric ID from Shopify GID
+/**
+ * Extract numeric ID from Shopify GID
+ * Input: "gid://shopify/ProductVariant/42593751203888"
+ * Output: "42593751203888"
+ */
 function extractNumericId(gid: string): string {
-  // Shopify GIDs look like: gid://shopify/ProductVariant/42593751203888
-  // We need just the number at the end: 42593751203888
+  if (!gid) {
+    console.error('❌ Empty GID provided');
+    return '';
+  }
+
+  // GID format: gid://shopify/ProductVariant/42593751203888
   const parts = gid.split('/');
   const numericId = parts[parts.length - 1];
   
-  console.log('🔍 Extracting ID from GID:', gid, '→', numericId);
+  // Verify it's numeric
+  if (!/^\d+$/.test(numericId)) {
+    console.error('❌ Extracted ID is not numeric:', numericId);
+    return numericId;
+  }
   
   return numericId;
 }
@@ -87,7 +98,11 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
   try {
     console.log('🛒 Fetching products from Shopify...');
     console.log('   Domain:', SHOPIFY_DOMAIN);
-    console.log('   Has Token:', !!STOREFRONT_TOKEN);
+    console.log('   API Version:', API_VERSION);
+
+    if (!SHOPIFY_DOMAIN || !STOREFRONT_TOKEN) {
+      throw new Error('Shopify credentials missing. Check .env.local file.');
+    }
 
     const response = await shopifyClient.post('', {
       query: PRODUCTS_QUERY,
@@ -103,23 +118,25 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
     const edges = response.data.data?.products?.edges || [];
 
     console.log(`📦 Processing ${edges.length} products from Shopify...`);
+    console.log('=== YOUR REAL VARIANT IDs ===');
 
     for (const edge of edges) {
       const product = edge.node;
       
-      // Skip if no variants
       if (!product.variants?.edges || product.variants.edges.length === 0) {
         console.warn(`⚠️ Product "${product.title}" has no variants, skipping`);
         continue;
       }
 
-      // Get first variant (most products have only one variant)
       const variant = product.variants.edges[0].node;
       
-      // CRITICAL: Extract numeric ID from GID
-      const variantId = extractNumericId(variant.id);
+      // Extract numeric ID from GID
+      const variantGid = variant.id;
+      const variantId = extractNumericId(variantGid);
       
-      // Get first image
+      // Log for verification
+      console.log(`${product.title}: ${variantId}`);
+      
       const imageUrl = variant.image?.url || product.images?.edges?.[0]?.node?.url || '';
 
       const shopifyProduct: ShopifyProduct = {
@@ -129,7 +146,7 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
         vendor: product.vendor || 'Unknown',
         productType: product.productType || 'Tire',
         tags: product.tags || [],
-        variantId: variantId, // THIS is the critical field
+        variantId: variantId, // THIS is the critical field - must be numeric only!
         price: parseFloat(variant.price.amount),
         compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice.amount) : undefined,
         imageUrl: imageUrl,
@@ -137,15 +154,10 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
         quantityAvailable: variant.quantityAvailable || 0,
       };
 
-      console.log(`✅ Product: ${shopifyProduct.vendor} ${shopifyProduct.title}`);
-      console.log(`   Variant ID: ${shopifyProduct.variantId}`);
-      console.log(`   Price: $${shopifyProduct.price}`);
-      console.log(`   Available: ${shopifyProduct.availableForSale} (${shopifyProduct.quantityAvailable} in stock)`);
-
       products.push(shopifyProduct);
     }
 
-    console.log(`✅ Successfully fetched ${products.length} products from Shopify`);
+    console.log(`✅ Successfully fetched ${products.length} products with REAL variant IDs`);
     return products;
 
   } catch (error) {
@@ -160,14 +172,15 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
   }
 }
 
-// Get installation service variant ID
 export function getInstallationVariantId(): string | undefined {
   const variantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
   
   if (!variantId || variantId === 'your_installation_variant_id_here') {
-    console.warn('⚠️ Installation variant ID not configured');
+    console.warn('⚠️ Installation variant ID not configured in .env.local');
+    console.warn('⚠️ Add: VITE_SHOPIFY_INSTALLATION_PRODUCT_ID=42593767915568');
     return undefined;
   }
   
+  console.log('✅ Installation variant ID:', variantId);
   return variantId;
 }
