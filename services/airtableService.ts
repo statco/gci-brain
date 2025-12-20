@@ -1,4 +1,4 @@
-// src/services/airtableService.ts
+// services/airtableService.ts - FIXED VERSION
 
 const AIRTABLE_API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = import.meta.env.VITE_AIRTABLE_BASE_ID;
@@ -45,10 +45,11 @@ interface InstallationJob {
   quantity: number;
   installationFee: number;
   status?: string;
+  assignedInstaller?: string; // Installer record ID
 }
 
 /**
- * Generic Airtable API request handler
+ * Generic Airtable API request handler with improved error handling
  */
 async function airtableRequest(
   method: string,
@@ -56,35 +57,46 @@ async function airtableRequest(
   body?: any
 ): Promise<any> {
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
-    throw new Error('Airtable credentials not configured');
+    console.error('❌ Airtable credentials not configured');
+    console.error('API Key exists:', !!AIRTABLE_API_KEY);
+    console.error('Base ID exists:', !!AIRTABLE_BASE_ID);
+    throw new Error('Airtable credentials not configured. Please set VITE_AIRTABLE_API_KEY and VITE_AIRTABLE_BASE_ID');
   }
 
   const url = `${AIRTABLE_API_URL}/${encodeURIComponent(table)}`;
   
-  const response = await fetch(url, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-  if (!response.ok) {
-  const error = await response.json().catch(() => ({}));
-  console.error('Airtable API Error:', error);
-  
-  // Log detailed error info
-  if (error.error) {
-    console.error('Error type:', error.error.type);
-    console.error('Error message:', error.error.message);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      console.error('❌ Airtable API Error:', error);
+      
+      if (error.error) {
+        console.error('Error type:', error.error.type);
+        console.error('Error message:', error.error.message);
+      }
+      
+      throw new Error(
+        `Airtable API error: ${response.status} - ${error.error?.message || 'Unknown error'}`
+      );
+    }
+    
+    return response.json();
+  } catch (fetchError) {
+    if (fetchError instanceof Error && fetchError.message.includes('Airtable API error')) {
+      throw fetchError; // Re-throw API errors
+    }
+    console.error('❌ Network error connecting to Airtable:', fetchError);
+    throw new Error('Network error: Unable to connect to Airtable. Check your internet connection.');
   }
-  
-  throw new Error(
-    `Airtable API error: ${response.status} - ${error.error?.message || 'Unknown error'}`
-  );
-}
-  return response.json();
 }
 
 /**
@@ -108,6 +120,7 @@ export async function submitInstallerApplication(
         'Status': 'Pending',
         'Rating': 0,
         'Total Jobs': 0,
+        'Application Date': new Date().toISOString().split('T')[0],
       }
     };
 
@@ -136,21 +149,23 @@ export async function submitInstallerApplication(
 
     const result = await airtableRequest('POST', INSTALLERS_TABLE, { fields: record.fields });
 
-    // Create notification for admin
-    await createNotification({
+    console.log('✅ Installer application created:', result.id);
+
+    // Create notification for admin (non-blocking)
+    createNotification({
       recipientType: 'Admin',
-      recipientEmail: 'admin@gcitires.com', // Replace with your admin email
+      recipientEmail: 'admin@gcitires.com',
       type: 'Application Received',
       title: 'New Installer Application',
       message: `${application.businessName} (${application.contactName}) has submitted an installer application.`,
-    });
+    }).catch(err => console.warn('⚠️ Failed to create notification:', err));
 
     return {
       success: true,
       recordId: result.id,
     };
   } catch (error) {
-    console.error('Error submitting installer application:', error);
+    console.error('❌ Error submitting installer application:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -176,7 +191,8 @@ export async function createInstallationJob(
         'Tire Size': job.tireSize,
         'Quantity': job.quantity,
         'Installation Fee': job.installationFee,
-        'Status': job.status || 'Pending',
+        'Status': job.status || 'Pending Payment',
+        'Created Date': new Date().toISOString().split('T')[0],
       }
     };
 
@@ -184,14 +200,52 @@ export async function createInstallationJob(
       record.fields['Customer Phone'] = job.customerPhone;
     }
 
+    if (job.assignedInstaller) {
+      record.fields['Assigned Installer'] = [job.assignedInstaller]; // Link to record
+    }
+
     const result = await airtableRequest('POST', JOBS_TABLE, { fields: record.fields });
+
+    console.log('✅ Installation job created:', result.id);
 
     return {
       success: true,
       recordId: result.id,
     };
   } catch (error) {
-    console.error('Error creating installation job:', error);
+    console.error('❌ Error creating installation job:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Update installation job (e.g., after payment confirmed)
+ */
+export async function updateInstallationJob(
+  jobId: string,
+  updates: Partial<InstallationJob>
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const fields: Record<string, any> = {};
+    
+    if (updates.status) fields['Status'] = updates.status;
+    if (updates.shopifyOrderId) fields['Shopify Order ID'] = updates.shopifyOrderId;
+    if (updates.customerName) fields['Customer Name'] = updates.customerName;
+    if (updates.customerEmail) fields['Customer Email'] = updates.customerEmail;
+    if (updates.customerPhone) fields['Customer Phone'] = updates.customerPhone;
+    if (updates.customerAddress) fields['Customer Address'] = updates.customerAddress;
+    if (updates.assignedInstaller) fields['Assigned Installer'] = [updates.assignedInstaller];
+
+    await airtableRequest('PATCH', `${JOBS_TABLE}/${jobId}`, { fields });
+
+    console.log('✅ Installation job updated:', jobId);
+
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error updating installation job:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -204,7 +258,7 @@ export async function createInstallationJob(
  */
 export async function getInstallerByEmail(email: string): Promise<any | null> {
   try {
-    const formula = `{Email} = '${email}'`;
+    const formula = `{Email} = '${email.replace(/'/g, "\\'")}'`; // Escape quotes
     const url = `${AIRTABLE_API_URL}/${encodeURIComponent(INSTALLERS_TABLE)}?filterByFormula=${encodeURIComponent(formula)}`;
     
     const response = await fetch(url, {
@@ -212,6 +266,10 @@ export async function getInstallerByEmail(email: string): Promise<any | null> {
         'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
       },
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
 
     const data = await response.json();
     
@@ -224,7 +282,7 @@ export async function getInstallerByEmail(email: string): Promise<any | null> {
     
     return null;
   } catch (error) {
-    console.error('Error fetching installer:', error);
+    console.error('❌ Error fetching installer:', error);
     return null;
   }
 }
@@ -234,7 +292,7 @@ export async function getInstallerByEmail(email: string): Promise<any | null> {
  */
 export async function getInstallerJobs(installerId: string): Promise<any[]> {
   try {
-    const formula = `{Assigned Installer} = '${installerId}'`;
+    const formula = `FIND('${installerId}', ARRAYJOIN({Assigned Installer})) > 0`;
     const url = `${AIRTABLE_API_URL}/${encodeURIComponent(JOBS_TABLE)}?filterByFormula=${encodeURIComponent(formula)}&sort[0][field]=Created Date&sort[0][direction]=desc`;
     
     const response = await fetch(url, {
@@ -243,10 +301,14 @@ export async function getInstallerJobs(installerId: string): Promise<any[]> {
       },
     });
 
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
     const data = await response.json();
     return data.records || [];
   } catch (error) {
-    console.error('Error fetching installer jobs:', error);
+    console.error('❌ Error fetching installer jobs:', error);
     return [];
   }
 }
@@ -263,7 +325,7 @@ export async function updateJobStatus(
     const fields: Record<string, any> = { 'Status': status };
     
     if (status === 'Completed') {
-      fields['Completed Date'] = new Date().toISOString();
+      fields['Completed Date'] = new Date().toISOString().split('T')[0];
     }
     
     if (installerNotes) {
@@ -272,9 +334,11 @@ export async function updateJobStatus(
 
     await airtableRequest('PATCH', `${JOBS_TABLE}/${jobId}`, { fields });
 
+    console.log('✅ Job status updated:', jobId, status);
+
     return { success: true };
   } catch (error) {
-    console.error('Error updating job status:', error);
+    console.error('❌ Error updating job status:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -302,10 +366,13 @@ export async function createNotification(notification: {
         'Message': notification.message,
         'Read': false,
         'Email Sent': false,
+        'Created Date': new Date().toISOString(),
       }
     });
+    console.log('✅ Notification created');
   } catch (error) {
-    console.error('Error creating notification:', error);
+    console.error('❌ Error creating notification:', error);
+    // Non-blocking - don't throw
   }
 }
 
@@ -323,16 +390,20 @@ export async function getPendingApplications(): Promise<any[]> {
       },
     });
 
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
     const data = await response.json();
     return data.records || [];
   } catch (error) {
-    console.error('Error fetching pending applications:', error);
+    console.error('❌ Error fetching pending applications:', error);
     return [];
   }
 }
 
 /**
- * Approve installer application (Admin)
+ * Approve installer application (Admin) - FIXED VERSION
  */
 export async function approveInstaller(
   installerId: string
@@ -345,18 +416,51 @@ export async function approveInstaller(
       }
     });
 
+    console.log('✅ Installer approved:', installerId);
+
     return { success: true };
- } catch (error) {
-  console.error('Error submitting installer application:', error);
-  
-  // Log the full error for debugging
-  if (error instanceof Error) {
-    console.error('Error details:', error.message);
+  } catch (error) {
+    console.error('❌ Error approving installer:', error);
+    
+    if (error instanceof Error) {
+      console.error('Error details:', error.message);
+    }
+    
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
   }
-  
-  return {
-    success: false,
-    error: error instanceof Error ? error.message : 'Unknown error',
-  };
 }
+
+/**
+ * Reject installer application (Admin)
+ */
+export async function rejectInstaller(
+  installerId: string,
+  reason?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const fields: Record<string, any> = {
+      'Status': 'Rejected',
+      'Rejected Date': new Date().toISOString().split('T')[0],
+    };
+
+    if (reason) {
+      fields['Rejection Reason'] = reason;
+    }
+
+    await airtableRequest('PATCH', `${INSTALLERS_TABLE}/${installerId}`, { fields });
+
+    console.log('✅ Installer rejected:', installerId);
+
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error rejecting installer:', error);
+    
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
   }
+}
