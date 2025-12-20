@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
-import { createInstallationJob } from '../services/airtableService';
+import { createCheckout } from '../services/shopifyCheckoutService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
@@ -30,91 +30,68 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setStep('redirecting');
 
     try {
+      // Validate variant ID
       if (!tire.variantId || tire.variantId.startsWith('mock') || tire.variantId === 'unavailable') {
         throw new Error('This tire is currently unavailable for online purchase. Please contact us for availability.');
       }
 
       console.log('🛒 Starting checkout process...');
 
-      // Extract numeric variant ID
-      let tireVariantId = tire.variantId;
-      if (tireVariantId.includes('gid://shopify/ProductVariant/')) {
-        tireVariantId = tireVariantId.split('/').pop() || tireVariantId;
-      }
+      // Build line items array
+      const lineItems = [];
+      
+      // Add tire product
+      lineItems.push({
+        variantId: tire.variantId,
+        quantity: quantity
+      });
 
-      console.log('🔍 Tire Variant ID:', tireVariantId);
-
-      // Build cart URL
-      let cartUrl = `https://gcitires.com/cart/${tireVariantId}:${quantity}`;
-
-      // Add installation if selected
+      // Add installation service if selected
       if (withInstallation) {
         const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
         
-        if (installationVariantId) {
-          let installId = installationVariantId;
-          if (installId.includes('gid://shopify/ProductVariant/')) {
-            installId = installId.split('/').pop() || installId;
-          }
-          
-          console.log('🔧 Installation Variant ID:', installId);
-          
-          // Add to cart: TIRE_ID:QTY,INSTALLATION_ID:QTY
-          cartUrl = `https://gcitires.com/cart/${tireVariantId}:${quantity},${installId}:${quantity}`;
+        if (!installationVariantId) {
+          console.warn('⚠️ Installation product ID not configured');
+          throw new Error('Installation service is temporarily unavailable. Please contact us to add installation to your order.');
         }
-
-        // Create job in Airtable
-        console.log('📝 Creating installation job in Airtable...');
-        try {
-          const jobResult = await createInstallationJob({
-            shopifyOrderId: `PENDING-${Date.now()}`,
-            customerName: 'Customer',
-            customerEmail: 'pending@gcitires.com',
-            customerAddress: 'To be determined',
-            tireBrand: tire.brand,
-            tireModel: tire.model,
-            tireSize: tire.type,
-            quantity: quantity,
-            installationFee: tire.installationFeePerUnit * quantity,
-            status: 'Pending Payment'
-          });
-
-          if (jobResult.success) {
-            console.log('✅ Installation job created:', jobResult.recordId);
-          } else {
-            console.warn('⚠️ Failed to create installation job:', jobResult.error);
-          }
-        } catch (airtableError) {
-          console.error('❌ Airtable error (non-blocking):', airtableError);
-        }
+        
+        lineItems.push({
+          variantId: installationVariantId,
+          quantity: quantity // One installation per tire
+        });
       }
 
-      // Add tracking parameters
-      const params = new URLSearchParams();
-      params.append('ref', 'ai_match_v2');
-      if (withInstallation) {
-        params.append('installation', 'true');
-      }
+      console.log('📦 Line items:', lineItems);
 
-      cartUrl += `?${params.toString()}`;
+      // Create Shopify checkout
+      const checkoutUrl = await createCheckout(lineItems, {
+        withInstallation,
+        tireBrand: tire.brand,
+        tireModel: tire.model,
+        tireSize: tire.type,
+        quantity: quantity
+      });
 
-      console.log('🛒 Final cart URL:', cartUrl);
+      console.log('✅ Checkout URL generated:', checkoutUrl);
 
-      // Open cart in new tab or redirect
+      // Redirect to checkout
       setTimeout(() => {
-        const newWindow = window.open(cartUrl, '_blank', 'noopener,noreferrer');
+        // Try to open in new tab first
+        const newWindow = window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
         
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
           console.warn('⚠️ Popup blocked, redirecting parent page');
+          // If popup blocked, redirect current page
           if (window.top) {
-            window.top.location.href = cartUrl;
+            window.top.location.href = checkoutUrl;
           } else {
-            window.location.href = cartUrl;
+            window.location.href = checkoutUrl;
           }
         } else {
-          console.log('✅ Cart opened in new tab');
+          console.log('✅ Checkout opened in new tab');
         }
         
+        // Mark as complete
         onConfirm();
       }, 800);
 
@@ -123,7 +100,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setErrorMessage(
         error instanceof Error 
           ? error.message 
-          : 'Unable to process checkout. Please try again.'
+          : 'Unable to process checkout. Please try again or contact support.'
       );
       setStep('error');
     }
@@ -140,10 +117,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </svg>
           </div>
           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
-            {lang === 'en' ? 'Opening Cart' : 'Ouverture du panier'}
+            {lang === 'en' ? 'Opening Checkout' : 'Ouverture de la caisse'}
           </h3>
           <p className="text-slate-500 mt-2 font-medium">
-            {lang === 'en' ? 'Your cart will open in a new tab...' : 'Votre panier s\'ouvrira dans un nouvel onglet...'}
+            {lang === 'en' ? 'You\'ll be redirected to secure checkout...' : 'Vous serez redirigé vers la caisse sécurisée...'}
           </p>
           <div className="mt-4 text-xs text-slate-400">
             {lang === 'en' ? 'Please allow popups if blocked' : 'Veuillez autoriser les popups si bloqués'}
@@ -202,6 +179,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         <div className="p-6">
+          {/* Product Summary */}
           <div className="flex gap-4 mb-6">
             <div className="w-24 h-24 bg-white border border-slate-200 rounded p-2 flex-shrink-0 flex items-center justify-center">
               <img src={tire.imageUrl} alt={tire.model} className="max-w-full max-h-full object-contain" />
@@ -222,6 +200,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
+          {/* Price Breakdown */}
           <div className="border-t border-slate-100 py-4 space-y-2 mb-6">
             <div className="flex justify-between text-sm text-slate-600 font-medium">
               <span>{lang === 'en' ? `Subtotal (${quantity} tires)` : `Sous-total (${quantity} pneus)`}</span>
@@ -243,6 +222,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
+          {/* Action Buttons */}
           <div className="space-y-4">
             <button 
               onClick={handleProceedToCheckout}
@@ -251,13 +231,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
-              {t.proceedCheckout || (lang === 'en' ? 'Add to Cart & Checkout' : 'Ajouter au panier')}
+              {t.proceedCheckout || (lang === 'en' ? 'Proceed to Secure Checkout' : 'Procéder au paiement')}
             </button>
             <div className="text-center">
               <p className="text-xs text-slate-400 font-medium">
                 {lang === 'en' 
-                  ? 'Cart will open in a new tab. Please allow popups if blocked.'
-                  : 'Le panier s\'ouvrira dans un nouvel onglet. Veuillez autoriser les popups si bloqués.'
+                  ? '🔒 Secure checkout powered by Shopify'
+                  : '🔒 Paiement sécurisé par Shopify'
                 }
               </p>
             </div>
