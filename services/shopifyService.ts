@@ -1,185 +1,173 @@
-import { TireProduct } from '../types';
+import axios from 'axios';
 
 const SHOPIFY_DOMAIN = import.meta.env.VITE_SHOPIFY_STORE_DOMAIN;
 const STOREFRONT_TOKEN = import.meta.env.VITE_SHOPIFY_STOREFRONT_ACCESS_TOKEN;
 const API_VERSION = import.meta.env.VITE_SHOPIFY_API_VERSION || '2024-01';
 
-const STOREFRONT_API_URL = `https://${SHOPIFY_DOMAIN}/api/${API_VERSION}/graphql.json`;
-
-interface ShopifyProduct {
-  id: string;
-  title: string;
-  handle: string;
-  description: string;
-  priceRange: {
-    minVariantPrice: {
-      amount: string;
-      currencyCode: string;
-    };
-  };
-  images: {
-    edges: Array<{
-      node: {
-        url: string;
-        altText: string | null;
-      };
-    }>;
-  };
-  variants: {
-    edges: Array<{
-      node: {
-        id: string;
-        title: string;
-        price: {
-          amount: string;
-          currencyCode: string;
-        };
-        availableForSale: boolean;
-      };
-    }>;
-  };
-}
-
-const MOCK_INVENTORY: Partial<TireProduct>[] = [
-  {
-    id: 'mock-1',
-    variantId: '42593751203888',
-    brand: 'Michelin',
-    model: 'Defender LTX M/S',
-    type: 'All-Season',
-    pricePerUnit: 245.99,
-    imageUrl: 'https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?auto=format&fit=crop&q=80&w=400',
-    description: 'Best all-season tire for light trucks and SUVs.',
-    tier: 'Best',
-    features: ['All-Season Performance', 'Long Tread Life'],
-    inStock: true,
+const shopifyClient = axios.create({
+  baseURL: `https://${SHOPIFY_DOMAIN}/api/${API_VERSION}/graphql.json`,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
   },
-  {
-    id: 'mock-2',
-    variantId: '42593767915568',
-    brand: 'Bridgestone',
-    model: 'Blizzak WS90',
-    type: 'Winter',
-    pricePerUnit: 189.50,
-    imageUrl: 'https://images.unsplash.com/photo-1580273916550-e323be2ae537?auto=format&fit=crop&q=80&w=400',
-    description: 'Leader in winter performance.',
-    tier: 'Best',
-    features: ['Winter Grip', 'Ice Traction'],
-    inStock: true,
-  }
-];
+});
 
-export async function fetchShopifyTireProducts(): Promise<Partial<TireProduct>[]> {
-  if (!SHOPIFY_DOMAIN || !STOREFRONT_TOKEN) {
-    console.warn('⚠️ Shopify config missing, using mock inventory');
-    console.log('Domain:', SHOPIFY_DOMAIN);
-    console.log('Token exists:', !!STOREFRONT_TOKEN);
-    return MOCK_INVENTORY;
-  }
-
-  const query = `
-    query GetTireProducts {
-      products(first: 50, query: "product_type:Tire OR tag:tire") {
-        edges {
-          node {
-            id
-            title
-            handle
-            description
-            priceRange {
-              minVariantPrice {
-                amount
-                currencyCode
-              }
-            }
-            images(first: 1) {
-              edges {
-                node {
+// GraphQL query to fetch products with CORRECT variant IDs
+const PRODUCTS_QUERY = `
+  query getProducts($first: Int!) {
+    products(first: $first, query: "product_type:Tire") {
+      edges {
+        node {
+          id
+          title
+          description
+          vendor
+          productType
+          tags
+          variants(first: 10) {
+            edges {
+              node {
+                id
+                title
+                price {
+                  amount
+                }
+                compareAtPrice {
+                  amount
+                }
+                availableForSale
+                quantityAvailable
+                image {
                   url
-                  altText
                 }
               }
             }
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  title
-                  price {
-                    amount
-                    currencyCode
-                  }
-                  availableForSale
-                }
+          }
+          images(first: 1) {
+            edges {
+              node {
+                url
               }
             }
           }
         }
       }
     }
-  `;
+  }
+`;
 
+export interface ShopifyProduct {
+  id: string;
+  title: string;
+  description: string;
+  vendor: string;
+  productType: string;
+  tags: string[];
+  variantId: string; // CRITICAL: This must be the numeric ID
+  price: number;
+  compareAtPrice?: number;
+  imageUrl: string;
+  availableForSale: boolean;
+  quantityAvailable: number;
+}
+
+// Extract numeric ID from Shopify GID
+function extractNumericId(gid: string): string {
+  // Shopify GIDs look like: gid://shopify/ProductVariant/42593751203888
+  // We need just the number at the end: 42593751203888
+  const parts = gid.split('/');
+  const numericId = parts[parts.length - 1];
+  
+  console.log('🔍 Extracting ID from GID:', gid, '→', numericId);
+  
+  return numericId;
+}
+
+export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
   try {
-    console.log('🔄 Fetching from Shopify Storefront API...');
-    
-    const response = await fetch(STOREFRONT_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
-      },
-      body: JSON.stringify({ query }),
+    console.log('🛒 Fetching products from Shopify...');
+    console.log('   Domain:', SHOPIFY_DOMAIN);
+    console.log('   Has Token:', !!STOREFRONT_TOKEN);
+
+    const response = await shopifyClient.post('', {
+      query: PRODUCTS_QUERY,
+      variables: { first: 50 },
     });
 
-    if (!response.ok) {
-      console.error('❌ Shopify API HTTP error:', response.status);
-      return MOCK_INVENTORY;
+    if (response.data.errors) {
+      console.error('❌ GraphQL errors:', response.data.errors);
+      throw new Error(`Shopify API error: ${JSON.stringify(response.data.errors)}`);
     }
 
-    const json = await response.json();
-    
-    if (json.errors) {
-      console.error('❌ Shopify API errors:', json.errors);
-      return MOCK_INVENTORY;
-    }
+    const products: ShopifyProduct[] = [];
+    const edges = response.data.data?.products?.edges || [];
 
-    const products: ShopifyProduct[] = json.data.products.edges.map((e: any) => e.node);
+    console.log(`📦 Processing ${edges.length} products from Shopify...`);
 
-    console.log(`✅ Fetched ${products.length} products from Shopify`);
-
-    if (products.length === 0) {
-      console.warn('⚠️ No products found, using mock inventory');
-      return MOCK_INVENTORY;
-    }
-
-    return products.map(product => {
-      const firstVariant = product.variants.edges[0]?.node;
-      const parts = product.title.split(' ');
-      const brand = parts[0] || 'Unknown';
+    for (const edge of edges) {
+      const product = edge.node;
       
-      let variantId = firstVariant?.id || '';
-      if (variantId.includes('gid://shopify/ProductVariant/')) {
-        variantId = variantId.split('/').pop() || variantId;
+      // Skip if no variants
+      if (!product.variants?.edges || product.variants.edges.length === 0) {
+        console.warn(`⚠️ Product "${product.title}" has no variants, skipping`);
+        continue;
       }
 
-      console.log(`📦 Product: ${product.title}, Variant ID: ${variantId}`);
+      // Get first variant (most products have only one variant)
+      const variant = product.variants.edges[0].node;
       
-      return {
-        id: product.id,
-        variantId: variantId,
-        brand: brand,
-        model: product.title.replace(brand, '').trim(),
-        type: 'All-Season',
-        pricePerUnit: parseFloat(firstVariant?.price.amount || '0'),
-        imageUrl: product.images.edges[0]?.node.url || '',
+      // CRITICAL: Extract numeric ID from GID
+      const variantId = extractNumericId(variant.id);
+      
+      // Get first image
+      const imageUrl = variant.image?.url || product.images?.edges?.[0]?.node?.url || '';
+
+      const shopifyProduct: ShopifyProduct = {
+        id: extractNumericId(product.id),
+        title: product.title,
         description: product.description || '',
-        tier: 'Good',
-        features: [],
-        inStock: firstVariant?.availableForSale || false,
+        vendor: product.vendor || 'Unknown',
+        productType: product.productType || 'Tire',
+        tags: product.tags || [],
+        variantId: variantId, // THIS is the critical field
+        price: parseFloat(variant.price.amount),
+        compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice.amount) : undefined,
+        imageUrl: imageUrl,
+        availableForSale: variant.availableForSale,
+        quantityAvailable: variant.quantityAvailable || 0,
       };
-    });
+
+      console.log(`✅ Product: ${shopifyProduct.vendor} ${shopifyProduct.title}`);
+      console.log(`   Variant ID: ${shopifyProduct.variantId}`);
+      console.log(`   Price: $${shopifyProduct.price}`);
+      console.log(`   Available: ${shopifyProduct.availableForSale} (${shopifyProduct.quantityAvailable} in stock)`);
+
+      products.push(shopifyProduct);
+    }
+
+    console.log(`✅ Successfully fetched ${products.length} products from Shopify`);
+    return products;
+
   } catch (error) {
     console.error('❌ Error fetching Shopify products:', error);
-    return MOCK_INVENTORY;
+    
+    if (axios.isAxiosError(error)) {
+      console.error('   Response:', error.response?.data);
+      console.error('   Status:', error.response?.status);
+    }
+    
+    throw new Error('Failed to fetch products from Shopify. Check console for details.');
   }
+}
+
+// Get installation service variant ID
+export function getInstallationVariantId(): string | undefined {
+  const variantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
+  
+  if (!variantId || variantId === 'your_installation_variant_id_here') {
+    console.warn('⚠️ Installation variant ID not configured');
+    return undefined;
+  }
+  
+  return variantId;
 }
