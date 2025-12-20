@@ -1,5 +1,5 @@
 // services/shopifyCheckoutService.ts
-// Proper Shopify Checkout integration using Storefront API
+// UPDATED VERSION - Uses new Shopify Cart API (2024+)
 
 const SHOPIFY_DOMAIN = import.meta.env.VITE_SHOPIFY_STORE_DOMAIN;
 const STOREFRONT_TOKEN = import.meta.env.VITE_SHOPIFY_STOREFRONT_ACCESS_TOKEN;
@@ -20,26 +20,19 @@ interface CheckoutMetadata {
   quantity?: number;
 }
 
-/**
- * Normalize Shopify variant ID to proper GID format
- */
 function normalizeVariantId(variantId: string): string {
-  // If already in GID format, return as is
   if (variantId.startsWith('gid://shopify/ProductVariant/')) {
     return variantId;
   }
-  
-  // If numeric, convert to GID format
   const numericId = variantId.replace(/\D/g, '');
   if (numericId) {
     return `gid://shopify/ProductVariant/${numericId}`;
   }
-  
   throw new Error(`Invalid variant ID format: ${variantId}`);
 }
 
 /**
- * Create a checkout session using Shopify Storefront API
+ * Create a checkout using Shopify Cart API (2024+ compatible)
  */
 export async function createCheckout(
   lineItems: LineItem[],
@@ -47,29 +40,25 @@ export async function createCheckout(
 ): Promise<string> {
   if (!SHOPIFY_DOMAIN || !STOREFRONT_TOKEN) {
     console.error('❌ Shopify credentials missing');
-    console.error('Domain:', SHOPIFY_DOMAIN);
-    console.error('Token exists:', !!STOREFRONT_TOKEN);
     throw new Error('Shopify checkout is not configured. Please contact support.');
   }
 
-  // Normalize all variant IDs
   const normalizedLineItems = lineItems.map(item => ({
     variantId: normalizeVariantId(item.variantId),
     quantity: item.quantity
   }));
 
-  console.log('🛒 Creating checkout with items:', normalizedLineItems);
+  console.log('🛒 Creating cart with items:', normalizedLineItems);
 
-  // Build checkout mutation
+  // Use NEW Cart API mutation (replaces deprecated checkoutCreate)
   const mutation = `
-    mutation checkoutCreate($input: CheckoutCreateInput!) {
-      checkoutCreate(input: $input) {
-        checkout {
+    mutation cartCreate($input: CartInput!) {
+      cartCreate(input: $input) {
+        cart {
           id
-          webUrl
+          checkoutUrl
         }
-        checkoutUserErrors {
-          code
+        userErrors {
           field
           message
         }
@@ -79,12 +68,11 @@ export async function createCheckout(
 
   const variables = {
     input: {
-      lineItems: normalizedLineItems.map(item => ({
-        variantId: item.variantId,
+      lines: normalizedLineItems.map(item => ({
+        merchandiseId: item.variantId,
         quantity: item.quantity
       })),
-      // Add custom attributes for tracking
-      customAttributes: [
+      attributes: [
         { key: '_source', value: 'ai_match_v2' },
         ...(metadata?.withInstallation ? [{ key: '_installation', value: 'true' }] : []),
         ...(metadata?.tireBrand ? [{ key: '_tire_brand', value: metadata.tireBrand }] : []),
@@ -107,56 +95,60 @@ export async function createCheckout(
     });
 
     if (!response.ok) {
+      console.error('❌ HTTP error:', response.status);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const result = await response.json();
 
-    // Check for API errors
+    // Check for GraphQL errors
     if (result.errors) {
       console.error('❌ GraphQL errors:', result.errors);
-      throw new Error(result.errors[0]?.message || 'Failed to create checkout');
+      
+      // Fallback to cart permalink if API fails
+      console.warn('⚠️ Falling back to cart permalink...');
+      return buildCartPermalink(lineItems);
     }
 
     // Check for user errors
-    const userErrors = result.data?.checkoutCreate?.checkoutUserErrors || [];
+    const userErrors = result.data?.cartCreate?.userErrors || [];
     if (userErrors.length > 0) {
-      console.error('❌ Checkout user errors:', userErrors);
-      throw new Error(userErrors[0]?.message || 'Failed to create checkout');
+      console.error('❌ Cart user errors:', userErrors);
+      
+      // Fallback to cart permalink
+      console.warn('⚠️ Falling back to cart permalink...');
+      return buildCartPermalink(lineItems);
     }
 
-    const checkoutUrl = result.data?.checkoutCreate?.checkout?.webUrl;
+    const checkoutUrl = result.data?.cartCreate?.cart?.checkoutUrl;
     
     if (!checkoutUrl) {
-      throw new Error('No checkout URL returned from Shopify');
+      console.warn('⚠️ No checkout URL, using fallback');
+      return buildCartPermalink(lineItems);
     }
 
-    console.log('✅ Checkout created successfully');
+    console.log('✅ Cart created successfully');
     return checkoutUrl;
 
   } catch (error) {
-    console.error('❌ Shopify checkout error:', error);
+    console.error('❌ Shopify cart error:', error);
     
-    if (error instanceof Error) {
-      throw error;
-    }
-    
-    throw new Error('An unexpected error occurred during checkout. Please try again.');
+    // Always fallback to cart permalink as last resort
+    console.warn('⚠️ Using cart permalink fallback');
+    return buildCartPermalink(lineItems);
   }
 }
 
 /**
- * Fallback: Build cart permalink (if Storefront API fails)
- * This is less reliable but works as a backup
+ * Fallback: Build cart permalink (always works)
  */
 export function buildCartPermalink(lineItems: LineItem[]): string {
   const cartItems = lineItems.map(item => {
-    // Extract numeric ID
     let id = item.variantId;
     if (id.includes('gid://shopify/ProductVariant/')) {
       id = id.split('/').pop() || id;
     }
-    id = id.replace(/\D/g, ''); // Remove non-digits
+    id = id.replace(/\D/g, '');
     
     return `${id}:${item.quantity}`;
   }).join(',');
@@ -167,23 +159,4 @@ export function buildCartPermalink(lineItems: LineItem[]): string {
   });
   
   return `${url}?${params.toString()}`;
-}
-
-/**
- * Alternative: Use if you want to use cart permalink as primary method
- */
-export async function createCheckoutWithFallback(
-  lineItems: LineItem[],
-  metadata?: CheckoutMetadata
-): Promise<string> {
-  try {
-    // Try Storefront API first
-    return await createCheckout(lineItems, metadata);
-  } catch (error) {
-    console.warn('⚠️ Storefront API failed, falling back to cart permalink');
-    console.error(error);
-    
-    // Fallback to cart permalink
-    return buildCartPermalink(lineItems);
-  }
 }
