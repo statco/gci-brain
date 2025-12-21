@@ -1,8 +1,9 @@
 import axios from 'axios';
 
-const SHOPIFY_DOMAIN = import.meta.env.VITE_SHOPIFY_STORE_DOMAIN;
-const STOREFRONT_TOKEN = import.meta.env.VITE_SHOPIFY_STOREFRONT_ACCESS_TOKEN;
-const API_VERSION = import.meta.env.VITE_SHOPIFY_API_VERSION || '2024-01';
+// Type-safe environment variable access
+const SHOPIFY_DOMAIN = import.meta.env.VITE_SHOPIFY_STORE_DOMAIN as string;
+const STOREFRONT_TOKEN = import.meta.env.VITE_SHOPIFY_STOREFRONT_ACCESS_TOKEN as string;
+const API_VERSION = (import.meta.env.VITE_SHOPIFY_API_VERSION as string) || '2024-01';
 
 const shopifyClient = axios.create({
   baseURL: `https://${SHOPIFY_DOMAIN}/api/${API_VERSION}/graphql.json`,
@@ -146,7 +147,7 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
         vendor: product.vendor || 'Unknown',
         productType: product.productType || 'Tire',
         tags: product.tags || [],
-        variantId: variantId, // THIS is the critical field - must be numeric only!
+        variantId: variantId,
         price: parseFloat(variant.price.amount),
         compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice.amount) : undefined,
         imageUrl: imageUrl,
@@ -173,7 +174,7 @@ export async function fetchShopifyProducts(): Promise<ShopifyProduct[]> {
 }
 
 export function getInstallationVariantId(): string | undefined {
-  const variantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
+  const variantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID as string;
   
   if (!variantId || variantId === 'your_installation_variant_id_here') {
     console.warn('⚠️ Installation variant ID not configured in .env.local');
