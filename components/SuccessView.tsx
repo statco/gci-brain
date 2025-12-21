@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { TireProduct, Language, Installer } from '../types';
-import { fetchInstallers } from '../services/integrationService';
 import BookingCalendar from './BookingCalendar';
 import { translations } from '../utils/translations';
 
