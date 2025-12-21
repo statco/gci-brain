@@ -1,3 +1,4 @@
+// Base types first (no dependencies)
 export type Language = 'en' | 'fr';
 
 export type ProcessingStage = 
@@ -8,19 +9,7 @@ export type ProcessingStage =
   | 'complete'
   | 'error';
 
-export interface ProcessingLog {
-  stage: ProcessingStage;
-  message: string;
-  timestamp: number;
-}
-
-export interface AppState {
-  stage: ProcessingStage;
-  logs: ProcessingLog[];
-  recommendations: TireProduct[];
-  error?: string;
-}
-
+// TireProduct MUST come before AppState (AppState depends on it)
 export interface TireProduct {
   id: string;
   variantId: string;
@@ -37,6 +26,22 @@ export interface TireProduct {
   quantityAvailable: number;
 }
 
+// ProcessingLog (depends on ProcessingStage)
+export interface ProcessingLog {
+  stage: ProcessingStage;
+  message: string;
+  timestamp: number;
+}
+
+// AppState (depends on ProcessingStage and TireProduct)
+export interface AppState {
+  stage: ProcessingStage;
+  logs: ProcessingLog[];
+  recommendations: TireProduct[];
+  error?: string;
+}
+
+// TireRecommendation (no dependencies)
 export interface TireRecommendation {
   brand: string;
   model: string;
@@ -48,6 +53,7 @@ export interface TireRecommendation {
   features: string[];
 }
 
+// Installer (no dependencies)
 export interface Installer {
   id: string;
   businessName: string;
@@ -65,6 +71,7 @@ export interface Installer {
   availability: 'available' | 'busy' | 'unavailable';
 }
 
+// InstallationJob (no dependencies)
 export interface InstallationJob {
   id: string;
   orderId: string;
