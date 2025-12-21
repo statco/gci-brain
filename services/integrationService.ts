@@ -1,58 +1,63 @@
-import { fetchShopifyProducts, ShopifyProduct } from './shopifyService';
-import { TireProduct } from '../types';
+import { fetchShopifyProducts } from './shopifyService';
+import { getTireRecommendations } from './geminiService';
+import { TireProduct, TireRecommendation } from '../types';
 
-export async function matchTiresWithInventory(
-  geminiResults: any[],
-  userRequest: string
-): Promise<TireProduct[]> {
+export async function searchTires(userRequest: string): Promise<TireProduct[]> {
   try {
-    // Fetch REAL products from Shopify
+    console.log('🔄 Starting tire search...', userRequest);
+
+    // Fetch available products from Shopify
     const shopifyProducts = await fetchShopifyProducts();
-    
-    console.log('🔍 Matching Gemini results with Shopify inventory...');
-    console.log(`   Gemini results: ${geminiResults.length}`);
-    console.log(`   Shopify products: ${shopifyProducts.length}`);
+    console.log(`✅ Fetched ${shopifyProducts.length} products from Shopify`);
 
-    const matches: TireProduct[] = [];
+    // Get AI recommendations
+    const geminiRecommendations = await getTireRecommendations(userRequest, shopifyProducts);
+    console.log(`✅ Got ${geminiRecommendations.length} AI recommendations`);
 
-    for (const geminiTire of geminiResults) {
-      // Match by brand and model
-      const shopifyMatch = shopifyProducts.find(sp => 
-        sp.vendor.toLowerCase() === geminiTire.brand?.toLowerCase() &&
-        sp.title.toLowerCase().includes(geminiTire.model?.toLowerCase())
-      );
+    // Match recommendations with inventory
+    const matches = matchRecommendationsWithInventory(geminiRecommendations, shopifyProducts);
+    console.log(`✅ Matched ${matches.length} products`);
 
-      if (shopifyMatch && shopifyMatch.availableForSale) {
-        const tireProduct: TireProduct = {
-          id: shopifyMatch.id,
-          variantId: shopifyMatch.variantId, // REAL variant ID from Shopify
-          brand: shopifyMatch.vendor,
-          model: shopifyMatch.title,
-          type: geminiTire.size || 'Standard',
-          pricePerUnit: shopifyMatch.price,
-          installationFeePerUnit: 25.0,
-          imageUrl: shopifyMatch.imageUrl,
-          matchScore: geminiTire.matchScore || 0.85,
-          reason: geminiTire.reason || 'Available in inventory',
-          features: shopifyMatch.tags || [],
-          inStock: shopifyMatch.quantityAvailable > 0,
-          quantityAvailable: shopifyMatch.quantityAvailable,
-        };
-
-        console.log(`✅ Matched: ${tireProduct.brand} ${tireProduct.model}`);
-        console.log(`   Using variant ID: ${tireProduct.variantId}`);
-
-        matches.push(tireProduct);
-      } else {
-        console.warn(`⚠️ No Shopify match for: ${geminiTire.brand} ${geminiTire.model}`);
-      }
-    }
-
-    console.log(`✅ Found ${matches.length} matches with real variant IDs`);
     return matches;
-
   } catch (error) {
-    console.error('❌ Error in matchTiresWithInventory:', error);
-    return [];
+    console.error('❌ Error in searchTires:', error);
+    throw error;
   }
+}
+
+function matchRecommendationsWithInventory(
+  recommendations: TireRecommendation[],
+  shopifyProducts: any[]
+): TireProduct[] {
+  const matches: TireProduct[] = [];
+
+  for (const rec of recommendations) {
+    const shopifyMatch = shopifyProducts.find(
+      (p) =>
+        p.vendor.toLowerCase() === rec.brand.toLowerCase() &&
+        p.title.toLowerCase().includes(rec.model.toLowerCase())
+    );
+
+    if (shopifyMatch && shopifyMatch.availableForSale) {
+      const tireProduct: TireProduct = {
+        id: shopifyMatch.id,
+        variantId: shopifyMatch.variantId,
+        brand: shopifyMatch.vendor,
+        model: shopifyMatch.title,
+        type: rec.size,
+        description: shopifyMatch.description || rec.reason,
+        pricePerUnit: shopifyMatch.price,
+        installationFeePerUnit: 25.0,
+        imageUrl: shopifyMatch.imageUrl,
+        matchScore: rec.matchScore,
+        features: rec.features,
+        inStock: shopifyMatch.quantityAvailable > 0,
+        quantityAvailable: shopifyMatch.quantityAvailable,
+      };
+
+      matches.push(tireProduct);
+    }
+  }
+
+  return matches;
 }
