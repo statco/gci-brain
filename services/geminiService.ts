@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+// Access environment variables properly
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 export interface TireRecommendation {
   brand: string;
@@ -17,10 +19,9 @@ export interface TireRecommendation {
  * Extract JSON from Gemini response (handles markdown code blocks)
  */
 function extractJSON(text: string): string {
-  // Remove markdown code blocks if present
   let cleaned = text.trim();
   
-  // Remove ```json and ``` markers
+  // Remove markdown code blocks
   cleaned = cleaned.replace(/```json\s*/g, '');
   cleaned = cleaned.replace(/```\s*/g, '');
   
@@ -38,14 +39,12 @@ function extractJSON(text: string): string {
  */
 function parseGeminiJSON(text: string): any[] {
   try {
-    // Try direct parse first
     const json = JSON.parse(text);
     return Array.isArray(json) ? json : [json];
   } catch (e) {
     console.warn('⚠️ Direct JSON parse failed, trying extraction...');
     
     try {
-      // Extract and parse
       const extracted = extractJSON(text);
       const json = JSON.parse(extracted);
       return Array.isArray(json) ? json : [json];
@@ -58,8 +57,8 @@ function parseGeminiJSON(text: string): any[] {
         let fixed = text
           .replace(/```json/g, '')
           .replace(/```/g, '')
-          .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-          .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":') // Fix unquoted keys
+          .replace(/,(\s*[}\]])/g, '$1')
+          .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
           .trim();
         
         const json = JSON.parse(fixed);
@@ -67,7 +66,7 @@ function parseGeminiJSON(text: string): any[] {
         return Array.isArray(json) ? json : [json];
       } catch (e3) {
         console.error('❌ All JSON parsing attempts failed');
-        throw new Error('Failed to parse Gemini response as JSON. The API may have returned invalid data.');
+        throw new Error('Failed to parse Gemini response as JSON.');
       }
     }
   }
@@ -84,7 +83,6 @@ export async function getTireRecommendations(
 
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
-    // Build inventory context
     const inventoryContext = availableProducts.map(p => 
       `${p.vendor} ${p.title} - ${p.tags.join(', ')}`
     ).join('\n');
@@ -127,12 +125,10 @@ Return ONLY the JSON array, nothing else.`;
     console.log('   Length:', text.length, 'characters');
     console.log('   Preview:', text.substring(0, 100) + '...');
 
-    // Parse with robust error handling
     const recommendations = parseGeminiJSON(text);
 
     console.log(`✅ Parsed ${recommendations.length} recommendations`);
     
-    // Validate and normalize recommendations
     const validRecommendations = recommendations
       .filter(rec => rec.brand && rec.model)
       .map(rec => ({
@@ -156,16 +152,11 @@ Return ONLY the JSON array, nothing else.`;
 
   } catch (error) {
     console.error('❌ Error getting Gemini recommendations:', error);
-    
-    // Return fallback recommendations based on available inventory
     console.log('⚠️ Using fallback recommendations');
     return getFallbackRecommendations(availableProducts);
   }
 }
 
-/**
- * Fallback recommendations if Gemini fails
- */
 function getFallbackRecommendations(products: any[]): TireRecommendation[] {
   console.log('🔄 Generating fallback recommendations...');
   
@@ -173,7 +164,6 @@ function getFallbackRecommendations(products: any[]): TireRecommendation[] {
     return [];
   }
 
-  // Prioritize winter tires, then all-season
   const winterTires = products.filter(p => 
     p.tags.some((t: string) => t.toLowerCase().includes('winter'))
   );
@@ -199,9 +189,6 @@ function getFallbackRecommendations(products: any[]): TireRecommendation[] {
   }));
 }
 
-/**
- * Generate a summary of why these tires were recommended
- */
 export function generateRecommendationSummary(
   recommendations: TireRecommendation[],
   userRequest: string
