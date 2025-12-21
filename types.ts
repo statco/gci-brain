@@ -1,5 +1,26 @@
 export type Language = 'en' | 'fr';
 
+export type ProcessingStage = 
+  | 'idle'
+  | 'analyzing'
+  | 'searching'
+  | 'matching'
+  | 'complete'
+  | 'error';
+
+export interface ProcessingLog {
+  stage: ProcessingStage;
+  message: string;
+  timestamp: number;
+}
+
+export interface AppState {
+  stage: ProcessingStage;
+  logs: ProcessingLog[];
+  recommendations: TireProduct[];
+  error?: string;
+}
+
 export interface TireProduct {
   id: string;
   variantId: string;
