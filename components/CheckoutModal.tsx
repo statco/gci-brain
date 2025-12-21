@@ -48,8 +48,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       // Add installation service if selected
       if (withInstallation) {
-        const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID;
-        
+     const installationVariantId = import.meta.env.VITE_SHOPIFY_INSTALLATION_PRODUCT_ID || '';        
         if (!installationVariantId) {
           console.warn('⚠️ Installation product ID not configured');
           throw new Error('Installation service is temporarily unavailable. Please contact us to add installation to your order.');
