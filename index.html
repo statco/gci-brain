@@ -25,16 +25,15 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
       }
-
       /* Animations */
       @keyframes fadeInUp {
+
         from { opacity: 0; transform: translateY(20px); }
         to { opacity: 1; transform: translateY(0); }
       }
       .animate-fade-in-up {
         animation: fadeInUp 0.5s ease-out forwards;
       }
-
       @keyframes slideInRight {
         from { transform: translateX(100%); }
         to { transform: translateX(0); }
@@ -43,22 +42,9 @@
         animation: slideInRight 0.3s ease-out forwards;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.32.0",
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+  </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
