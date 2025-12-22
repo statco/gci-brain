@@ -1,202 +1,265 @@
+// services/geminiService.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { TireProduct, Language } from '../types';
 
-// Access environment variables properly
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 
-export interface TireRecommendation {
-  brand: string;
-  model: string;
-  size: string;
-  season: string;
-  priceRange: string;
-  matchScore: number;
-  reason: string;
-  features: string[];
+if (!API_KEY) {
+  console.warn('⚠️ VITE_GEMINI_API_KEY not set. Using fallback recommendations.');
 }
+
+const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
+
+// Mock Shopify products (replace with actual Shopify API integration)
+const MOCK_PRODUCTS: TireProduct[] = [
+  {
+    id: 'tire-1',
+    title: 'Michelin Pilot Sport 4S',
+    brand: 'Michelin',
+    model: 'Pilot Sport 4S',
+    size: '245/40R18',
+    season: 'Summer',
+    pricePerUnit: 289.99,
+    rating: 4.8,
+    reviews: 1247,
+    imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
+    description: 'Ultimate performance summer tire for sports cars',
+    features: ['Exceptional dry grip', 'Responsive handling', 'Premium comfort'],
+    inStock: true,
+    warranty: '6-year limited',
+    speedRating: 'Y',
+    loadIndex: '97',
+    shopifyVariantId: 'gid://shopify/ProductVariant/12345'
+  },
+  {
+    id: 'tire-2',
+    title: 'Bridgestone Blizzak WS90',
+    brand: 'Bridgestone',
+    model: 'Blizzak WS90',
+    size: '225/65R17',
+    season: 'Winter',
+    pricePerUnit: 189.99,
+    rating: 4.7,
+    reviews: 892,
+    imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
+    description: 'Superior winter traction and ice grip',
+    features: ['Excellent ice performance', 'Confident snow traction', 'Long tread life'],
+    inStock: true,
+    warranty: '5-year limited',
+    speedRating: 'T',
+    loadIndex: '106',
+    shopifyVariantId: 'gid://shopify/ProductVariant/12346'
+  },
+  {
+    id: 'tire-3',
+    title: 'Goodyear Eagle F1 Asymmetric 5',
+    brand: 'Goodyear',
+    model: 'Eagle F1 Asymmetric 5',
+    size: '235/45R18',
+    season: 'Summer',
+    pricePerUnit: 249.99,
+    rating: 4.6,
+    reviews: 654,
+    imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
+    description: 'High-performance touring tire',
+    features: ['Enhanced wet grip', 'Shorter braking distance', 'Quiet ride'],
+    inStock: true,
+    warranty: '6-year limited',
+    speedRating: 'Y',
+    loadIndex: '95',
+    shopifyVariantId: 'gid://shopify/ProductVariant/12347'
+  },
+  {
+    id: 'tire-4',
+    title: 'Continental AllSeasonContact',
+    brand: 'Continental',
+    model: 'AllSeasonContact',
+    size: '215/55R17',
+    season: 'All-Season',
+    pricePerUnit: 169.99,
+    rating: 4.5,
+    reviews: 1089,
+    imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
+    description: 'Versatile all-season performance',
+    features: ['Year-round capability', 'Fuel efficient', 'Long-lasting'],
+    inStock: true,
+    warranty: '6-year limited',
+    speedRating: 'V',
+    loadIndex: '94',
+    shopifyVariantId: 'gid://shopify/ProductVariant/12348'
+  }
+];
 
 /**
- * Extract JSON from Gemini response (handles markdown code blocks)
+ * Get tire recommendations using Gemini AI
  */
-function extractJSON(text: string): string {
-  let cleaned = text.trim();
-  
-  // Remove markdown code blocks
-  cleaned = cleaned.replace(/```json\s*/g, '');
-  cleaned = cleaned.replace(/```\s*/g, '');
-  
-  // Find JSON array or object
-  const jsonMatch = cleaned.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return jsonMatch[0];
-  }
-  
-  return cleaned;
-}
-
-/**
- * Robust JSON parser with fallback
- */
-function parseGeminiJSON(text: string): any[] {
-  try {
-    const json = JSON.parse(text);
-    return Array.isArray(json) ? json : [json];
-  } catch (e) {
-    console.warn('⚠️ Direct JSON parse failed, trying extraction...');
-    
-    try {
-      const extracted = extractJSON(text);
-      const json = JSON.parse(extracted);
-      return Array.isArray(json) ? json : [json];
-    } catch (e2) {
-      console.error('❌ JSON extraction failed:', e2);
-      console.error('Raw text:', text);
-      
-      // Try to fix common JSON errors
-      try {
-        let fixed = text
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .replace(/,(\s*[}\]])/g, '$1')
-          .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
-          .trim();
-        
-        const json = JSON.parse(fixed);
-        console.log('✅ Fixed JSON successfully');
-        return Array.isArray(json) ? json : [json];
-      } catch (e3) {
-        console.error('❌ All JSON parsing attempts failed');
-        throw new Error('Failed to parse Gemini response as JSON.');
-      }
-    }
-  }
-}
-
 export async function getTireRecommendations(
   userRequest: string,
-  availableProducts: any[]
-): Promise<TireRecommendation[]> {
-  try {
-    console.log('🤖 Requesting Gemini AI recommendations...');
-    console.log('   User request:', userRequest);
-    console.log('   Available products:', availableProducts.length);
+  language: Language = 'en'
+): Promise<TireProduct[]> {
+  console.log('🤖 Requesting Gemini AI recommendations...');
+  console.log('   User request:', userRequest);
+  console.log('   Available products:', MOCK_PRODUCTS.length);
 
+  // If no API key, return fallback immediately
+  if (!genAI) {
+    console.log('⚠️ No API key, using fallback');
+    return getFallbackRecommendations(userRequest);
+  }
+
+  try {
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
-    const inventoryContext = availableProducts.map(p => 
-      `${p.vendor} ${p.title} - ${p.tags.join(', ')}`
-    ).join('\n');
-
-    const prompt = `You are a tire expert. Based on this customer request and available inventory, recommend the best tires.
+    const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
+Language: ${language === 'fr' ? 'French' : 'English'}
 
-Available Inventory:
-${inventoryContext}
+Available Tire Products:
+${MOCK_PRODUCTS.map((p, i) => `${i + 1}. ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
 
-Instructions:
-1. Analyze the customer's needs (vehicle type, season, driving conditions)
-2. Match with available products in inventory
-3. Recommend 2-4 best options
-4. Provide match scores (0-100)
-5. Explain why each tire is recommended
+Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
 
-Respond with VALID JSON ONLY (no markdown, no explanations):
-[
-  {
-    "brand": "Michelin",
-    "model": "X-Ice Snow",
-    "size": "235/65R17",
-    "season": "winter",
-    "priceRange": "$$",
-    "matchScore": 95,
-    "reason": "Excellent winter traction with 3PMSF certification",
-    "features": ["3PMSF", "Studless", "Quiet ride"]
-  }
-]
+Return ONLY a valid JSON array with the tire IDs, no other text:
+["tire-1", "tire-3"]
 
-Return ONLY the JSON array, nothing else.`;
+Rules:
+- Return only IDs from the available products above
+- Match the customer's needs (size, season, performance, budget)
+- Return 2-4 recommendations
+- Consider Canadian climate if winter/all-season is mentioned
+- NO explanations, ONLY the JSON array`;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
 
-    console.log('📥 Gemini response received');
-    console.log('   Length:', text.length, 'characters');
-    console.log('   Preview:', text.substring(0, 100) + '...');
+    console.log('📥 Gemini response:', text);
 
-    const recommendations = parseGeminiJSON(text);
-
-    console.log(`✅ Parsed ${recommendations.length} recommendations`);
-    
-    const validRecommendations = recommendations
-      .filter(rec => rec.brand && rec.model)
-      .map(rec => ({
-        brand: rec.brand || 'Unknown',
-        model: rec.model || 'Unknown',
-        size: rec.size || 'Standard',
-        season: rec.season || 'all-season',
-        priceRange: rec.priceRange || '$$',
-        matchScore: rec.matchScore || 0.75,
-        reason: rec.reason || 'Recommended based on your needs',
-        features: Array.isArray(rec.features) ? rec.features : []
-      }));
-
-    if (validRecommendations.length === 0) {
-      console.warn('⚠️ No valid recommendations parsed, using fallback');
-      return getFallbackRecommendations(availableProducts);
+    // Parse the response
+    const jsonMatch = text.match(/\[[\s\S]*?\]/);
+    if (!jsonMatch) {
+      throw new Error('No JSON array found in response');
     }
 
-    console.log('✅ Returning', validRecommendations.length, 'valid recommendations');
-    return validRecommendations;
+    const recommendedIds = JSON.parse(jsonMatch[0]);
+    
+    // Validate it's an array
+    if (!Array.isArray(recommendedIds)) {
+      throw new Error('Response is not an array');
+    }
+
+    // Filter products based on recommendations
+    const recommendations = MOCK_PRODUCTS.filter(p => 
+      recommendedIds.includes(p.id)
+    );
+
+    console.log('✅ Gemini recommendations:', recommendations.length);
+
+    // If no matches, return fallback
+    if (recommendations.length === 0) {
+      console.log('⚠️ No matching products, using fallback');
+      return getFallbackRecommendations(userRequest);
+    }
+
+    return recommendations;
 
   } catch (error) {
     console.error('❌ Error getting Gemini recommendations:', error);
     console.log('⚠️ Using fallback recommendations');
-    return getFallbackRecommendations(availableProducts);
+    return getFallbackRecommendations(userRequest);
   }
 }
 
-function getFallbackRecommendations(products: any[]): TireRecommendation[] {
+/**
+ * Fallback recommendations when AI fails
+ */
+function getFallbackRecommendations(userRequest: string): TireProduct[] {
   console.log('🔄 Generating fallback recommendations...');
   
-  if (products.length === 0) {
-    return [];
+  const requestLower = userRequest.toLowerCase();
+  
+  // Simple keyword matching
+  let filtered = [...MOCK_PRODUCTS];
+
+  // Filter by season
+  if (requestLower.includes('winter') || requestLower.includes('snow') || requestLower.includes('ice')) {
+    filtered = filtered.filter(p => p.season === 'Winter');
+  } else if (requestLower.includes('summer') || requestLower.includes('performance') || requestLower.includes('sport')) {
+    filtered = filtered.filter(p => p.season === 'Summer');
+  } else if (requestLower.includes('all-season') || requestLower.includes('all season')) {
+    filtered = filtered.filter(p => p.season === 'All-Season');
   }
 
-  const winterTires = products.filter(p => 
-    p.tags.some((t: string) => t.toLowerCase().includes('winter'))
-  );
+  // Filter by brand
+  if (requestLower.includes('michelin')) {
+    filtered = filtered.filter(p => p.brand.toLowerCase() === 'michelin');
+  } else if (requestLower.includes('bridgestone')) {
+    filtered = filtered.filter(p => p.brand.toLowerCase() === 'bridgestone');
+  } else if (requestLower.includes('goodyear')) {
+    filtered = filtered.filter(p => p.brand.toLowerCase() === 'goodyear');
+  } else if (requestLower.includes('continental')) {
+    filtered = filtered.filter(p => p.brand.toLowerCase() === 'continental');
+  }
+
+  // If too many filtered out, return all
+  if (filtered.length === 0) {
+    console.log('⚠️ No matches found, returning all products');
+    filtered = MOCK_PRODUCTS;
+  }
+
+  // Return top 3
+  const result = filtered.slice(0, 3);
+  console.log('✅ Fallback recommendations:', result.length);
   
-  const allSeasonTires = products.filter(p => 
-    p.tags.some((t: string) => t.toLowerCase().includes('all-season'))
-  );
-
-  const recommendedProducts = [
-    ...winterTires.slice(0, 2),
-    ...allSeasonTires.slice(0, 2)
-  ].slice(0, 4);
-
-  return recommendedProducts.map((p, index) => ({
-    brand: p.vendor || 'Unknown',
-    model: p.title || 'Unknown',
-    size: 'Standard',
-    season: p.tags.some((t: string) => t.toLowerCase().includes('winter')) ? 'winter' : 'all-season',
-    priceRange: p.price > 200 ? '$$$' : '$$',
-    matchScore: 75 - (index * 10),
-    reason: 'Available in inventory and matches your needs',
-    features: p.tags || []
-  }));
+  return result;
 }
 
-export function generateRecommendationSummary(
-  recommendations: TireRecommendation[],
-  userRequest: string
-): string {
-  if (recommendations.length === 0) {
-    return 'No suitable tires found in inventory.';
+/**
+ * Get available tire sizes from inventory
+ */
+export function getAvailableSizes(): string[] {
+  return [...new Set(MOCK_PRODUCTS.map(p => p.size))];
+}
+
+/**
+ * Get available brands from inventory
+ */
+export function getAvailableBrands(): string[] {
+  return [...new Set(MOCK_PRODUCTS.map(p => p.brand))];
+}
+
+/**
+ * Search tires by specific criteria
+ */
+export function searchTires(criteria: {
+  size?: string;
+  season?: string;
+  brand?: string;
+  minPrice?: number;
+  maxPrice?: number;
+}): TireProduct[] {
+  let results = [...MOCK_PRODUCTS];
+
+  if (criteria.size) {
+    results = results.filter(p => p.size === criteria.size);
   }
 
-  const topMatch = recommendations[0];
-  return `Based on your request, we recommend ${topMatch.brand} ${topMatch.model} as the best match. ${topMatch.reason}`;
+  if (criteria.season) {
+    results = results.filter(p => p.season === criteria.season);
+  }
+
+  if (criteria.brand) {
+    results = results.filter(p => p.brand.toLowerCase() === criteria.brand.toLowerCase());
+  }
+
+  if (criteria.minPrice !== undefined) {
+    results = results.filter(p => p.pricePerUnit >= criteria.minPrice!);
+  }
+
+  if (criteria.maxPrice !== undefined) {
+    results = results.filter(p => p.pricePerUnit <= criteria.maxPrice!);
+  }
+
+  return results;
 }
