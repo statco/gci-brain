@@ -10,7 +10,7 @@ import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
 import FavoritesModal from './components/FavoritesModal';
 import { getTireRecommendations } from './services/geminiService';
-import { AppState, ProcessingLog, ProcessingStage, TireProduct, Language } from './types';
+import type { AppState, ProcessingLog, ProcessingStage, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 
 // Main AI Match App Component
