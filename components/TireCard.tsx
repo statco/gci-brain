@@ -33,7 +33,7 @@ const TireCard: React.FC<TireCardProps> = ({
 
   // Calculate pricing
   const itemPrice = tire.pricePerUnit;
-  const installFee = withInstallation ? tire.installationFeePerUnit : 0;
+  const installFee = withInstallation ? 15 : 0;  // ✅ FIXED: Use fixed $15 installation fee per tire
   const totalPerUnit = itemPrice + installFee;
   const displayTotal = totalPerUnit * quantity;
 
@@ -90,9 +90,11 @@ const TireCard: React.FC<TireCardProps> = ({
         )}
         
         {/* Match Score Badge */}
-        <div className="absolute top-4 left-4 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded shadow-sm z-10 uppercase tracking-wide">
-            {tire.matchScore}% Match
-        </div>
+        {tire.matchScore && (
+          <div className="absolute top-4 left-4 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded shadow-sm z-10 uppercase tracking-wide">
+              {tire.matchScore}% Match
+          </div>
+        )}
 
         {/* View Switcher Thumbnails - Only show if we have both types */}
         {hasMultipleImages && (
@@ -153,9 +155,11 @@ const TireCard: React.FC<TireCardProps> = ({
         <div className="flex justify-between items-start mb-2">
             <div>
                 <div className="flex flex-wrap gap-2 mb-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider ${tierColors[tire.tier] || 'bg-slate-100 text-slate-600'}`}>
-                        {tire.tier} Tier
-                    </span>
+                    {tire.tier && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider ${tierColors[tire.tier] || 'bg-slate-100 text-slate-600'}`}>
+                          {tire.tier} Tier
+                      </span>
+                    )}
                     {tire.has3PMSF && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 uppercase tracking-wider flex items-center gap-1" title="Three-Peak Mountain Snowflake Rated">
                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v18m9-9H3m15.364-6.364l-12.728 12.728m0-12.728l12.728 12.728" /></svg>
@@ -167,32 +171,38 @@ const TireCard: React.FC<TireCardProps> = ({
                 <p className="text-red-600 font-bold">{tire.model}</p>
             </div>
             {/* Reviews */}
-            <div 
-                className="flex flex-col items-end cursor-pointer group/reviews"
-                onClick={() => onShowReviews(tire)}
-            >
-                <div className="flex text-yellow-500 text-sm gap-0.5">
-                    {'★'.repeat(Math.round(tire.averageRating))}
-                    <span className="text-slate-200">{'★'.repeat(5 - Math.round(tire.averageRating))}</span>
-                </div>
-                <span className="text-xs text-slate-400 group-hover/reviews:text-red-600 transition-colors underline decoration-dotted font-medium">
-                    {tire.reviewCount} {t.reviews}
-                </span>
-            </div>
+            {tire.rating && tire.reviews && (
+              <div 
+                  className="flex flex-col items-end cursor-pointer group/reviews"
+                  onClick={() => onShowReviews(tire)}
+              >
+                  <div className="flex text-yellow-500 text-sm gap-0.5">
+                      {'★'.repeat(Math.round(tire.rating))}
+                      <span className="text-slate-200">{'★'.repeat(5 - Math.round(tire.rating))}</span>
+                  </div>
+                  <span className="text-xs text-slate-400 group-hover/reviews:text-red-600 transition-colors underline decoration-dotted font-medium">
+                      {tire.reviews} {t.reviews}
+                  </span>
+              </div>
+            )}
         </div>
 
         {/* Description */}
-        <p className="text-sm text-slate-500 mb-4 line-clamp-2 leading-relaxed">{tire.description}</p>
+        {tire.description && (
+          <p className="text-sm text-slate-500 mb-4 line-clamp-2 leading-relaxed">{tire.description}</p>
+        )}
 
         {/* Features */}
-        <ul className="text-xs text-slate-600 space-y-2 mb-4 flex-1">
-            {tire.features.slice(0, 3).map((feature, i) => (
-                <li key={i} className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                    <span className="font-medium">{feature}</span>
-                </li>
-            ))}
-        </ul>
+        {tire.features && tire.features.length > 0 && (
+          <ul className="text-xs text-slate-600 space-y-2 mb-4 flex-1">
+              {tire.features.slice(0, 3).map((feature, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <span className="font-medium">{feature}</span>
+                  </li>
+              ))}
+          </ul>
+        )}
 
         {/* Source Link if available */}
         {tire.searchSourceUrl && (
@@ -242,7 +252,7 @@ const TireCard: React.FC<TireCardProps> = ({
                         </div>
                         <div className="flex flex-col leading-none">
                             <span className={`text-xs font-bold ${withInstallation ? 'text-green-800' : 'text-slate-600'}`}>{t.addInstallation}</span>
-                            <span className="text-[10px] text-slate-400 mt-0.5">+${tire.installationFeePerUnit} {t.installFee}</span>
+                            <span className="text-[10px] text-slate-400 mt-0.5">+$15.00 {t.installFee}</span>
                         </div>
                     </div>
                 </div>
@@ -257,7 +267,7 @@ const TireCard: React.FC<TireCardProps> = ({
             </div>
             <div className="text-right">
                  <p className="text-xs text-slate-400 font-bold uppercase">{t.perTire}</p>
-                 <p className="font-bold text-slate-600">${tire.pricePerUnit}</p>
+                 <p className="font-bold text-slate-600">${tire.pricePerUnit.toFixed(2)}</p>
             </div>
         </div>
 
@@ -279,35 +289,39 @@ const TireCard: React.FC<TireCardProps> = ({
         </div>
 
         {/* Tech Specs Toggle */}
-        <button 
-            onClick={() => setShowFitmentDetails(!showFitmentDetails)}
-            className="w-full text-center mt-3 text-xs font-bold text-slate-400 hover:text-red-600 flex items-center justify-center gap-1 uppercase tracking-wide transition-colors"
-        >
-            {showFitmentDetails ? t.hideSpecs : t.viewSpecs}
-            <svg className={`w-3 h-3 transform transition-transform ${showFitmentDetails ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-        </button>
+        {tire.fitmentSpecs && (
+          <>
+            <button 
+                onClick={() => setShowFitmentDetails(!showFitmentDetails)}
+                className="w-full text-center mt-3 text-xs font-bold text-slate-400 hover:text-red-600 flex items-center justify-center gap-1 uppercase tracking-wide transition-colors"
+            >
+                {showFitmentDetails ? t.hideSpecs : t.viewSpecs}
+                <svg className={`w-3 h-3 transform transition-transform ${showFitmentDetails ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
 
-        {showFitmentDetails && (
-            <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-y-2 gap-x-4 text-xs animate-fade-in-up">
-                <div>
-                    <span className="text-slate-400 block font-semibold">Load/Speed</span>
-                    <span className="font-bold text-slate-700">{tire.fitmentSpecs.loadIndex}{tire.fitmentSpecs.speedRating}</span>
+            {showFitmentDetails && (
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-y-2 gap-x-4 text-xs animate-fade-in-up">
+                    <div>
+                        <span className="text-slate-400 block font-semibold">Load/Speed</span>
+                        <span className="font-bold text-slate-700">{tire.fitmentSpecs.loadIndex}{tire.fitmentSpecs.speedRating}</span>
+                    </div>
+                    <div>
+                        <span className="text-slate-400 block font-semibold">UTQG</span>
+                        <span className="font-bold text-slate-700">{tire.fitmentSpecs.utqg || 'N/A'}</span>
+                    </div>
+                    <div>
+                        <span className="text-slate-400 block font-semibold">Warranty</span>
+                        <span className="font-bold text-slate-700">{tire.fitmentSpecs.warranty}</span>
+                    </div>
+                     <div>
+                        <span className="text-slate-400 block font-semibold">OEM Match</span>
+                        <span className={`font-bold ${tire.fitmentSpecs.oemMatch ? 'text-green-600' : 'text-slate-700'}`}>
+                            {tire.fitmentSpecs.oemMatch ? 'Yes' : 'No'}
+                        </span>
+                    </div>
                 </div>
-                <div>
-                    <span className="text-slate-400 block font-semibold">UTQG</span>
-                    <span className="font-bold text-slate-700">{tire.fitmentSpecs.utqg || 'N/A'}</span>
-                </div>
-                <div>
-                    <span className="text-slate-400 block font-semibold">Warranty</span>
-                    <span className="font-bold text-slate-700">{tire.fitmentSpecs.warranty}</span>
-                </div>
-                 <div>
-                    <span className="text-slate-400 block font-semibold">OEM Match</span>
-                    <span className={`font-bold ${tire.fitmentSpecs.oemMatch ? 'text-green-600' : 'text-slate-700'}`}>
-                        {tire.fitmentSpecs.oemMatch ? 'Yes' : 'No'}
-                    </span>
-                </div>
-            </div>
+            )}
+          </>
         )}
       </div>
     </div>
