@@ -43,6 +43,23 @@ interface JobRecord {
   };
 }
 
+interface InstallerApplicationData {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  businessName?: string;
+  yearsExperience?: number;
+  certifications?: string;
+  serviceRadius?: number;
+  pricePerTire?: number;
+  calendlyLink?: string;
+  notes?: string;
+}
+
 class AirtableService {
   private baseUrl: string;
 
@@ -55,6 +72,41 @@ class AirtableService {
       Authorization: `Bearer ${AIRTABLE_API_KEY}`,
       'Content-Type': 'application/json',
     };
+  }
+
+  /**
+   * Submit installer application (for new installers to join network)
+   */
+  async submitInstallerApplication(data: InstallerApplicationData): Promise<any> {
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/${INSTALLERS_TABLE}`,
+        {
+          fields: {
+            Name: data.name,
+            Email: data.email,
+            Phone: data.phone || '',
+            Address: data.address,
+            City: data.city,
+            Province: data.province,
+            PostalCode: data.postalCode,
+            CalendlyLink: data.calendlyLink || '',
+            ServiceRadius: data.serviceRadius || 50,
+            PricePerTire: data.pricePerTire || 20,
+            Status: 'Pending', // New applications start as pending
+            Notes: data.notes || `Business: ${data.businessName || 'N/A'}, Experience: ${data.yearsExperience || 0} years, Certifications: ${data.certifications || 'None provided'}`,
+          },
+        },
+        {
+          headers: this.getHeaders(),
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      console.error('Error submitting installer application:', error);
+      throw error;
+    }
   }
 
   /**
@@ -230,4 +282,10 @@ class AirtableService {
 }
 
 export const airtableService = new AirtableService();
-export type { InstallerRecord, JobRecord };
+
+// Export the function that InstallerApplicationForm needs
+export const submitInstallerApplication = (data: InstallerApplicationData) => {
+  return airtableService.submitInstallerApplication(data);
+};
+
+export type { InstallerRecord, JobRecord, InstallerApplicationData };
