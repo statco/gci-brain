@@ -19,7 +19,7 @@ const MOCK_PRODUCTS: TireProduct[] = [
     model: 'Pilot Sport 4S',
     size: '245/40R18',
     season: 'Summer',
-    pricePerUnit: 289.99,  // ✅ Changed from 'price' to 'pricePerUnit'
+    pricePerUnit: 289.99,
     rating: 4.8,
     reviews: 1247,
     imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
@@ -108,9 +108,9 @@ export async function getTireRecommendations(
   }
 
   try {
-    // ✅ FIXED: Use correct model name
+    // ✅ CORRECT MODEL NAME (as of December 2024)
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash'  // Changed from 'gemini-pro'
+      model: 'gemini-1.5-flash-latest'  // Use -latest suffix
     });
 
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
