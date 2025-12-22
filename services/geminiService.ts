@@ -19,7 +19,7 @@ const MOCK_PRODUCTS: TireProduct[] = [
     model: 'Pilot Sport 4S',
     size: '245/40R18',
     season: 'Summer',
-    pricePerUnit: 289.99,
+    pricePerUnit: 289.99,  // ✅ Changed from 'price' to 'pricePerUnit'
     rating: 4.8,
     reviews: 1247,
     imageUrl: 'https://images.unsplash.com/photo-1606220549583-c00db6f7cd00?w=400',
@@ -108,7 +108,10 @@ export async function getTireRecommendations(
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    // ✅ FIXED: Use correct model name
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-1.5-flash'  // Changed from 'gemini-pro'
+    });
 
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
@@ -183,11 +186,11 @@ function getFallbackRecommendations(userRequest: string): TireProduct[] {
   let filtered = [...MOCK_PRODUCTS];
 
   // Filter by season
-  if (requestLower.includes('winter') || requestLower.includes('snow') || requestLower.includes('ice')) {
+  if (requestLower.includes('winter') || requestLower.includes('snow') || requestLower.includes('ice') || requestLower.includes('hiver')) {
     filtered = filtered.filter(p => p.season === 'Winter');
-  } else if (requestLower.includes('summer') || requestLower.includes('performance') || requestLower.includes('sport')) {
+  } else if (requestLower.includes('summer') || requestLower.includes('performance') || requestLower.includes('sport') || requestLower.includes('été')) {
     filtered = filtered.filter(p => p.season === 'Summer');
-  } else if (requestLower.includes('all-season') || requestLower.includes('all season')) {
+  } else if (requestLower.includes('all-season') || requestLower.includes('all season') || requestLower.includes('toutes saisons')) {
     filtered = filtered.filter(p => p.season === 'All-Season');
   }
 
