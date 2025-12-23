@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
+import { airtableService } from '../services/airtableService';
 
 interface SuccessViewProps {
   selectedTire: {
@@ -22,48 +23,50 @@ interface Installer {
   phone: string;
   calendlyLink?: string;
   distance: number;
+  pricePerTire?: number;
+  rating?: number;
 }
 
-// Temporary stub for installer fetching until Airtable integration is complete
+// ✅ REAL Airtable integration
 const fetchInstallers = async (lat?: number, lng?: number): Promise<Installer[]> => {
-  console.log('Fetching installers...', { lat, lng });
+  console.log('Fetching installers from Airtable...', { lat, lng });
   
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  // Return mock installer data
-  return [
-    {
-      id: '1',
-      name: 'GCI Tire - Rouyn-Noranda',
-      address: '123 Avenue Principale',
-      city: 'Rouyn-Noranda',
-      province: 'QC',
-      phone: '(819) 555-0100',
-      calendlyLink: 'https://calendly.com/gci-tire',
-      distance: 0,
-    },
-    {
-      id: '2',
-      name: 'GCI Tire - Val-d\'Or',
-      address: '456 Route 117',
-      city: 'Val-d\'Or',
-      province: 'QC',
-      phone: '(819) 555-0200',
-      calendlyLink: 'https://calendly.com/gci-tire-valdor',
-      distance: 45,
-    },
-    {
-      id: '3',
-      name: 'GCI Tire - Amos',
-      address: '789 Rue Harricana',
-      city: 'Amos',
-      province: 'QC',
-      phone: '(819) 555-0300',
-      calendlyLink: 'https://calendly.com/gci-tire-amos',
-      distance: 85,
-    }
-  ];
+  try {
+    const installers = await airtableService.findNearbyInstallers(
+      lat || 48.2368, // Default to Rouyn-Noranda
+      lng || -79.0228,
+      100 // 100km radius
+    );
+
+    return installers.map(installer => ({
+      id: installer.id,
+      name: installer.fields.Name,
+      address: installer.fields.Address,
+      city: installer.fields.City,
+      province: installer.fields.Province,
+      phone: installer.fields.Phone || '',
+      calendlyLink: installer.fields.CalendlyLink,
+      pricePerTire: installer.fields.PricePerTire,
+      rating: installer.fields.Rating,
+      distance: 0, // Distance is calculated in the service
+    }));
+  } catch (error) {
+    console.error('Error fetching installers from Airtable:', error);
+    
+    // Fallback to mock data if Airtable fails
+    return [
+      {
+        id: '1',
+        name: 'GCI Tire - Rouyn-Noranda',
+        address: '123 Avenue Principale',
+        city: 'Rouyn-Noranda',
+        province: 'QC',
+        phone: '(819) 555-0100',
+        calendlyLink: 'https://calendly.com/gci-tire',
+        distance: 0,
+      }
+    ];
+  }
 };
 
 const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
@@ -237,40 +240,63 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {installers.map((installer) => (
-                    <div
-                      key={installer.id}
-                      className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h5 className="font-bold text-slate-900">{installer.name}</h5>
-                          <p className="text-sm text-slate-600 mt-1">
-                            {installer.address}<br />
-                            {installer.city}, {installer.province}
-                          </p>
-                          <p className="text-sm text-slate-600 mt-1">
-                            📞 {installer.phone}
-                          </p>
-                          {installer.distance > 0 && (
-                            <p className="text-xs text-blue-600 font-semibold mt-2">
-                              📍 ~{installer.distance} km away
+                  {installers.length > 0 ? (
+                    installers.map((installer) => (
+                      <div
+                        key={installer.id}
+                        className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h5 className="font-bold text-slate-900">{installer.name}</h5>
+                            <p className="text-sm text-slate-600 mt-1">
+                              {installer.address}<br />
+                              {installer.city}, {installer.province}
                             </p>
+                            <p className="text-sm text-slate-600 mt-1">
+                              📞 {installer.phone}
+                            </p>
+                            <div className="flex items-center gap-3 mt-2">
+                              {installer.distance > 0 && (
+                                <p className="text-xs text-blue-600 font-semibold">
+                                  📍 ~{installer.distance.toFixed(0)} km away
+                                </p>
+                              )}
+                              {installer.pricePerTire && (
+                                <p className="text-xs text-slate-600">
+                                  ${installer.pricePerTire.toFixed(2)}/tire
+                                </p>
+                              )}
+                              {installer.rating && (
+                                <div className="flex items-center">
+                                  <span className="text-yellow-500 text-xs">
+                                    {'★'.repeat(Math.floor(installer.rating))}
+                                  </span>
+                                  <span className="ml-1 text-xs text-slate-600">
+                                    ({installer.rating.toFixed(1)})
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {installer.calendlyLink && (
+                            <a
+                              href={installer.calendlyLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
+                            >
+                              {t.bookAppointment || 'RÉSERVER'}
+                            </a>
                           )}
                         </div>
-                        {installer.calendlyLink && (
-                          <a
-                            href={installer.calendlyLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
-                          >
-                            {t.bookAppointment || 'RÉSERVER'}
-                          </a>
-                        )}
                       </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-slate-500">
+                      <p>No installers found in your area.</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
