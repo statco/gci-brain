@@ -45,7 +45,7 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
-    a.src=`https://maps.${c}apis.com/maps/api/js?`+e;
+    
     <!-- Google Maps API Loader -->
     <script type="module">
       // Import the env variable from Vite
@@ -67,7 +67,7 @@
             e.set("libraries",[...r]+"");
             for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);
             e.set("callback",c+".maps."+q);
-            a.src=`https://maps.${c}apis.com/maps/api/js?`+e; // ✅ FIXED: Added = sign
+            a.src=`https://maps.${c}apis.com/maps/api/js?`+e;
             d[q]=f;
             a.onerror=()=>h=n(Error(p+" could not load."));
             a.nonce=m.querySelector("script[nonce]")?.nonce||"";
