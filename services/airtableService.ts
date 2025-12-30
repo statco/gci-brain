@@ -1,33 +1,196 @@
-import axios from 'axios';
+// services/airtableService.ts - COMPREHENSIVE DEBUG VERSION
+const API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
+const BASE_ID = import.meta.env.VITE_AIRTABLE_BASE_ID;
+const INSTALLERS_TABLE = import.meta.env.VITE_AIRTABLE_INSTALLERS_TABLE || 'Installers';
 
-const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || '';
-const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
-const INSTALLERS_TABLE = process.env.AIRTABLE_INSTALLERS_TABLE || 'Installers';
+// Debug: Log configuration on load
+console.log('🔧 Airtable Service Loaded');
+console.log('📋 Configuration:', {
+  hasApiKey: !!API_KEY,
+  apiKeyStart: API_KEY ? API_KEY.substring(0, 15) + '...' : 'MISSING',
+  baseId: BASE_ID || 'MISSING',
+  tableName: INSTALLERS_TABLE,
+});
 
-interface InstallerRecord {
+export interface InstallerRecord {
   id: string;
   fields: {
     Name: string;
-    Email: string;
+    Email?: string;
     Phone?: string;
     Address: string;
     City: string;
     Province: string;
-    PostalCode: string;
+    PostalCode?: string;
     Latitude?: number;
     Longitude?: number;
     CalendlyLink?: string;
-    ServiceRadius?: number; // in km
+    ServiceRadius?: number;
     PricePerTire?: number;
-    Status: 'Active' | 'Inactive' | 'Pending';
-    CertificationDate?: string;
+    Status: string;
     Rating?: number;
     TotalInstallations?: number;
   };
 }
 
-interface JobRecord {
-  fields: {
+export const airtableService = {
+  /**
+   * Find nearby installers within a given radius
+   */
+  async findNearbyInstallers(
+    userLat: number,
+    userLng: number,
+    radiusKm: number = 100
+  ): Promise<InstallerRecord[]> {
+    console.log('🎯 === STARTING INSTALLER SEARCH ===');
+    console.log('📍 Search parameters:', { userLat, userLng, radiusKm });
+
+    if (!API_KEY || !BASE_ID) {
+      console.error('❌ CRITICAL: Missing Airtable credentials');
+      console.error('API_KEY exists:', !!API_KEY);
+      console.error('BASE_ID exists:', !!BASE_ID);
+      throw new Error('Airtable API key or Base ID not configured');
+    }
+
+    try {
+      // Try WITHOUT filter first to see all records
+      const urlNoFilter = `https://api.airtable.com/v0/${BASE_ID}/${INSTALLERS_TABLE}`;
+      
+      console.log('🌐 Step 1: Fetching ALL records (no filter)');
+      console.log('📡 URL:', urlNoFilter);
+
+      const responseAll = await fetch(urlNoFilter, {
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('📥 Response Status:', responseAll.status, responseAll.statusText);
+
+      if (!responseAll.ok) {
+        const errorText = await responseAll.text();
+        console.error('❌ API Error Response:', errorText);
+        throw new Error(`Airtable API error: ${responseAll.status} - ${errorText}`);
+      }
+
+      const dataAll = await responseAll.json();
+      console.log('✅ Raw Airtable Response:', JSON.stringify(dataAll, null, 2));
+      console.log('📊 Total records in table:', dataAll.records?.length || 0);
+
+      if (dataAll.records && dataAll.records.length > 0) {
+        console.log('👤 First record details:', JSON.stringify(dataAll.records[0], null, 2));
+        console.log('🔍 Status field value:', dataAll.records[0].fields.Status);
+        console.log('🔍 Status field type:', typeof dataAll.records[0].fields.Status);
+        
+        // Log all Status values
+        dataAll.records.forEach((record: any, index: number) => {
+          console.log(`Record ${index + 1} Status: "${record.fields.Status}"`);
+        });
+      }
+
+      const allInstallers: InstallerRecord[] = dataAll.records || [];
+
+      if (allInstallers.length === 0) {
+        console.warn('⚠️ No records found in Airtable table');
+        return [];
+      }
+
+      // Now filter by Status = 'Active'
+      console.log('🔍 Step 2: Filtering by Status = "Active"');
+      const activeInstallers = allInstallers.filter(installer => {
+        const status = installer.fields.Status;
+        const isActive = status === 'Active';
+        console.log(`- ${installer.fields.Name}: Status="${status}", isActive=${isActive}`);
+        return isActive;
+      });
+
+      console.log(`✅ Active installers: ${activeInstallers.length} out of ${allInstallers.length}`);
+
+      if (activeInstallers.length === 0) {
+        console.warn('⚠️ No Active installers found!');
+        return [];
+      }
+
+      // Filter by distance
+      console.log('🔍 Step 3: Filtering by distance');
+      const nearby = activeInstallers.filter(installer => {
+        const lat = installer.fields.Latitude;
+        const lng = installer.fields.Longitude;
+
+        if (!lat || !lng) {
+          console.log(`  ⚠️ ${installer.fields.Name}: Missing coordinates, including anyway`);
+          return true;
+        }
+
+        const distance = calculateDistance(userLat, userLng, lat, lng);
+        const withinRadius = distance <= radiusKm;
+        console.log(`  📏 ${installer.fields.Name}: ${distance.toFixed(1)}km away, withinRadius=${withinRadius}`);
+        
+        return withinRadius;
+      });
+
+      console.log(`✅ Final result: ${nearby.length} installers within ${radiusKm}km`);
+
+      // Sort by distance
+      nearby.sort((a, b) => {
+        const distA = a.fields.Latitude && a.fields.Longitude 
+          ? calculateDistance(userLat, userLng, a.fields.Latitude, a.fields.Longitude)
+          : 999;
+        const distB = b.fields.Latitude && b.fields.Longitude
+          ? calculateDistance(userLat, userLng, b.fields.Latitude, b.fields.Longitude)
+          : 999;
+        return distA - distB;
+      });
+
+      console.log('🎉 === SEARCH COMPLETE ===');
+      return nearby;
+
+    } catch (error) {
+      console.error('💥 FATAL ERROR in findNearbyInstallers:', error);
+      if (error instanceof Error) {
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * Get all active installers
+   */
+  async getActiveInstallers(): Promise<InstallerRecord[]> {
+    if (!API_KEY || !BASE_ID) {
+      throw new Error('Airtable API key or Base ID not configured');
+    }
+
+    try {
+      const url = `https://api.airtable.com/v0/${BASE_ID}/${INSTALLERS_TABLE}?filterByFormula={Status}='Active'`;
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Airtable API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      return data.records || [];
+    } catch (error) {
+      console.error('Error fetching active installers:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Create a new installation job
+   */
+  async createInstallationJob(jobData: {
     CustomerName: string;
     CustomerEmail: string;
     CustomerPhone: string;
@@ -35,257 +198,67 @@ interface JobRecord {
     TireProduct: string;
     Quantity: number;
     InstallationPrice: number;
-    ScheduledDate?: string;
-    Status: 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
+    Status: string;
     ShopifyOrderId?: string;
     Notes?: string;
-    CreatedAt: string;
-  };
-}
-
-interface InstallerApplicationData {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  province: string;
-  postalCode: string;
-  businessName?: string;
-  yearsExperience?: number;
-  certifications?: string;
-  serviceRadius?: number;
-  pricePerTire?: number;
-  calendlyLink?: string;
-  notes?: string;
-}
-
-class AirtableService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}`;
-  }
-
-  private getHeaders() {
-    return {
-      Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    };
-  }
-
-  /**
-   * Submit installer application (for new installers to join network)
-   */
-  async submitInstallerApplication(data: InstallerApplicationData): Promise<any> {
-    try {
-      const response = await axios.post(
-        `${this.baseUrl}/${INSTALLERS_TABLE}`,
-        {
-          fields: {
-            Name: data.name,
-            Email: data.email,
-            Phone: data.phone || '',
-            Address: data.address,
-            City: data.city,
-            Province: data.province,
-            PostalCode: data.postalCode,
-            CalendlyLink: data.calendlyLink || '',
-            ServiceRadius: data.serviceRadius || 50,
-            PricePerTire: data.pricePerTire || 20,
-            Status: 'Pending', // New applications start as pending
-            Notes: data.notes || `Business: ${data.businessName || 'N/A'}, Experience: ${data.yearsExperience || 0} years, Certifications: ${data.certifications || 'None provided'}`,
-          },
-        },
-        {
-          headers: this.getHeaders(),
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Error submitting installer application:', error);
-      throw error;
+  }): Promise<any> {
+    if (!API_KEY || !BASE_ID) {
+      throw new Error('Airtable API key or Base ID not configured');
     }
-  }
 
-  /**
-   * Fetch all active installers
-   */
-  async getActiveInstallers(): Promise<InstallerRecord[]> {
     try {
-      const response = await axios.get(`${this.baseUrl}/${INSTALLERS_TABLE}`, {
-        headers: this.getHeaders(),
-        params: {
-          filterByFormula: "{Status} = 'Active'",
-          sort: [{ field: 'Rating', direction: 'desc' }],
+      const url = `https://api.airtable.com/v0/${BASE_ID}/Jobs`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          fields: jobData,
+        }),
       });
 
-      return response.data.records;
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to create job: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Installation job created:', data.id);
+      return data;
     } catch (error) {
-      console.error('Error fetching installers:', error);
+      console.error('Error creating installation job:', error);
       throw error;
     }
-  }
-
-  /**
-   * Find installers near a location
-   */
-  async findNearbyInstallers(
-    latitude: number,
-    longitude: number,
-    radiusKm: number = 50
-  ): Promise<InstallerRecord[]> {
-    try {
-      const allInstallers = await this.getActiveInstallers();
-
-      // Filter by distance using Haversine formula
-      const nearbyInstallers = allInstallers.filter((installer) => {
-        const lat = installer.fields.Latitude;
-        const lon = installer.fields.Longitude;
-
-        if (!lat || !lon) return false;
-
-        const distance = this.calculateDistance(latitude, longitude, lat, lon);
-        return distance <= radiusKm;
-      });
-
-      return nearbyInstallers;
-    } catch (error) {
-      console.error('Error finding nearby installers:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get a specific installer by ID
-   */
-  async getInstaller(installerId: string): Promise<InstallerRecord> {
-    try {
-      const response = await axios.get(
-        `${this.baseUrl}/${INSTALLERS_TABLE}/${installerId}`,
-        {
-          headers: this.getHeaders(),
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching installer:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Create a new installation job
-   */
-  async createInstallationJob(jobData: JobRecord['fields']): Promise<any> {
-    try {
-      const response = await axios.post(
-        `${this.baseUrl}/Jobs`,
-        {
-          fields: {
-            ...jobData,
-            CreatedAt: new Date().toISOString(),
-            Status: 'Pending',
-          },
-        },
-        {
-          headers: this.getHeaders(),
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Error creating job:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Update job status
-   */
-  async updateJobStatus(
-    jobId: string,
-    status: JobRecord['fields']['Status'],
-    notes?: string
-  ): Promise<any> {
-    try {
-      const response = await axios.patch(
-        `${this.baseUrl}/Jobs/${jobId}`,
-        {
-          fields: {
-            Status: status,
-            ...(notes && { Notes: notes }),
-          },
-        },
-        {
-          headers: this.getHeaders(),
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Error updating job status:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Calculate distance between two coordinates using Haversine formula
-   */
-  private calculateDistance(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number
-  ): number {
-    const R = 6371; // Earth's radius in km
-    const dLat = this.toRad(lat2 - lat1);
-    const dLon = this.toRad(lon2 - lon1);
-
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRad(lat1)) *
-        Math.cos(this.toRad(lat2)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private toRad(degrees: number): number {
-    return degrees * (Math.PI / 180);
-  }
-
-  /**
-   * Get installer's upcoming jobs
-   */
-  async getInstallerJobs(installerId: string): Promise<any[]> {
-    try {
-      const response = await axios.get(`${this.baseUrl}/Jobs`, {
-        headers: this.getHeaders(),
-        params: {
-          filterByFormula: `{InstallerId} = '${installerId}'`,
-          sort: [{ field: 'ScheduledDate', direction: 'asc' }],
-        },
-      });
-
-      return response.data.records;
-    } catch (error) {
-      console.error('Error fetching installer jobs:', error);
-      throw error;
-    }
-  }
-}
-
-export const airtableService = new AirtableService();
-
-// Export the function that InstallerApplicationForm needs
-export const submitInstallerApplication = (data: InstallerApplicationData) => {
-  return airtableService.submitInstallerApplication(data);
+  },
 };
 
-export type { InstallerRecord, JobRecord, InstallerApplicationData };
+/**
+ * Calculate distance between two points using Haversine formula
+ */
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function toRad(degrees: number): number {
+  return degrees * (Math.PI / 180);
+}
