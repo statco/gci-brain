@@ -47,7 +47,7 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
       city: installer.fields.City,
       province: installer.fields.Province,
       phone: installer.fields.Phone || '',
-      calendlyLink: installer.fields.CalendlyLink,
+      calendlyLink: installer.fields['Calendar Link'] || installer.fields.CalendlyLink, // ✅ Try both
       pricePerTire: installer.fields.PricePerTire,
       rating: installer.fields.Rating,
       distance: installer.distance || 0,
