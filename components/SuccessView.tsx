@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
 import { airtableService } from '../services/airtableService';
+import InstallerMap from './InstallerMap';
 
 interface SuccessViewProps {
   selectedTire: {
@@ -25,9 +26,10 @@ interface Installer {
   distance: number;
   pricePerTire?: number;
   rating?: number;
+  lat?: number;
+  lng?: number;
 }
 
-// ✅ SIMPLIFIED: Just use distance from Airtable service
 const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
   console.log('Fetching installers from Airtable...', { lat: userLat, lng: userLng });
   
@@ -48,7 +50,9 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
       calendlyLink: installer.fields.CalendlyLink,
       pricePerTire: installer.fields.PricePerTire,
       rating: installer.fields.Rating,
-      distance: installer.distance || 0, // ✅ Use distance from service
+      distance: installer.distance || 0,
+      lat: installer.fields.Latitude,
+      lng: installer.fields.Longitude,
     }));
   } catch (error) {
     console.error('Error fetching installers:', error);
@@ -59,9 +63,11 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
 const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list'); // ✅ NEW: View toggle
   const t = translations[lang];
 
-  const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
+  const orderNumber = `TM-${Math.floor(100000 + Math.random() + 900000)}`;
 
   const tireSubtotal = selectedTire.tire.pricePerUnit * selectedTire.quantity;
   const installationSubtotal = selectedTire.withInstallation ? 15 * selectedTire.quantity : 0;
@@ -74,6 +80,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
       setLoadingInstallers(true);
       
       const fetchWithLoc = (lat?: number, lng?: number) => {
+        if (lat && lng) {
+          setUserLocation({ lat, lng });
+        }
+        
         fetchInstallers(lat, lng).then(data => {
           setInstallers(data);
           setLoadingInstallers(false);
@@ -190,17 +200,34 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             </div>
 
             <div>
-              <h4 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm flex items-center gap-2">
-                {t.authorizedInstallers || 'AUTHORIZED INSTALLERS (GROUNDED DATA)'}
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-bold text-slate-900 uppercase tracking-wide text-sm">
+                  {t.authorizedInstallers || 'AUTHORIZED INSTALLERS (GROUNDED DATA)'}
+                </h4>
+                {/* ✅ NEW: View Toggle Buttons */}
                 <div className="flex gap-2">
-                  <button className="px-3 py-1 text-xs font-bold bg-slate-200 text-slate-700 rounded hover:bg-slate-300">
+                  <button
+                    onClick={() => setViewMode('list')}
+                    className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
+                      viewMode === 'list'
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                    }`}
+                  >
                     LIST
                   </button>
-                  <button className="px-3 py-1 text-xs font-bold bg-slate-100 text-slate-600 rounded hover:bg-slate-200">
+                  <button
+                    onClick={() => setViewMode('map')}
+                    className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
+                      viewMode === 'map'
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
                     MAP
                   </button>
                 </div>
-              </h4>
+              </div>
 
               {loadingInstallers ? (
                 <div className="flex items-center justify-center py-8">
@@ -210,68 +237,79 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                   </svg>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {installers.length > 0 ? (
-                    installers.map((installer) => (
-                      <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h5 className="font-bold text-slate-900">{installer.name}</h5>
-                            <p className="text-sm text-slate-600 mt-1">
-                              {installer.address}<br />
-                              {installer.city}, {installer.province}
-                            </p>
-                            <p className="text-sm text-slate-600 mt-1">
-                              📞 {installer.phone}
-                            </p>
-                            
-                            {/* ✅ FIXED: Distance Display */}
-                            <div className="flex items-center gap-3 mt-2 flex-wrap">
-                              {installer.distance > 0 ? (
-                                <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                  📍 {installer.distance.toFixed(1)} km away
+                <>
+                  {/* ✅ LIST VIEW */}
+                  {viewMode === 'list' && (
+                    <div className="space-y-3">
+                      {installers.length > 0 ? (
+                        installers.map((installer) => (
+                          <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <h5 className="font-bold text-slate-900">{installer.name}</h5>
+                                <p className="text-sm text-slate-600 mt-1">
+                                  {installer.address}<br />
+                                  {installer.city}, {installer.province}
                                 </p>
-                              ) : (
-                                <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                                  📍 Nearest location
+                                <p className="text-sm text-slate-600 mt-1">
+                                  📞 {installer.phone}
                                 </p>
-                              )}
-                              {installer.pricePerTire && (
-                                <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
-                                  ${installer.pricePerTire.toFixed(2)}/tire
-                                </p>
-                              )}
-                              {installer.rating && (
-                                <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
-                                  <span className="text-yellow-500 text-xs">
-                                    {'★'.repeat(Math.floor(installer.rating))}
-                                  </span>
-                                  <span className="ml-1 text-xs font-semibold text-slate-700">
-                                    ({installer.rating.toFixed(1)})
-                                  </span>
+                                
+                                <div className="flex items-center gap-3 mt-2 flex-wrap">
+                                  {installer.distance > 0 ? (
+                                    <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                      📍 {installer.distance.toFixed(1)} km away
+                                    </p>
+                                  ) : (
+                                    <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
+                                      📍 Nearest location
+                                    </p>
+                                  )}
+                                  {installer.pricePerTire && (
+                                    <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
+                                      ${installer.pricePerTire.toFixed(2)}/tire
+                                    </p>
+                                  )}
+                                  {installer.rating && (
+                                    <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
+                                      <span className="text-yellow-500 text-xs">
+                                        {'★'.repeat(Math.floor(installer.rating))}
+                                      </span>
+                                      <span className="ml-1 text-xs font-semibold text-slate-700">
+                                        ({installer.rating.toFixed(1)})
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
+                              </div>
+                              {installer.calendlyLink && (
+                                <a
+                                  href={installer.calendlyLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
+                                >
+                                  {t.bookAppointment || 'RÉSERVER'}
+                                </a>
                               )}
                             </div>
                           </div>
-                          {installer.calendlyLink && (
-                            <a
-                              href={installer.calendlyLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
-                            >
-                              {t.bookAppointment || 'RÉSERVER'}
-                            </a>
-                          )}
+                        ))
+                      ) : (
+                        <div className="text-center py-8 text-slate-500">
+                          <p>No installers found in your area.</p>
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-8 text-slate-500">
-                      <p>No installers found in your area.</p>
+                      )}
                     </div>
                   )}
-                </div>
+
+                  {/* ✅ MAP VIEW */}
+                  {viewMode === 'map' && (
+                    <div className="mt-4">
+                      <InstallerMap installers={installers} userLocation={userLocation || undefined} />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
