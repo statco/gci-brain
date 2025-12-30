@@ -211,25 +211,4 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
   );
 };
 
-  if (error) {
-    return (
-      <div className="w-full h-96 bg-slate-100 rounded-lg flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-slate-600 mb-2">{error}</p>
-          <p className="text-sm text-slate-500">
-            Google Maps API key required
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div 
-      ref={mapRef} 
-      className="w-full h-96 rounded-lg border border-slate-300 shadow-md"
-    />
-  );
-};
-
 export default InstallerMap;
