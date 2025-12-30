@@ -27,33 +27,62 @@ interface Installer {
   rating?: number;
 }
 
-// ✅ REAL Airtable integration
-const fetchInstallers = async (lat?: number, lng?: number): Promise<Installer[]> => {
-  console.log('Fetching installers from Airtable...', { lat, lng });
+// Calculate distance between two points
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function toRad(degrees: number): number {
+  return degrees * (Math.PI / 180);
+}
+
+// Fetch installers from Airtable
+const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
+  console.log('Fetching installers from Airtable...', { lat: userLat, lng: userLng });
   
   try {
     const installers = await airtableService.findNearbyInstallers(
-      lat || 48.2368, // Default to Rouyn-Noranda
-      lng || -79.0228,
+      userLat || 48.2368, // Default to Rouyn-Noranda
+      userLng || -79.0228,
       100 // 100km radius
     );
 
-    return installers.map(installer => ({
-      id: installer.id,
-      name: installer.fields.Name,
-      address: installer.fields.Address,
-      city: installer.fields.City,
-      province: installer.fields.Province,
-      phone: installer.fields.Phone || '',
-      calendlyLink: installer.fields.CalendlyLink,
-      pricePerTire: installer.fields.PricePerTire,
-      rating: installer.fields.Rating,
-      distance: 0, // Distance is calculated in the service
-    }));
+    return installers.map(installer => {
+      // Calculate distance if we have coordinates
+      let distance = 0;
+      if (userLat && userLng && installer.fields.Lattitude && installer.fields.Longitude) {
+        distance = calculateDistance(userLat, userLng, installer.fields.Lattitude, installer.fields.Longitude);
+      }
+
+      return {
+        id: installer.id,
+        name: installer.fields.Name,
+        address: installer.fields.Address,
+        city: installer.fields.City,
+        province: installer.fields.Province,
+        phone: installer.fields.Phone || '',
+        calendlyLink: installer.fields.CalendlyLink,
+        pricePerTire: installer.fields.PricePerTire,
+        rating: installer.fields.Rating,
+        distance: distance,
+      };
+    });
   } catch (error) {
     console.error('Error fetching installers from Airtable:', error);
     
-    // Fallback to mock data if Airtable fails
+    // Fallback to mock data
     return [
       {
         id: '1',
@@ -72,6 +101,7 @@ const fetchInstallers = async (lat?: number, lng?: number): Promise<Installer[]>
 const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const t = translations[lang];
 
   // Generate random order number
@@ -90,6 +120,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
       setLoadingInstallers(true);
       
       const fetchWithLoc = (lat?: number, lng?: number) => {
+        if (lat && lng) {
+          setUserLocation({ lat, lng });
+        }
+        
         fetchInstallers(lat, lng).then(data => {
           setInstallers(data);
           setLoadingInstallers(false);
@@ -256,23 +290,30 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                             <p className="text-sm text-slate-600 mt-1">
                               📞 {installer.phone}
                             </p>
-                            <div className="flex items-center gap-3 mt-2">
-                              {installer.distance > 0 && (
-                                <p className="text-xs text-blue-600 font-semibold">
-                                  📍 ~{installer.distance.toFixed(0)} km away
+                            
+                            {/* ✅ FIXED: Distance Display */}
+                            <div className="flex items-center gap-3 mt-2 flex-wrap">
+                              {installer.distance !== undefined && installer.distance > 0 && (
+                                <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                  📍 {installer.distance.toFixed(1)} km away
+                                </p>
+                              )}
+                              {installer.distance === 0 && (
+                                <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
+                                  📍 Nearest location
                                 </p>
                               )}
                               {installer.pricePerTire && (
-                                <p className="text-xs text-slate-600">
+                                <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
                                   ${installer.pricePerTire.toFixed(2)}/tire
                                 </p>
                               )}
                               {installer.rating && (
-                                <div className="flex items-center">
+                                <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
                                   <span className="text-yellow-500 text-xs">
                                     {'★'.repeat(Math.floor(installer.rating))}
                                   </span>
-                                  <span className="ml-1 text-xs text-slate-600">
+                                  <span className="ml-1 text-xs font-semibold text-slate-700">
                                     ({installer.rating.toFixed(1)})
                                   </span>
                                 </div>
