@@ -68,6 +68,7 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
             : { lat: 48.2368, lng: -79.0228 });
 
         // Initialize map
+        console.log('🗺️ Initializing map at center:', center);
         const newMap = new google.maps.Map(mapRef.current, {
           center,
           zoom: 10,
@@ -80,6 +81,7 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
           ],
         });
 
+        console.log('✅ Map created successfully');
         setMap(newMap);
         setIsLoading(false);
 
@@ -103,10 +105,16 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
         // Add installer markers
         const bounds = new google.maps.LatLngBounds();
         
+        console.log(`📍 Adding ${installers.length} installer markers...`);
+        
         installers.forEach((installer) => {
-          if (!installer.lat || !installer.lng) return;
+          if (!installer.lat || !installer.lng) {
+            console.log(`⚠️ ${installer.name}: Missing coordinates`);
+            return;
+          }
 
           const position = { lat: installer.lat, lng: installer.lng };
+          console.log(`📌 ${installer.name}: ${position.lat}, ${position.lng}`);
           bounds.extend(position);
 
           // Create custom marker
@@ -164,7 +172,10 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
           if (userLocation) {
             bounds.extend(userLocation);
           }
+          console.log('🎯 Fitting map bounds to show all markers');
           newMap.fitBounds(bounds);
+        } else {
+          console.log('⚠️ No installers to show on map');
         }
       } catch (err) {
         console.error('Error initializing map:', err);
