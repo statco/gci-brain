@@ -27,7 +27,6 @@
       }
       /* Animations */
       @keyframes fadeInUp {
-
         from { opacity: 0; transform: translateY(20px); }
         to { opacity: 1; transform: translateY(0); }
       }
@@ -43,41 +42,41 @@
       }
     </style>
   </head>
-  <!-- Google Maps API Loader -->
-<script>
-  (function() {
-    // Get API key from environment variable
-    const apiKey = '%VITE_GOOGLE_MAPS_API_KEY%';
-    
-    if (!apiKey || apiKey === '%VITE_GOOGLE_MAPS_API_KEY%') {
-      console.warn('Google Maps API key not configured');
-      return;
-    }
-    
-    // Load Google Maps dynamically
-    (function(g){
-      var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;
-      b=b[c]||(b[c]={});
-      var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{
-        await (a=m.createElement("script"));
-        e.set("libraries",[...r]+"");
-        for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);
-        e.set("callback",c+".maps."+q);
-        a.src=`https://maps.${c}apis.com/maps/api/js?`+e;
-        d[q]=f;
-        a.onerror=()=>h=n(Error(p+" could not load."));
-        a.nonce=m.querySelector("script[nonce]")?.nonce||"";
-        m.head.append(a)
-      }));
-      d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))
-    })({
-      key: apiKey,
-      v: "weekly",
-    });
-  })();
-</script>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
+    
+    <!-- Google Maps API Loader - Load AFTER main app -->
+    <script type="module">
+      // Import the env variable from Vite
+      const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+      
+      if (!apiKey) {
+        console.warn('Google Maps API key not configured. Set VITE_GOOGLE_MAPS_API_KEY in Vercel environment variables.');
+      } else {
+        console.log('Loading Google Maps API...');
+        
+        // Google Maps Dynamic Loader
+        (function(g){
+          var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;
+          b=b[c]||(b[c]={});
+          var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{
+            await (a=m.createElement("script"));
+            e.set("libraries",[...r]+"");
+            for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);
+            e.set("callback",c+".maps."+q);
+            a.src=`https://maps.${c}apis.com/maps/api/js?`+e;
+            d[q]=f;
+            a.onerror=()=>h=n(Error(p+" could not load."));
+            a.nonce=m.querySelector("script[nonce]")?.nonce||"";
+            m.head.append(a)
+          }));
+          d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))
+        })({
+          key: apiKey,
+          v: "weekly",
+        });
+      }
+    </script>
   </body>
 </html>
