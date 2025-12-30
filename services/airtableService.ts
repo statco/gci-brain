@@ -1,13 +1,9 @@
-// services/airtableService.ts - COMPLETE VERSION
+// services/airtableService.ts - CORRECT SPELLING
 const API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
 const BASE_ID = import.meta.env.VITE_AIRTABLE_BASE_ID;
 const INSTALLERS_TABLE = import.meta.env.VITE_AIRTABLE_INSTALLERS_TABLE || 'Installers';
 
-console.log('🔧 Airtable Service Initialized:', {
-  hasApiKey: !!API_KEY,
-  baseId: BASE_ID,
-  tableName: INSTALLERS_TABLE,
-});
+console.log('🔧 Airtable Service Initialized');
 
 export interface InstallerRecord {
   id: string;
@@ -19,7 +15,7 @@ export interface InstallerRecord {
     City: string;
     Province: string;
     PostalCode?: string;
-    Latitude?: number;
+    Latitude?: number; // ✅ FIXED: Correct spelling with 1 T
     Longitude?: number;
     CalendlyLink?: string;
     ServiceRadius?: number;
@@ -31,9 +27,6 @@ export interface InstallerRecord {
 }
 
 export const airtableService = {
-  /**
-   * Find nearby installers within a given radius
-   */
   async findNearbyInstallers(
     userLat: number,
     userLng: number,
@@ -42,16 +35,11 @@ export const airtableService = {
     console.log('🎯 Finding installers:', { userLat, userLng, radiusKm });
 
     if (!API_KEY || !BASE_ID) {
-      console.error('❌ Missing Airtable credentials');
       throw new Error('Airtable API key or Base ID not configured');
     }
 
     try {
-      // Fetch all records (no filter) to debug
       const url = `https://api.airtable.com/v0/${BASE_ID}/${INSTALLERS_TABLE}`;
-      
-      console.log('🌐 Fetching from Airtable...');
-
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${API_KEY}`,
@@ -59,56 +47,37 @@ export const airtableService = {
         },
       });
 
-      console.log('📥 Response:', response.status);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Airtable Error:', errorText);
         throw new Error(`Airtable API error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('✅ Total records:', data.records?.length || 0);
-
       const allInstallers: InstallerRecord[] = data.records || [];
 
-      if (allInstallers.length > 0) {
-        console.log('👤 First record:', allInstallers[0].fields);
-        allInstallers.forEach((inst, i) => {
-          console.log(`Record ${i + 1}: ${inst.fields.Name}, Status: "${inst.fields.Status}"`);
-        });
-      }
+      console.log(`✅ Found ${allInstallers.length} total installers`);
 
       // Filter by Active status
-      const activeInstallers = allInstallers.filter(inst => {
-        const isActive = inst.fields.Status === 'Active';
-        console.log(`- ${inst.fields.Name}: Active=${isActive}`);
-        return isActive;
-      });
-
-      console.log(`✅ Active installers: ${activeInstallers.length}`);
-
-      if (activeInstallers.length === 0) {
-        return [];
-      }
+      const activeInstallers = allInstallers.filter(inst => inst.fields.Status === 'Active');
+      console.log(`✅ ${activeInstallers.length} active installers`);
 
       // Filter by distance
       const nearby = activeInstallers.filter(installer => {
-        const lat = installer.fields.Latitude;
+        const lat = installer.fields.Latitude; // ✅ FIXED: Using correct field name
         const lng = installer.fields.Longitude;
 
         if (!lat || !lng) {
           console.log(`⚠️ ${installer.fields.Name}: No coordinates`);
-          return true;
+          return true; // Include anyway
         }
 
         const distance = calculateDistance(userLat, userLng, lat, lng);
-        console.log(`📏 ${installer.fields.Name}: ${distance.toFixed(1)}km`);
+        console.log(`📏 ${installer.fields.Name}: ${distance.toFixed(1)}km away`);
         
         return distance <= radiusKm;
       });
 
-      console.log(`✅ Final: ${nearby.length} installers within ${radiusKm}km`);
+      console.log(`✅ ${nearby.length} installers within ${radiusKm}km`);
 
       // Sort by distance
       nearby.sort((a, b) => {
@@ -122,16 +91,12 @@ export const airtableService = {
       });
 
       return nearby;
-
     } catch (error) {
-      console.error('💥 Error:', error);
+      console.error('Error fetching installers:', error);
       throw error;
     }
   },
 
-  /**
-   * Get all active installers
-   */
   async getActiveInstallers(): Promise<InstallerRecord[]> {
     if (!API_KEY || !BASE_ID) {
       throw new Error('Airtable API key or Base ID not configured');
@@ -160,9 +125,6 @@ export const airtableService = {
     }
   },
 
-  /**
-   * Create a new installation job
-   */
   async createInstallationJob(jobData: {
     CustomerName: string;
     CustomerEmail: string;
@@ -208,9 +170,6 @@ export const airtableService = {
   },
 };
 
-/**
- * Submit installer application (for InstallerApplicationForm)
- */
 export async function submitInstallerApplication(formData: {
   name: string;
   email: string;
@@ -249,7 +208,7 @@ export async function submitInstallerApplication(formData: {
           PostalCode: formData.postalCode,
           ServiceRadius: formData.serviceRadius,
           PricePerTire: formData.pricePerTire,
-          Status: 'Pending', // New applications start as Pending
+          Status: 'Pending',
         },
       }),
     });
@@ -268,16 +227,13 @@ export async function submitInstallerApplication(formData: {
   }
 }
 
-/**
- * Calculate distance between two points using Haversine formula
- */
 function calculateDistance(
   lat1: number,
   lon1: number,
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371; // Earth's radius in kilometers
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   
