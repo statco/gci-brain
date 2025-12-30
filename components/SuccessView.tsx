@@ -27,120 +27,67 @@ interface Installer {
   rating?: number;
 }
 
-// Calculate distance between two points
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Earth's radius in kilometers
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-function toRad(degrees: number): number {
-  return degrees * (Math.PI / 180);
-}
-
-// Fetch installers from Airtable
+// ✅ SIMPLIFIED: Just use distance from Airtable service
 const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
   console.log('Fetching installers from Airtable...', { lat: userLat, lng: userLng });
   
   try {
     const installers = await airtableService.findNearbyInstallers(
-      userLat || 48.2368, // Default to Rouyn-Noranda
+      userLat || 48.2368,
       userLng || -79.0228,
-      100 // 100km radius
+      100
     );
 
-    return installers.map(installer => {
-      // Calculate distance if we have coordinates
-      let distance = 0;
-      if (userLat && userLng && installer.fields.Latitude && installer.fields.Longitude) {
-        distance = calculateDistance(userLat, userLng, installer.fields.Latitude, installer.fields.Longitude);
-      }
-
-      return {
-        id: installer.id,
-        name: installer.fields.Name,
-        address: installer.fields.Address,
-        city: installer.fields.City,
-        province: installer.fields.Province,
-        phone: installer.fields.Phone || '',
-        calendlyLink: installer.fields.CalendlyLink,
-        pricePerTire: installer.fields.PricePerTire,
-        rating: installer.fields.Rating,
-        distance: distance,
-      };
-    });
+    return installers.map(installer => ({
+      id: installer.id,
+      name: installer.fields.Name,
+      address: installer.fields.Address,
+      city: installer.fields.City,
+      province: installer.fields.Province,
+      phone: installer.fields.Phone || '',
+      calendlyLink: installer.fields.CalendlyLink,
+      pricePerTire: installer.fields.PricePerTire,
+      rating: installer.fields.Rating,
+      distance: installer.distance || 0, // ✅ Use distance from service
+    }));
   } catch (error) {
-    console.error('Error fetching installers from Airtable:', error);
-    
-    // Fallback to mock data
-    return [
-      {
-        id: '1',
-        name: 'GCI Tire - Rouyn-Noranda',
-        address: '123 Avenue Principale',
-        city: 'Rouyn-Noranda',
-        province: 'QC',
-        phone: '(819) 555-0100',
-        calendlyLink: 'https://calendly.com/gci-tire',
-        distance: 0,
-      }
-    ];
+    console.error('Error fetching installers:', error);
+    return [];
   }
 };
 
 const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const t = translations[lang];
 
-  // Generate random order number
   const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
 
-  // Calculate totals
   const tireSubtotal = selectedTire.tire.pricePerUnit * selectedTire.quantity;
   const installationSubtotal = selectedTire.withInstallation ? 15 * selectedTire.quantity : 0;
   const subtotal = tireSubtotal + installationSubtotal;
   const taxes = subtotal * 0.15;
   const total = subtotal + taxes;
 
-  // Request Location and Fetch Installers
   useEffect(() => {
     if (selectedTire.withInstallation) {
       setLoadingInstallers(true);
       
       const fetchWithLoc = (lat?: number, lng?: number) => {
-        if (lat && lng) {
-          setUserLocation({ lat, lng });
-        }
-        
         fetchInstallers(lat, lng).then(data => {
           setInstallers(data);
           setLoadingInstallers(false);
         }).catch(error => {
-          console.error('Error fetching installers:', error);
+          console.error('Error:', error);
           setLoadingInstallers(false);
         });
       };
 
-      // Try to get user location
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          (position) => {
-            fetchWithLoc(position.coords.latitude, position.coords.longitude);
-          },
-          (error) => {
-            console.log('Geolocation denied, using default search.', error);
+          (pos) => fetchWithLoc(pos.coords.latitude, pos.coords.longitude),
+          (err) => {
+            console.log('Geolocation denied, using default search.', err);
             fetchWithLoc();
           }
         );
@@ -171,15 +118,12 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
         {/* Order Details Card */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6 animate-fade-in-up">
           <div className="grid md:grid-cols-2 gap-6 mb-6">
-            {/* Order Number */}
             <div>
               <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
                 {t.orderNumber || 'Order Number'}
               </p>
               <p className="text-2xl font-black text-slate-900">{orderNumber}</p>
             </div>
-
-            {/* Total Paid */}
             <div className="text-right">
               <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
                 {t.totalPaid || 'Total Paid'}
@@ -188,12 +132,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             </div>
           </div>
 
-          {/* Order Summary */}
           <div className="border-t border-slate-200 pt-4">
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
               {t.orderSummary || 'Order Summary'}
             </h3>
-            
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-600">
@@ -201,7 +143,6 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                 </span>
                 <span className="font-semibold text-slate-900">${tireSubtotal.toFixed(2)}</span>
               </div>
-
               {selectedTire.withInstallation && (
                 <div className="flex justify-between">
                   <span className="text-slate-600 flex items-center gap-1">
@@ -213,17 +154,14 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                   <span className="font-semibold text-slate-900">${installationSubtotal.toFixed(2)}</span>
                 </div>
               )}
-
               <div className="flex justify-between border-t border-slate-200 pt-2">
                 <span className="text-slate-600">Subtotal</span>
                 <span className="font-semibold text-slate-900">${subtotal.toFixed(2)}</span>
               </div>
-
               <div className="flex justify-between">
                 <span className="text-slate-600">Taxes (15%)</span>
                 <span className="font-semibold text-slate-900">${taxes.toFixed(2)}</span>
               </div>
-
               <div className="flex justify-between text-lg font-black border-t-2 border-slate-300 pt-2 mt-2">
                 <span className="text-slate-900">TOTAL</span>
                 <span className="text-green-600">${total.toFixed(2)}</span>
@@ -251,7 +189,6 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
               </div>
             </div>
 
-            {/* Installers List */}
             <div>
               <h4 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm flex items-center gap-2">
                 {t.authorizedInstallers || 'AUTHORIZED INSTALLERS (GROUNDED DATA)'}
@@ -276,10 +213,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                 <div className="space-y-3">
                   {installers.length > 0 ? (
                     installers.map((installer) => (
-                      <div
-                        key={installer.id}
-                        className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all"
-                      >
+                      <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <h5 className="font-bold text-slate-900">{installer.name}</h5>
@@ -293,12 +227,11 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                             
                             {/* ✅ FIXED: Distance Display */}
                             <div className="flex items-center gap-3 mt-2 flex-wrap">
-                              {installer.distance !== undefined && installer.distance > 0 && (
+                              {installer.distance > 0 ? (
                                 <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
                                   📍 {installer.distance.toFixed(1)} km away
                                 </p>
-                              )}
-                              {installer.distance === 0 && (
+                              ) : (
                                 <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
                                   📍 Nearest location
                                 </p>
