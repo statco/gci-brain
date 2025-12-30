@@ -1,4 +1,4 @@
-// services/airtableService.ts - CORRECT SPELLING
+// services/airtableService.ts - RETURNS DISTANCE
 const API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
 const BASE_ID = import.meta.env.VITE_AIRTABLE_BASE_ID;
 const INSTALLERS_TABLE = import.meta.env.VITE_AIRTABLE_INSTALLERS_TABLE || 'Installers';
@@ -15,7 +15,7 @@ export interface InstallerRecord {
     City: string;
     Province: string;
     PostalCode?: string;
-    Latitude?: number; // ✅ FIXED: Correct spelling with 1 T
+    Latitude?: number;
     Longitude?: number;
     CalendlyLink?: string;
     ServiceRadius?: number;
@@ -24,6 +24,7 @@ export interface InstallerRecord {
     Rating?: number;
     TotalInstallations?: number;
   };
+  distance?: number; // ✅ ADD distance to the record
 }
 
 export const airtableService = {
@@ -61,34 +62,28 @@ export const airtableService = {
       const activeInstallers = allInstallers.filter(inst => inst.fields.Status === 'Active');
       console.log(`✅ ${activeInstallers.length} active installers`);
 
-      // Filter by distance
-      const nearby = activeInstallers.filter(installer => {
-        const lat = installer.fields.Latitude; // ✅ FIXED: Using correct field name
-        const lng = installer.fields.Longitude;
+      // Filter by distance AND calculate distance for each
+      const nearby = activeInstallers
+        .map(installer => {
+          const lat = installer.fields.Latitude;
+          const lng = installer.fields.Longitude;
 
-        if (!lat || !lng) {
-          console.log(`⚠️ ${installer.fields.Name}: No coordinates`);
-          return true; // Include anyway
-        }
+          if (!lat || !lng) {
+            console.log(`⚠️ ${installer.fields.Name}: No coordinates`);
+            return { ...installer, distance: 0 };
+          }
 
-        const distance = calculateDistance(userLat, userLng, lat, lng);
-        console.log(`📏 ${installer.fields.Name}: ${distance.toFixed(1)}km away`);
-        
-        return distance <= radiusKm;
-      });
+          const distance = calculateDistance(userLat, userLng, lat, lng);
+          console.log(`📏 ${installer.fields.Name}: ${distance.toFixed(1)}km away`);
+          
+          return { ...installer, distance }; // ✅ ADD distance to each installer
+        })
+        .filter(installer => (installer.distance || 0) <= radiusKm);
 
       console.log(`✅ ${nearby.length} installers within ${radiusKm}km`);
 
       // Sort by distance
-      nearby.sort((a, b) => {
-        const distA = a.fields.Latitude && a.fields.Longitude 
-          ? calculateDistance(userLat, userLng, a.fields.Latitude, a.fields.Longitude)
-          : 999;
-        const distB = b.fields.Latitude && b.fields.Longitude
-          ? calculateDistance(userLat, userLng, b.fields.Latitude, b.fields.Longitude)
-          : 999;
-        return distA - distB;
-      });
+      nearby.sort((a, b) => (a.distance || 999) - (b.distance || 999));
 
       return nearby;
     } catch (error) {
