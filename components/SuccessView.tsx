@@ -62,8 +62,8 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
     return installers.map(installer => {
       // Calculate distance if we have coordinates
       let distance = 0;
-      if (userLat && userLng && installer.fields.Lattitude && installer.fields.Longitude) {
-        distance = calculateDistance(userLat, userLng, installer.fields.Lattitude, installer.fields.Longitude);
+      if (userLat && userLng && installer.fields.Latitude && installer.fields.Longitude) {
+        distance = calculateDistance(userLat, userLng, installer.fields.Latitude, installer.fields.Longitude);
       }
 
       return {
