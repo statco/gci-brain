@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
+import { airtableService } from '../services/airtableService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
@@ -10,6 +11,7 @@ interface CheckoutModalProps {
   onConfirm: () => void;
   onCancel: () => void;
   lang: Language;
+  selectedInstaller?: any; // Will be set if installation selected
 }
 
 const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -20,27 +22,75 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onConfirm,
   onCancel,
   lang,
+  selectedInstaller,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [customerInfo, setCustomerInfo] = useState({
+    name: '',
+    email: '',
+    phone: '',
+  });
   const t = translations[lang];
 
   const handleCheckout = async () => {
+    // Validate customer info
+    if (!customerInfo.name || !customerInfo.email || !customerInfo.phone) {
+      alert(t.pleaseFillAllFields || 'Please fill in all fields');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      // TODO: Integrate with actual Shopify checkout
-      // For now, simulate checkout process
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
+      
+      // ✅ FEATURE 4: Create installation job in Airtable
+      if (withInstallation && selectedInstaller) {
+        console.log('📝 Creating installation job in Airtable...');
+        
+        await airtableService.createInstallationJob({
+          CustomerName: customerInfo.name,
+          CustomerEmail: customerInfo.email,
+          CustomerPhone: customerInfo.phone,
+          InstallerId: selectedInstaller.id,
+          TireProduct: `${tire.brand} ${tire.model} (${tire.size})`,
+          Quantity: quantity,
+          InstallationPrice: selectedInstaller.pricePerTire * quantity,
+          Status: 'Pending',
+          ShopifyOrderId: orderNumber,
+          Notes: `Auto-created from AI Match checkout`,
+        });
+        
+        console.log('✅ Installation job created successfully');
+      }
 
-      // Create checkout URL with Shopify
+      // ✅ FEATURE 5: Send confirmation email
+      console.log('📧 Sending confirmation email...');
+      
+      await sendConfirmationEmail({
+        to: customerInfo.email,
+        name: customerInfo.name,
+        orderNumber,
+        tire: `${tire.brand} ${tire.model}`,
+        quantity,
+        total,
+        withInstallation,
+        installerName: selectedInstaller?.name,
+      });
+      
+      console.log('✅ Email sent successfully');
+
+      // Simulate checkout delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // TODO: Create actual Shopify checkout
       // const checkoutUrl = await createShopifyCheckout(tire, quantity, withInstallation);
       // window.location.href = checkoutUrl;
 
-      // For demo: just call onConfirm
       onConfirm();
     } catch (error) {
       console.error('Checkout error:', error);
-      alert('Checkout failed. Please try again.');
+      alert(t.checkoutFailed || 'Checkout failed. Please try again.');
       setIsProcessing(false);
     }
   };
@@ -48,7 +98,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const tireSubtotal = tire.pricePerUnit * quantity;
   const installationSubtotal = withInstallation ? 15 * quantity : 0;
   const subtotal = tireSubtotal + installationSubtotal;
-  const taxes = subtotal * 0.15; // 15% tax (adjust for your region)
+  const taxes = subtotal * 0.15;
   const finalTotal = subtotal + taxes;
 
   return (
@@ -71,6 +121,39 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
+          {/* Customer Information */}
+          <div>
+            <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
+              {t.yourInformation || 'Your Information'}
+            </h3>
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder={t.fullName || 'Full Name'}
+                value={customerInfo.name}
+                onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                required
+              />
+              <input
+                type="email"
+                placeholder={t.email || 'Email'}
+                value={customerInfo.email}
+                onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                required
+              />
+              <input
+                type="tel"
+                placeholder={t.phone || 'Phone Number'}
+                value={customerInfo.phone}
+                onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                required
+              />
+            </div>
+          </div>
+
           {/* Order Summary */}
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
@@ -164,25 +247,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           )}
 
-          {/* Shipping Notice */}
-          {!withInstallation && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex gap-3">
-                <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                  <h4 className="font-bold text-blue-900 mb-1">
-                    {t.homeDelivery || 'Home Delivery'}
-                  </h4>
-                  <p className="text-sm text-blue-700">
-                    Tires will be shipped to your address. You'll need to arrange installation separately.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Action Buttons */}
           <div className="flex gap-3 pt-4">
             <button
@@ -194,7 +258,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </button>
             <button
               onClick={handleCheckout}
-              disabled={isProcessing}
+              disabled={isProcessing || !customerInfo.name || !customerInfo.email || !customerInfo.phone}
               className="flex-1 px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:bg-slate-400 uppercase tracking-wide shadow-md hover:shadow-lg"
             >
               {isProcessing ? (
@@ -220,5 +284,51 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
     </div>
   );
 };
+
+// ✅ FEATURE 5: Email notification function
+async function sendConfirmationEmail(data: {
+  to: string;
+  name: string;
+  orderNumber: string;
+  tire: string;
+  quantity: number;
+  total: number;
+  withInstallation: boolean;
+  installerName?: string;
+}): Promise<void> {
+  try {
+    // TODO: Replace with actual email service (SendGrid, Resend, etc.)
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: data.to,
+        subject: `Order Confirmation - ${data.orderNumber}`,
+        html: `
+          <h1>Order Confirmed!</h1>
+          <p>Hi ${data.name},</p>
+          <p>Thank you for your order!</p>
+          <h2>Order Details:</h2>
+          <ul>
+            <li>Order Number: ${data.orderNumber}</li>
+            <li>Product: ${data.tire}</li>
+            <li>Quantity: ${data.quantity}</li>
+            <li>Total: $${data.total.toFixed(2)}</li>
+            ${data.withInstallation ? `<li>Installation at: ${data.installerName}</li>` : ''}
+          </ul>
+          <p>We'll send you another email when your order ships.</p>
+          <p>Best regards,<br>GCI Tire Team</p>
+        `,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Email send failed');
+    }
+  } catch (error) {
+    console.error('Email error:', error);
+    // Don't throw - email failure shouldn't block checkout
+  }
+}
 
 export default CheckoutModal;
