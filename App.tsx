@@ -10,6 +10,7 @@ import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
 import FavoritesModal from './components/FavoritesModal';
 import { getTireRecommendations } from './services/geminiService';
+import MapComponent from './components/MapComponent';
 import type { ProcessingLog, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 import { AppStates, ProcessingStages } from './utils/appStates'; // ✅ Import the enum
