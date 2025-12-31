@@ -40,10 +40,27 @@ export const loadGoogleMaps = (apiKey: string): Promise<void> => {
     script.defer = true;
 
     script.onload = () => {
-      console.log('✅ Google Maps API loaded successfully');
-      isLoaded = true;
-      isLoading = false;
-      resolve();
+      console.log('📡 Script loaded, waiting for google.maps to initialize...');
+      
+      // Wait for google.maps to actually be available
+      const checkMaps = setInterval(() => {
+        if (window.google?.maps) {
+          clearInterval(checkMaps);
+          console.log('✅ Google Maps API loaded successfully');
+          isLoaded = true;
+          isLoading = false;
+          resolve();
+        }
+      }, 50);
+
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        clearInterval(checkMaps);
+        if (!window.google?.maps) {
+          isLoading = false;
+          reject(new Error('Google Maps failed to initialize'));
+        }
+      }, 10000);
     };
 
     script.onerror = () => {
