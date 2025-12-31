@@ -24,18 +24,37 @@ export const loadGoogleMaps = (apiKey: string): Promise<void> => {
     }
 
     // Create a unique callback name
-    const callbackName = `initGoogleMaps_${Date.now()}`;
+    const callbackName = `initGoogleMaps`;
 
-    // Define the callback function that Google will call
+    // Define the callback function FIRST, before creating script
     (window as any)[callbackName] = () => {
-      console.log('✅ Google Maps API loaded successfully via callback');
-      delete (window as any)[callbackName]; // Clean up
-      resolve();
+      console.log('✅ Google Maps callback executed!');
+      
+      // Wait for google.maps to actually exist
+      const checkMaps = setInterval(() => {
+        if (window.google?.maps) {
+          clearInterval(checkMaps);
+          console.log('✅ Google Maps API fully loaded');
+          delete (window as any)[callbackName]; // Clean up
+          resolve();
+        }
+      }, 10);
+
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        clearInterval(checkMaps);
+        if (!window.google?.maps) {
+          console.error('❌ Timeout: google.maps never initialized');
+          delete (window as any)[callbackName];
+          loadPromise = null;
+          reject(new Error('Google Maps timeout'));
+        }
+      }, 5000);
     };
 
-    // Create script tag with callback parameter
+    // NOW create and add script tag
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=${callbackName}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=${callbackName}`;
     script.async = true;
     script.defer = true;
 
@@ -47,7 +66,7 @@ export const loadGoogleMaps = (apiKey: string): Promise<void> => {
     };
 
     document.head.appendChild(script);
-    console.log('📡 Google Maps script tag added to page');
+    console.log('📡 Google Maps script tag added, waiting for callback...');
   });
 
   return loadPromise;
