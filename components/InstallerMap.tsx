@@ -1,5 +1,6 @@
 // components/InstallerMap.tsx
 import React, { useEffect, useRef, useState } from 'react';
+import { loadGoogleMaps } from '../utils/loadGoogleMaps';
 
 interface Installer {
   id: string;
@@ -26,40 +27,26 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for Google Maps to be available
     const initMap = async () => {
       try {
-        // Check if Google Maps API is loaded
-        if (!window.google?.maps) {
-          setError('Google Maps API not loaded');
+        // Get API key from environment
+        const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+        
+        console.log('🔑 API Key check:', apiKey ? `Found (${apiKey.substring(0, 10)}...)` : 'Not found');
+        
+        if (!apiKey) {
+          setError('Google Maps API key not configured');
           setIsLoading(false);
           return;
         }
+
+        // Load Google Maps API
+        await loadGoogleMaps(apiKey);
 
         if (!mapRef.current) {
           setIsLoading(false);
           return;
         }
-
-        // Wait for the Map constructor to be available
-        await new Promise((resolve) => {
-          if (window.google.maps.Map) {
-            resolve(true);
-          } else {
-            const checkInterval = setInterval(() => {
-              if (window.google.maps.Map) {
-                clearInterval(checkInterval);
-                resolve(true);
-              }
-            }, 100);
-            
-            // Timeout after 5 seconds
-            setTimeout(() => {
-              clearInterval(checkInterval);
-              resolve(false);
-            }, 5000);
-          }
-        });
 
         // Calculate center point
         const center = userLocation || 
