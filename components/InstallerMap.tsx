@@ -48,24 +48,24 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
           return;
         }
 
+        // ✅ Import Maps library (modern API)
+        console.log('📚 Importing Google Maps library...');
+        const { Map } = await google.maps.importLibrary("maps") as google.maps.MapsLibrary;
+        const { AdvancedMarkerElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
+        console.log('✅ Libraries imported successfully');
+
         // Calculate center point
         const center = userLocation || 
           (installers.length > 0 && installers[0].lat && installers[0].lng
             ? { lat: installers[0].lat, lng: installers[0].lng }
             : { lat: 48.2368, lng: -79.0228 });
 
-        // Initialize map
+        // Initialize map with modern API
         console.log('🗺️ Initializing map at center:', center);
-        const newMap = new google.maps.Map(mapRef.current, {
+        const newMap = new Map(mapRef.current, {
           center,
           zoom: 10,
-          styles: [
-            {
-              featureType: 'poi',
-              elementType: 'labels',
-              stylers: [{ visibility: 'off' }],
-            },
-          ],
+          mapId: 'INSTALLER_MAP', // Required for AdvancedMarkerElement
         });
 
         console.log('✅ Map created successfully');
@@ -74,17 +74,9 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
 
         // Add user location marker
         if (userLocation) {
-          new google.maps.Marker({
+          new AdvancedMarkerElement({
             position: userLocation,
             map: newMap,
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 8,
-              fillColor: '#3B82F6',
-              fillOpacity: 1,
-              strokeColor: '#FFFFFF',
-              strokeWeight: 2,
-            },
             title: 'Your Location',
           });
         }
@@ -104,21 +96,11 @@ const InstallerMap: React.FC<InstallerMapProps> = ({ installers, userLocation })
           console.log(`📌 ${installer.name}: ${position.lat}, ${position.lng}`);
           bounds.extend(position);
 
-          // Create custom marker
-          const marker = new google.maps.Marker({
+          // Create marker with AdvancedMarkerElement
+          const marker = new AdvancedMarkerElement({
             position,
             map: newMap,
             title: installer.name,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="40" height="50" viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M20 0C9 0 0 9 0 20c0 15 20 30 20 30s20-15 20-30C40 9 31 0 20 0z" fill="#DC2626"/>
-                  <circle cx="20" cy="20" r="8" fill="white"/>
-                </svg>
-              `),
-              scaledSize: new google.maps.Size(40, 50),
-              anchor: new google.maps.Point(20, 50),
-            },
           });
 
           // Create info window
