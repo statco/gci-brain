@@ -1,32 +1,60 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const MapComponent: React.FC = () => {
   const mapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
   useEffect(() => {
     const initMap = async () => {
-      // 1. Check if the loader in index.html has initialized the library
-      if (window.google && mapRef.current) {
+      if (window.google && mapRef.current && inputRef.current) {
         try {
-          // 2. Import the necessary libraries (Maps and Marker)
+          // 1. Import Libraries
           const { Map } = await google.maps.importLibrary("maps") as google.maps.MapsLibrary;
+          const { Autocomplete } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
           const { AdvancedMarkerElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
 
-          // 3. Create the map instance
+          // 2. Initialize Map
           const map = new Map(mapRef.current, {
-            center: { lat: 45.5017, lng: -73.5673 }, // Montreal, for example
+            center: { lat: 45.5017, lng: -73.5673 },
             zoom: 12,
-            mapId: "YOUR_MAP_ID", // Required for Advanced Markers
+            mapId: "DEMO_MAP_ID", // Change to your Map ID
+          });
+          setMapInstance(map);
+
+          // 3. Initialize Search Bar (Autocomplete)
+          const autocomplete = new Autocomplete(inputRef.current, {
+            fields: ["geometry", "name", "formatted_address"],
+            types: ["address"], // You can change this to ['(regions)'] for zip codes only
           });
 
-          // 4. Add a marker
-          new AdvancedMarkerElement({
-            map: map,
-            position: { lat: 45.5017, lng: -73.5673 },
-            title: "GCI Tire Location",
+          // 4. Bind Search to Map
+          autocomplete.addListener("place_changed", () => {
+            const place = autocomplete.getPlace();
+
+            if (!place.geometry || !place.geometry.location) {
+              window.alert("No details available for input: '" + place.name + "'");
+              return;
+            }
+
+            // Move map to the new location
+            if (place.geometry.viewport) {
+              map.fitBounds(place.geometry.viewport);
+            } else {
+              map.setCenter(place.geometry.location);
+              map.setZoom(17);
+            }
+
+            // Optional: Drop a marker at the searched location
+            new AdvancedMarkerElement({
+              map: map,
+              position: place.geometry.location,
+              title: place.name,
+            });
           });
+
         } catch (error) {
-          console.error("Error loading Google Maps:", error);
+          console.error("Error loading Google Maps/Places:", error);
         }
       }
     };
@@ -35,7 +63,18 @@ const MapComponent: React.FC = () => {
   }, []);
 
   return (
-    <div className="w-full h-[500px] rounded-xl shadow-lg overflow-hidden border border-slate-200">
+    <div className="relative w-full h-[600px] rounded-xl shadow-2xl overflow-hidden border border-slate-200">
+      {/* Floating Search Bar */}
+      <div className="absolute top-4 left-4 z-10 w-72 md:w-96">
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder="Search address or zip code..."
+          className="w-full px-4 py-3 rounded-lg shadow-lg border-none focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 bg-white"
+        />
+      </div>
+
+      {/* Map Container */}
       <div ref={mapRef} className="w-full h-full" />
     </div>
   );
