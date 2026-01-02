@@ -63,16 +63,13 @@ const MapComponent: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative w-full h-[600px] rounded-xl shadow-2xl overflow-hidden border border-slate-200">
-      {/* Floating Search Bar */}
-      <div className="absolute top-4 left-4 z-10 w-72 md:w-96">
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Search address or zip code..."
-          className="w-full px-4 py-3 rounded-lg shadow-lg border-none focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 bg-white"
-        />
-      </div>
+  <div className="w-full h-[500px] rounded-xl overflow-hidden shadow-lg border border-slate-200">
+    <div 
+      ref={mapRef} 
+      style={{ width: '100%', height: '500px' }} // Height must be explicit
+    />
+  </div>
+);
 
       {/* Map Container */}
       <div ref={mapRef} className="w-full h-full" />
