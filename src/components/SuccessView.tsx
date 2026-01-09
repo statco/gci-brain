@@ -30,7 +30,6 @@ interface Installer {
   lat?: number;
   lng?: number;
 }
-
 const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
   console.log('🔍 Fetching installers from Airtable...', { lat: userLat, lng: userLng });
   
@@ -49,48 +48,71 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
       return [];
     }
 
-    // ✅ Filter and map with error handling
+    // ✅ Map with support for BOTH formats (with and without .fields wrapper)
     const mapped = installers
-      .filter(installer => {
-        if (!installer || !installer.fields) {
-          console.warn('⚠️ Skipping invalid installer record:', installer);
-          return false;
-        }
-        return true;
-      })
       .map(installer => {
         try {
-          const fields = installer.fields;
+          // ✅ FIXED: Handle both formats
+          // Format 1: {id, fields: {Name, Address, ...}}
+          // Format 2: {id, name, address, ...} (already extracted)
+          const data = installer.fields || installer;
           
+          console.log('🔎 Processing installer:', {
+            id: installer.id,
+            hasFields: !!installer.fields,
+            data: data
+          });
+
           return {
             id: installer.id || '',
-            name: fields.Name || fields.name || fields.InstallerName || 'Unknown Installer',
-            address: fields.Address || fields.address || fields.StreetAddress || '',
-            city: fields.City || fields.city || '',
-            province: fields.Province || fields.province || fields.State || '',
-            phone: fields.Phone || fields.phone || fields.PhoneNumber || '',
-            calendlyLink: fields['Calendar Link'] || fields.CalendlyLink || fields.calendlyLink || fields['Calendly Link'],
-            pricePerTire: fields.PricePerTire || fields.pricePerTire || fields['Price Per Tire'] || fields.price_per_tire,
-            rating: fields.Rating || fields.rating,
+            name: data.Name || data.name || data.InstallerName || 'Unknown Installer',
+            address: data.Address || data.address || data.StreetAddress || '',
+            city: data.City || data.city || '',
+            province: data.Province || data.province || data.State || '',
+            phone: data.Phone || data.phone || data.PhoneNumber || '',
+            calendlyLink: data['Calendar Link'] || data.CalendlyLink || data.calendlyLink || data['Calendly Link'],
+            pricePerTire: data.PricePerTire || data.pricePerTire || data['Price Per Tire'] || data.price_per_tire,
+            rating: data.Rating || data.rating,
             distance: installer.distance || 0,
-            lat: fields.Latitude || fields.latitude || fields.lat,
-            lng: fields.Longitude || fields.longitude || fields.lng || fields.lon,
+            lat: data.Latitude || data.latitude || data.lat,
+            lng: data.Longitude || data.longitude || data.lng || data.lon,
           };
         } catch (mapError) {
           console.error('❌ Error mapping installer:', installer, mapError);
           return null;
         }
       })
-      .filter((installer): installer is Installer => installer !== null);
+      .filter((installer): installer is Installer => {
+        if (!installer) return false;
+        
+        // ✅ Check if has valid coordinates
+        const hasCoords = installer.lat && installer.lng && 
+                         !isNaN(installer.lat) && !isNaN(installer.lng);
+        
+        if (!hasCoords) {
+          console.warn('⚠️ Installer missing coordinates:', installer.name);
+        }
+        
+        return hasCoords;
+      });
 
     console.log(`✅ Successfully mapped ${mapped.length} installers`);
+    
+    // Log each valid installer
+    mapped.forEach((inst, idx) => {
+      console.log(`📍 Installer ${idx + 1}:`, {
+        name: inst.name,
+        coordinates: { lat: inst.lat, lng: inst.lng },
+        distance: inst.distance
+      });
+    });
+    
     return mapped;
   } catch (error) {
     console.error('❌ Error fetching installers:', error);
     return [];
   }
 };
-
 const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, mapsLoaded }) => {
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
