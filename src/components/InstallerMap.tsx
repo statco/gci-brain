@@ -6,77 +6,114 @@ interface Installer {
   address: string;
   city: string;
   province: string;
-  postalCode?: string;
-  coordinates?: {
-    lat: number;
-    lng: number;
-  };
-  distance?: number;
+  phone: string;
+  calendlyLink?: string;
+  distance: number;
   pricePerTire?: number;
   rating?: number;
+  lat?: number;       // ✅ FLAT structure
+  lng?: number;       // ✅ FLAT structure
 }
 
 interface InstallerMapProps {
   installers: Installer[];
-  onSelectInstaller: (installer: Installer) => void;
   userLocation?: { lat: number; lng: number };
-  mapsLoaded: boolean; 
 }
 
 const InstallerMap: React.FC<InstallerMapProps> = ({ 
   installers, 
-  onSelectInstaller, 
-  userLocation,
-  mapsLoaded 
+  userLocation
 }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.marker.AdvancedMarkerElement[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Default center based on your project logs (Rouyn-Noranda area)
-  const defaultCenter = userLocation || { lat: 48.2359, lng: -79.0242 };
+  // Default center (Rouyn-Noranda)
+  const defaultCenter = userLocation || { lat: 48.2368, lng: -79.0228 };
+
+  console.log('🗺️ InstallerMap render:', {
+    installersCount: installers.length,
+    hasGoogle: !!window.google,
+    hasMapRef: !!mapRef.current,
+    installers
+  });
 
   useEffect(() => {
-    // CRITICAL GUARD: Only run when the script is loaded AND the div exists in the DOM
-    if (!mapsLoaded || !mapRef.current) return;
+    // Wait for Google Maps and DOM
+    if (!window.google || !mapRef.current) {
+      console.log('⏳ Waiting for prerequisites...', {
+        hasGoogle: !!window.google,
+        hasMapRef: !!mapRef.current
+      });
+      return;
+    }
 
     const initMap = async () => {
       try {
+        console.log('🚀 Starting map initialization...');
+
         const { Map } = await google.maps.importLibrary("maps") as google.maps.MapsLibrary;
         const { AdvancedMarkerElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
 
-        // 1. Create the Map Instance if it doesn't exist yet
+        console.log('✅ Google Maps libraries loaded');
+
+        // Create map instance
         let currentMap = mapInstance;
         if (!currentMap) {
+          console.log('📍 Creating new map instance...');
           currentMap = new Map(mapRef.current!, {
             center: defaultCenter,
             zoom: 10,
-            mapId: 'gci-installers-map', // Ensure this ID is a "Vector" map in Google Console
+            mapId: 'gci-installers-map',
             mapTypeControl: false,
             streetViewControl: false,
             fullscreenControl: true,
           });
           setMapInstance(currentMap);
+          console.log('✅ Map instance created');
         }
 
-        // 2. Clear old markers before drawing new ones to prevent duplicates
+        // Clear old markers
         markers.forEach(m => m.map = null);
 
         const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
         const bounds = new google.maps.LatLngBounds();
 
-        // 3. Add pins for each installer
-        installers.forEach((installer) => {
-          if (!installer.coordinates) return;
+        // Filter valid installers
+        const validInstallers = installers.filter(inst => {
+          const hasCoords = inst.lat !== undefined && inst.lng !== undefined && 
+                           !isNaN(inst.lat) && !isNaN(inst.lng);
+          if (!hasCoords) {
+            console.warn('⚠️ Skipping installer without valid coordinates:', inst.name, {
+              lat: inst.lat,
+              lng: inst.lng
+            });
+          }
+          return hasCoords;
+        });
 
-          // Create a custom HTML element for the marker
+        console.log(`📍 Creating markers for ${validInstallers.length} valid installers`);
+
+        if (validInstallers.length === 0) {
+          console.error('❌ No valid installers to display on map');
+          setError('No installers with valid coordinates found');
+          return;
+        }
+
+        // Create markers
+        validInstallers.forEach((installer) => {
+          const position = { lat: installer.lat!, lng: installer.lng! };
+
+          console.log(`📌 Creating marker for ${installer.name}:`, position);
+
+          // Create custom marker element
           const markerElement = document.createElement('div');
           markerElement.innerHTML = `
             <div style="
               background: #ef4444;
               color: white;
-              padding: 6px 14px;
+              padding: 8px 14px;
               border-radius: 30px;
               font-weight: 800;
               font-size: 12px;
@@ -84,81 +121,108 @@ const InstallerMap: React.FC<InstallerMapProps> = ({
               cursor: pointer;
               white-space: nowrap;
               border: 2px solid white;
-              transition: transform 0.2s ease, background 0.2s ease;
+              transition: transform 0.2s ease;
             ">
               📍 ${installer.name}
             </div>
           `;
 
+          // Add hover effect
+          markerElement.addEventListener('mouseenter', () => {
+            const div = markerElement.querySelector('div') as HTMLElement;
+            div.style.transform = 'scale(1.1)';
+            div.style.background = '#dc2626';
+          });
+
+          markerElement.addEventListener('mouseleave', () => {
+            const div = markerElement.querySelector('div') as HTMLElement;
+            div.style.transform = 'scale(1)';
+            div.style.background = '#ef4444';
+          });
+
           const marker = new AdvancedMarkerElement({
             map: currentMap,
-            position: installer.coordinates,
+            position: position,
             content: markerElement,
             title: installer.name,
           });
 
-          // Handle Selection
-          markerElement.addEventListener('click', () => {
-            onSelectInstaller(installer);
-            currentMap?.panTo(installer.coordinates!);
-            currentMap?.setZoom(14);
-            
-            // Visual feedback: Highlight selected pin
-            markerElement.querySelector('div')!.style.background = '#2563eb';
-          });
-
           newMarkers.push(marker);
-          bounds.extend(installer.coordinates);
+          bounds.extend(position);
         });
 
         setMarkers(newMarkers);
+        console.log(`✅ Created ${newMarkers.length} markers`);
 
-        // 4. Auto-fit the camera to show all markers
+        // Fit bounds to show all markers
         if (newMarkers.length > 0) {
           currentMap.fitBounds(bounds);
+          console.log('📐 Bounds fitted to show all markers');
           
-          // Refine zoom level if it's too close/too far
+          // Limit max zoom
           const listener = google.maps.event.addListener(currentMap, 'idle', () => {
             const currentZoom = currentMap!.getZoom();
-            if (currentZoom && currentZoom > 15) currentMap!.setZoom(15);
+            if (currentZoom && currentZoom > 13) {
+              currentMap!.setZoom(13);
+              console.log('🔍 Zoom limited to 13');
+            }
             google.maps.event.removeListener(listener);
           });
         }
 
+        console.log('✅ Map initialization complete!');
+
       } catch (err) {
-        console.error('❌ Map Initialization Error:', err);
-        setError('Google Maps could not initialize. Check your Map ID and API restrictions.');
+        console.error('❌ Map initialization error:', err);
+        setError('Failed to initialize Google Maps. Please refresh the page.');
       }
     };
 
-    initMap();
+    // Small delay to ensure DOM is ready
+    const timer = setTimeout(() => {
+      console.log('⏰ Timer triggered - calling initMap()');
+      initMap();
+    }, 100);
 
-    // Cleanup: Clear markers when the component is destroyed
     return () => {
+      console.log('🧹 Cleanup: clearing markers and timer');
       markers.forEach(m => m.map = null);
+      clearTimeout(timer);
     };
-  }, [mapsLoaded, installers, userLocation]); // Dependencies ensure fresh data shows on map
+  }, [installers, userLocation]);
 
+  // Error state
   if (error) {
     return (
       <div className="w-full h-[500px] rounded-xl border-2 border-dashed border-red-200 bg-red-50 flex items-center justify-center p-6 text-center">
         <div>
           <p className="text-red-600 font-black uppercase tracking-widest mb-2">Map Error</p>
           <p className="text-red-500 text-sm max-w-xs">{error}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Refresh Page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Loading state
+  if (!window.google) {
+    return (
+      <div className="w-full h-[500px] rounded-2xl border border-slate-200 overflow-hidden shadow-lg bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-red-600 border-r-4 border-r-transparent mx-auto"></div>
+          <p className="mt-4 text-slate-600 font-bold animate-pulse">Loading map...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full h-[550px] rounded-2xl border border-slate-200 overflow-hidden shadow-2xl bg-slate-50 relative">
-      {/* Loading Overlay */}
-      {!mapsLoaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-20">
-          <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-red-600 border-r-4 border-r-transparent"></div>
-          <p className="mt-4 text-slate-600 font-bold animate-pulse">Initializing Secure Map...</p>
-        </div>
-      )}
+    <div className="w-full h-[550px] rounded-2xl border border-slate-200 overflow-hidden shadow-2xl bg-slate-50">
       <div ref={mapRef} className="w-full h-full" />
     </div>
   );
