@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import InstallerApplicationForm from './components/InstallerApplicationForm';
 import React, { useState, useEffect } from 'react';
+import { useJsApiLoader } from '@react-google-maps/api'; // ✅ ADDED
 import InputForm from './components/InputForm';
 import ProcessingOverlay from './components/ProcessingOverlay';
 import TireCard from './components/TireCard';
@@ -10,14 +11,16 @@ import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
 import FavoritesModal from './components/FavoritesModal';
 import { getTireRecommendations } from './services/geminiService';
-import MapComponent from './components/MapComponent';
 import type { ProcessingLog, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
-import { AppStates, ProcessingStages } from './utils/appStates'; // ✅ Import the enum
+import { AppStates, ProcessingStages } from './utils/appStates';
+
+// ✅ ADDED: Google Maps libraries
+const GOOGLE_MAPS_LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
 
 // Main AI Match App Component
 function TireMatchApp() {
-  const [appState, setAppState] = useState<AppStates>(AppStates.IDLE); // ✅ Use enum value
+  const [appState, setAppState] = useState<AppStates>(AppStates.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [recommendations, setRecommendations] = useState<TireProduct[]>([]);
   const [selectedTire, setSelectedTire] = useState<{ tire: TireProduct; quantity: number; withInstallation: boolean; total: number } | null>(null);
@@ -29,27 +32,42 @@ function TireMatchApp() {
   const [reviewTire, setReviewTire] = useState<TireProduct | null>(null);
   const [lang, setLang] = useState<Language>('en');
 
+  // ✅ ADDED: Google Maps loader
+  const { isLoaded: mapsLoaded } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
+    libraries: GOOGLE_MAPS_LIBRARIES,
+  });
+
   // 1. Load state from local storage on mount (Persistence)
   useEffect(() => {
-    const savedState = localStorage.getItem('gci_app_state_v2');
-    if (savedState) {
-      try {
-        const parsed = JSON.parse(savedState);
-        
-        if (parsed.lang) setLang(parsed.lang);
-        if (parsed.favorites) setFavorites(parsed.favorites);
-        if (parsed.compareList) setCompareList(parsed.compareList);
-
-        if (parsed.appState && parsed.appState !== AppStates.IDLE && parsed.appState !== AppStates.PROCESSING && parsed.appState !== AppStates.ERROR) {
-           setAppState(parsed.appState);
-           if (parsed.recommendations) setRecommendations(parsed.recommendations);
-           if (parsed.selectedTire) setSelectedTire(parsed.selectedTire);
-        }
-      } catch (e) {
-        console.error("Failed to load state", e);
+  // Priority 1: Read lang from URL parameter (from Shopify iframe)
+  const urlParams = new URLSearchParams(window.location.search);
+  const langParam = urlParams.get('lang');
+  
+  if (langParam === 'fr' || langParam === 'en') {
+    setLang(langParam);
+    return; // Use URL param and skip localStorage
+  }
+  
+  // Priority 2: Load from localStorage if no URL param
+  const savedState = localStorage.getItem('gci_app_state_v2');
+  if (savedState) {
+    try {
+      const parsed = JSON.parse(savedState);
+      if (parsed.lang) setLang(parsed.lang);
+      if (parsed.favorites) setFavorites(parsed.favorites);
+      if (parsed.compareList) setCompareList(parsed.compareList);
+      if (parsed.appState && ![AppStates.IDLE, AppStates.PROCESSING, AppStates.ERROR].includes(parsed.appState)) {
+         setAppState(parsed.appState);
+         if (parsed.recommendations) setRecommendations(parsed.recommendations);
+         if (parsed.selectedTire) setSelectedTire(parsed.selectedTire);
       }
+    } catch (e) { 
+      console.error("Load state failed", e); 
     }
-  }, []);
+  }
+}, []); // Run once on mount
 
   // 2. Save state to local storage on change
   useEffect(() => {
@@ -298,6 +316,7 @@ function TireMatchApp() {
               selectedTire={selectedTire}
               onReset={resetApp}
               lang={lang}
+              mapsLoaded={mapsLoaded} // ✅ ADDED: Pass mapsLoaded prop
            />
         )}
 
@@ -324,7 +343,7 @@ function TireMatchApp() {
                <a href="https://www.gcitires.com/policies/privacy-policy" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Privacy</a>
                <a href="https://www.gcitires.com/policies/terms-of-service" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Terms</a>
             </div>
-            <p className="text-[10px] text-slate-600 font-mono">v2.3.0 (Live Build)</p>
+            <p className="text-[10px] text-slate-600 font-mono">v2.3.1 (Maps Integration)</p>
          </div>
       </footer>
 
