@@ -244,145 +244,143 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, 
         </div>
 
         {/* Installation Section */}
-        {selectedTire.withInstallation && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6 animate-fade-in-up">
-            <div className="flex items-start gap-3 mb-4 pb-4 border-b border-slate-200">
-              <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-lg mb-1">
-                  {t.installationStatus}
-                </h3>
-                <p className="text-slate-600">
-                  {t.installationNotice}
-                </p>
-              </div>
-            </div>
+{selectedTire.withInstallation && (
+  <div className="bg-white rounded-lg shadow-md p-6 mb-6 animate-fade-in-up">
+    <div className="flex items-start gap-3 mb-4 pb-4 border-b border-slate-200">
+      <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
+        <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </div>
+      <div>
+        <h3 className="font-bold text-slate-900 text-lg mb-1">
+          {t.installationStatus}
+        </h3>
+        <p className="text-slate-600">
+          {t.installationNotice}
+        </p>
+      </div>
+    </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-bold text-slate-900 uppercase tracking-wide text-sm">
-                  {t.authorizedInstallers}
-                </h4>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setViewMode('list')}
-                    className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
-                      viewMode === 'list'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                    }`}
-                  >
-                    {t.list}
-                  </button>
-                  <button
-                    onClick={() => setViewMode('map')}
-                    className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
-                      viewMode === 'map'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    {t.map}
-                  </button>
-                </div>
-              </div>
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="font-bold text-slate-900 uppercase tracking-wide text-sm">
+          {t.authorizedInstallers}
+        </h4>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
+              viewMode === 'list'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+            }`}
+          >
+            {t.list}
+          </button>
+          <button
+            onClick={() => setViewMode('map')}
+            className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
+              viewMode === 'map'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {t.map}
+          </button>
+        </div>
+      </div>
 
-              {loadingInstallers ? (
-                <div className="flex items-center justify-center py-8">
-                  <svg className="animate-spin h-8 w-8 text-red-600" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                </div>
-              ) : (
-                <>
-                  {viewMode === 'list' && (
-                    <div className="space-y-3">
-                      {installers.length > 0 ? (
-                        installers.map((installer) => (
-                          <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h5 className="font-bold text-slate-900">{installer.name}</h5>
-                                <p className="text-sm text-slate-600 mt-1">
-                                  {installer.address}<br />
-                                  {installer.city}, {installer.province}
-                                </p>
-                                <p className="text-sm text-slate-600 mt-1">
-                                  📞 {installer.phone}
-                                </p>
-                                
-                                <div className="flex items-center gap-3 mt-2 flex-wrap">
-                                  {installer.distance > 0 ? (
-                                    <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                      📍 {installer.distance.toFixed(1)} {t.kmAway}
-                                    </p>
-                                  ) : (
-                                    <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                                      📍 {t.nearestLocation}
-                                    </p>
-                                  )}
-                                  {installer.pricePerTire && (
-                                    <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
-                                      ${installer.pricePerTire.toFixed(2)}{t.perTireLower}
-                                    </p>
-                                  )}
-                                  {installer.rating && (
-                                    <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
-                                      <span className="text-yellow-500 text-xs">
-                                        {'★'.repeat(Math.floor(installer.rating))}
-                                      </span>
-                                      <span className="ml-1 text-xs font-semibold text-slate-700">
-                                        ({installer.rating.toFixed(1)})
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              {installer.calendlyLink && (
-                                <a
-                                  href={installer.calendlyLink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
-                                >
-                                  {t.bookAppointment}
-                                </a>
-                              )}
+      {loadingInstallers ? (
+        <div className="flex items-center justify-center py-8">
+          <svg className="animate-spin h-8 w-8 text-red-600" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        </div>
+      ) : (
+        <>
+          {viewMode === 'list' && (
+            <div className="space-y-3">
+              {installers.length > 0 ? (
+                installers.map((installer) => (
+                  <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h5 className="font-bold text-slate-900">{installer.name}</h5>
+                        <p className="text-sm text-slate-600 mt-1">
+                          {installer.address}<br />
+                          {installer.city}, {installer.province}
+                        </p>
+                        <p className="text-sm text-slate-600 mt-1">
+                          📞 {installer.phone}
+                        </p>
+                        
+                        <div className="flex items-center gap-3 mt-2 flex-wrap">
+                          {installer.distance > 0 ? (
+                            <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                              📍 {installer.distance.toFixed(1)} {t.kmAway}
+                            </p>
+                          ) : (
+                            <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
+                              📍 {t.nearestLocation}
+                            </p>
+                          )}
+                          {installer.pricePerTire && (
+                            <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
+                              ${installer.pricePerTire.toFixed(2)}{t.perTireLower}
+                            </p>
+                          )}
+                          {installer.rating && (
+                            <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
+                              <span className="text-yellow-500 text-xs">
+                                {'★'.repeat(Math.floor(installer.rating))}
+                              </span>
+                              <span className="ml-1 text-xs font-semibold text-slate-700">
+                                ({installer.rating.toFixed(1)})
+                              </span>
                             </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-8 text-slate-500">
-                          <p>{t.noInstallersFound}</p>
-                          <p className="text-xs mt-2">Check browser console (F12) for debug info</p>
+                          )}
                         </div>
+                      </div>
+                      {installer.calendlyLink && (
+                        <a
+                          href={installer.calendlyLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
+                        >
+                          {t.bookAppointment}
+                        </a>
                       )}
                     </div>
-                  )}
-
-                  {viewMode === 'map' && (
-  <div className="mt-4">
-    {installers.length > 0 ? (
-      <InstallerMap installers={installers} userLocation={userLocation || undefined} />
-    ) : (
-      <div className="text-center py-8 text-slate-500">
-        <p>{t.noInstallersFound}</p>
-      </div>
-    )}
-  </div>
-)}
-                    </div>
-                  )}
-                </>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-slate-500">
+                  <p>{t.noInstallersFound}</p>
+                  <p className="text-xs mt-2">Check browser console (F12) for debug info</p>
+                </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+
+          {viewMode === 'map' && (
+            <div className="mt-4">
+              {installers.length > 0 ? (
+                <InstallerMap installers={installers} userLocation={userLocation || undefined} />
+              ) : (
+                <div className="text-center py-8 text-slate-500">
+                  <p>{t.noInstallersFound}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  </div>
+)}
 
         {/* Next Steps */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6 animate-fade-in-up">
