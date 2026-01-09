@@ -366,18 +366,16 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, 
                   )}
 
                   {viewMode === 'map' && (
-                    <div className="mt-4">
-                      {installers.length > 0 && mapsLoaded ? (
-                        <InstallerMap installers={installers} userLocation={userLocation || undefined} />
-                      ) : !mapsLoaded ? (
-                        <div className="text-center py-8 text-slate-500">
-                          <p>Loading map...</p>
-                        </div>
-                      ) : (
-                        <div className="text-center py-8 text-slate-500">
-                          <p>{t.noInstallersFound}</p>
-                        </div>
-                      )}
+  <div className="mt-4">
+    {installers.length > 0 ? (
+      <InstallerMap installers={installers} userLocation={userLocation || undefined} />
+    ) : (
+      <div className="text-center py-8 text-slate-500">
+        <p>{t.noInstallersFound}</p>
+      </div>
+    )}
+  </div>
+)}
                     </div>
                   )}
                 </>
