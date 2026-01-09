@@ -13,6 +13,7 @@ interface SuccessViewProps {
   };
   onReset: () => void;
   lang: Language;
+  mapsLoaded?: boolean;
 }
 
 interface Installer {
@@ -31,7 +32,7 @@ interface Installer {
 }
 
 const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
-  console.log('Fetching installers from Airtable...', { lat: userLat, lng: userLng });
+  console.log('🔍 Fetching installers from Airtable...', { lat: userLat, lng: userLng });
   
   try {
     const installers = await airtableService.findNearbyInstallers(
@@ -40,27 +41,57 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
       100
     );
 
-    return installers.map(installer => ({
-      id: installer.id,
-      name: installer.fields.Name,
-      address: installer.fields.Address,
-      city: installer.fields.City,
-      province: installer.fields.Province,
-      phone: installer.fields.Phone || '',
-      calendlyLink: installer.fields['Calendar Link'] || installer.fields.CalendlyLink,
-      pricePerTire: installer.fields.PricePerTire,
-      rating: installer.fields.Rating,
-      distance: installer.distance || 0,
-      lat: installer.fields.Latitude,
-      lng: installer.fields.Longitude,
-    }));
+    console.log('📦 Raw Airtable response:', installers);
+
+    // ✅ Check if installers is an array
+    if (!Array.isArray(installers)) {
+      console.error('❌ Airtable did not return an array:', installers);
+      return [];
+    }
+
+    // ✅ Filter and map with error handling
+    const mapped = installers
+      .filter(installer => {
+        if (!installer || !installer.fields) {
+          console.warn('⚠️ Skipping invalid installer record:', installer);
+          return false;
+        }
+        return true;
+      })
+      .map(installer => {
+        try {
+          const fields = installer.fields;
+          
+          return {
+            id: installer.id || '',
+            name: fields.Name || fields.name || fields.InstallerName || 'Unknown Installer',
+            address: fields.Address || fields.address || fields.StreetAddress || '',
+            city: fields.City || fields.city || '',
+            province: fields.Province || fields.province || fields.State || '',
+            phone: fields.Phone || fields.phone || fields.PhoneNumber || '',
+            calendlyLink: fields['Calendar Link'] || fields.CalendlyLink || fields.calendlyLink || fields['Calendly Link'],
+            pricePerTire: fields.PricePerTire || fields.pricePerTire || fields['Price Per Tire'] || fields.price_per_tire,
+            rating: fields.Rating || fields.rating,
+            distance: installer.distance || 0,
+            lat: fields.Latitude || fields.latitude || fields.lat,
+            lng: fields.Longitude || fields.longitude || fields.lng || fields.lon,
+          };
+        } catch (mapError) {
+          console.error('❌ Error mapping installer:', installer, mapError);
+          return null;
+        }
+      })
+      .filter((installer): installer is Installer => installer !== null);
+
+    console.log(`✅ Successfully mapped ${mapped.length} installers`);
+    return mapped;
   } catch (error) {
-    console.error('Error fetching installers:', error);
+    console.error('❌ Error fetching installers:', error);
     return [];
   }
 };
 
-const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
+const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, mapsLoaded }) => {
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -79,29 +110,39 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
     if (selectedTire.withInstallation) {
       setLoadingInstallers(true);
       
-      const fetchWithLoc = (lat?: number, lng?: number) => {
+      const fetchWithLoc = async (lat?: number, lng?: number) => {
         if (lat && lng) {
           setUserLocation({ lat, lng });
+          console.log('📍 User location set:', { lat, lng });
+        } else {
+          console.log('📍 Using default location: Rouyn-Noranda, QC');
         }
         
-        fetchInstallers(lat, lng).then(data => {
+        try {
+          const data = await fetchInstallers(lat, lng);
+          console.log('✅ Installers fetched:', data.length);
           setInstallers(data);
+        } catch (error) {
+          console.error('❌ Error in fetchWithLoc:', error);
+          setInstallers([]);
+        } finally {
           setLoadingInstallers(false);
-        }).catch(error => {
-          console.error('Error:', error);
-          setLoadingInstallers(false);
-        });
+        }
       };
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          (pos) => fetchWithLoc(pos.coords.latitude, pos.coords.longitude),
+          (pos) => {
+            console.log('✅ Geolocation success:', pos.coords);
+            fetchWithLoc(pos.coords.latitude, pos.coords.longitude);
+          },
           (err) => {
-            console.log('Geolocation denied, using default search.', err);
+            console.log('⚠️ Geolocation denied:', err.message);
             fetchWithLoc();
           }
         );
       } else {
+        console.log('⚠️ Geolocation not available');
         fetchWithLoc();
       }
     }
@@ -296,6 +337,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                       ) : (
                         <div className="text-center py-8 text-slate-500">
                           <p>{t.noInstallersFound}</p>
+                          <p className="text-xs mt-2">Check browser console (F12) for debug info</p>
                         </div>
                       )}
                     </div>
@@ -303,7 +345,17 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
 
                   {viewMode === 'map' && (
                     <div className="mt-4">
-                      <InstallerMap installers={installers} userLocation={userLocation || undefined} />
+                      {installers.length > 0 && mapsLoaded ? (
+                        <InstallerMap installers={installers} userLocation={userLocation || undefined} />
+                      ) : !mapsLoaded ? (
+                        <div className="text-center py-8 text-slate-500">
+                          <p>Loading map...</p>
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-slate-500">
+                          <p>{t.noInstallersFound}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
