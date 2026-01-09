@@ -114,23 +114,26 @@ export interface ShopifyCheckoutInput {
 }
 
 // Installer data
-export interface InstallerData {
+export interface Installer {
   id: string;
   name: string;
-  email: string;
+  email?: string;
   phone?: string;
   address: string;
   city: string;
   province: string;
-  postalCode: string;
-  latitude?: number;
-  longitude?: number;
+  postalCode?: string;
+  coordinates?: {
+    lat: number;
+    lng: number;
+  };
   calendlyLink?: string;
   serviceRadius?: number;
   pricePerTire?: number;
-  status: 'Active' | 'Inactive' | 'Pending';
+  status: string;
   rating?: number;
   totalInstallations?: number;
+  distance?: number;
 }
 
 // Installation job

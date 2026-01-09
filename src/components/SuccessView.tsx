@@ -47,7 +47,7 @@ const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Inst
       city: installer.fields.City,
       province: installer.fields.Province,
       phone: installer.fields.Phone || '',
-      calendlyLink: installer.fields['Calendar Link'] || installer.fields.CalendlyLink, // ✅ Try both
+      calendlyLink: installer.fields['Calendar Link'] || installer.fields.CalendlyLink,
       pricePerTire: installer.fields.PricePerTire,
       rating: installer.fields.Rating,
       distance: installer.distance || 0,
@@ -64,10 +64,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [loadingInstallers, setLoadingInstallers] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list'); // ✅ NEW: View toggle
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const t = translations[lang];
 
-  const orderNumber = `TM-${Math.floor(100000 + Math.random() + 900000)}`;
+  const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
 
   const tireSubtotal = selectedTire.tire.pricePerUnit * selectedTire.quantity;
   const installationSubtotal = selectedTire.withInstallation ? 15 * selectedTire.quantity : 0;
@@ -118,10 +118,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             </svg>
           </div>
           <h1 className="text-4xl font-black text-slate-900 mb-2 uppercase tracking-tight">
-            {t.orderConfirmed || 'COMMANDE CONFIRMÉE!'}
+            {t.orderConfirmed}
           </h1>
           <p className="text-lg text-slate-600">
-            {t.orderReceived || 'Votre commande a été reçue.'} <strong>{selectedTire.tire.brand} {selectedTire.tire.model}</strong>
+            {t.orderReceived} <strong>{selectedTire.tire.brand} {selectedTire.tire.model}</strong>
           </p>
         </div>
 
@@ -130,13 +130,13 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
           <div className="grid md:grid-cols-2 gap-6 mb-6">
             <div>
               <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
-                {t.orderNumber || 'Order Number'}
+                {t.orderNumber}
               </p>
               <p className="text-2xl font-black text-slate-900">{orderNumber}</p>
             </div>
             <div className="text-right">
               <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
-                {t.totalPaid || 'Total Paid'}
+                {t.totalPaid}
               </p>
               <p className="text-2xl font-black text-green-600">${total.toFixed(2)}</p>
             </div>
@@ -144,7 +144,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
 
           <div className="border-t border-slate-200 pt-4">
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
-              {t.orderSummary || 'Order Summary'}
+              {t.orderSummary}
             </h3>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
@@ -159,21 +159,21 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                     <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Installation & Balancing
+                    {t.installationAndBalancing}
                   </span>
                   <span className="font-semibold text-slate-900">${installationSubtotal.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between border-t border-slate-200 pt-2">
-                <span className="text-slate-600">Subtotal</span>
+                <span className="text-slate-600">{t.subtotal}</span>
                 <span className="font-semibold text-slate-900">${subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600">Taxes (15%)</span>
+                <span className="text-slate-600">{t.taxes}</span>
                 <span className="font-semibold text-slate-900">${taxes.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-lg font-black border-t-2 border-slate-300 pt-2 mt-2">
-                <span className="text-slate-900">TOTAL</span>
+                <span className="text-slate-900">{t.total}</span>
                 <span className="text-green-600">${total.toFixed(2)}</span>
               </div>
             </div>
@@ -191,10 +191,10 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-lg mb-1">
-                  {t.installationStatus || 'STATUT D\'INSTALLATION'}
+                  {t.installationStatus}
                 </h3>
                 <p className="text-slate-600">
-                  {t.installationNotice || 'L\'installation nécessite un rendez-vous. Veuillez sélectionner une heure ci-dessous.'}
+                  {t.installationNotice}
                 </p>
               </div>
             </div>
@@ -202,9 +202,8 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-bold text-slate-900 uppercase tracking-wide text-sm">
-                  {t.authorizedInstallers || 'AUTHORIZED INSTALLERS (GROUNDED DATA)'}
+                  {t.authorizedInstallers}
                 </h4>
-                {/* ✅ NEW: View Toggle Buttons */}
                 <div className="flex gap-2">
                   <button
                     onClick={() => setViewMode('list')}
@@ -214,7 +213,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                         : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                     }`}
                   >
-                    LIST
+                    {t.list}
                   </button>
                   <button
                     onClick={() => setViewMode('map')}
@@ -224,7 +223,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    MAP
+                    {t.map}
                   </button>
                 </div>
               </div>
@@ -238,7 +237,6 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                 </div>
               ) : (
                 <>
-                  {/* ✅ LIST VIEW */}
                   {viewMode === 'list' && (
                     <div className="space-y-3">
                       {installers.length > 0 ? (
@@ -258,16 +256,16 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                                 <div className="flex items-center gap-3 mt-2 flex-wrap">
                                   {installer.distance > 0 ? (
                                     <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                      📍 {installer.distance.toFixed(1)} km away
+                                      📍 {installer.distance.toFixed(1)} {t.kmAway}
                                     </p>
                                   ) : (
                                     <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                                      📍 Nearest location
+                                      📍 {t.nearestLocation}
                                     </p>
                                   )}
                                   {installer.pricePerTire && (
                                     <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
-                                      ${installer.pricePerTire.toFixed(2)}/tire
+                                      ${installer.pricePerTire.toFixed(2)}{t.perTireLower}
                                     </p>
                                   )}
                                   {installer.rating && (
@@ -289,7 +287,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                                   rel="noopener noreferrer"
                                   className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
                                 >
-                                  {t.bookAppointment || 'RÉSERVER'}
+                                  {t.bookAppointment}
                                 </a>
                               )}
                             </div>
@@ -297,13 +295,12 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
                         ))
                       ) : (
                         <div className="text-center py-8 text-slate-500">
-                          <p>No installers found in your area.</p>
+                          <p>{t.noInstallersFound}</p>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* ✅ MAP VIEW */}
                   {viewMode === 'map' && (
                     <div className="mt-4">
                       <InstallerMap installers={installers} userLocation={userLocation || undefined} />
@@ -321,24 +318,24 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            {t.nextSteps || 'Prochaines étapes'}
+            {t.nextSteps}
           </h3>
           <ul className="space-y-2 text-sm text-blue-800">
             <li className="flex items-start gap-2">
               <span className="text-blue-600 font-bold">1.</span>
-              <span>Un email de confirmation a été envoyé à votre adresse.</span>
+              <span>{t.confirmationEmailSent}</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-600 font-bold">2.</span>
               <span>
                 {selectedTire.withInstallation 
-                  ? 'Réservez votre rendez-vous d\'installation en utilisant le lien ci-dessus.'
-                  : 'Vos pneus seront expédiés à votre adresse sous 2-5 jours ouvrables.'}
+                  ? t.bookAppointmentInstructions
+                  : t.tiresShippedInstructions}
               </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-600 font-bold">3.</span>
-              <span>Vous pouvez suivre votre commande via le lien dans votre email.</span>
+              <span>{t.trackOrderInstructions}</span>
             </li>
           </ul>
         </div>
@@ -349,24 +346,24 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }
             onClick={onReset}
             className="flex-1 px-6 py-4 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors uppercase tracking-wide shadow-md"
           >
-            {t.startOver || 'RECOMMENCER'}
+            {t.startOver}
           </button>
           <a
             href="https://www.gcitires.com"
             className="flex-1 px-6 py-4 border-2 border-slate-300 text-slate-700 font-bold rounded-lg hover:bg-slate-50 transition-colors uppercase tracking-wide text-center"
           >
-            {t.backStore || 'RETOUR À LA BOUTIQUE'}
+            {t.backStore}
           </a>
         </div>
 
         {/* Support */}
         <div className="text-center mt-8 text-sm text-slate-500">
           <p>
-            {t.needHelp || 'Besoin d\'aide?'}{' '}
+            {t.needHelp}{' '}
             <a href="mailto:support@gcitires.com" className="text-red-600 hover:underline font-semibold">
               support@gcitires.com
             </a>
-            {' '}{t.or || 'ou'}{' '}
+            {' '}{t.or}{' '}
             <a href="tel:+18195550100" className="text-red-600 hover:underline font-semibold">
               (819) 555-0100
             </a>

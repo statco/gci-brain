@@ -11,7 +11,7 @@ interface CheckoutModalProps {
   onConfirm: () => void;
   onCancel: () => void;
   lang: Language;
-  selectedInstaller?: any; // Will be set if installation selected
+  selectedInstaller?: any;
 }
 
 const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -44,7 +44,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
     try {
       const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
       
-      // ✅ FEATURE 4: Create installation job in Airtable
+      // Create installation job in Airtable
       if (withInstallation && selectedInstaller) {
         console.log('📝 Creating installation job in Airtable...');
         
@@ -58,13 +58,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
           InstallationPrice: selectedInstaller.pricePerTire * quantity,
           Status: 'Pending',
           ShopifyOrderId: orderNumber,
-          Notes: `Auto-created from AI Match checkout`,
+          Notes: `Auto-created from AI Match Checkout`,
         });
         
         console.log('✅ Installation job created successfully');
       }
 
-      // ✅ FEATURE 5: Send confirmation email
+      // Send confirmation email
       console.log('📧 Sending confirmation email...');
       
       await sendConfirmationEmail({
@@ -82,10 +82,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       // Simulate checkout delay
       await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // TODO: Create actual Shopify checkout
-      // const checkoutUrl = await createShopifyCheckout(tire, quantity, withInstallation);
-      // window.location.href = checkoutUrl;
 
       onConfirm();
     } catch (error) {
@@ -107,7 +103,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
           <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">
-            {t.checkout || 'Checkout'}
+            {t.checkout}
           </h2>
           <button
             onClick={onCancel}
@@ -124,7 +120,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
           {/* Customer Information */}
           <div>
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
-              {t.yourInformation || 'Your Information'}
+              {t.yourInformation}
             </h3>
             <div className="space-y-3">
               <input
@@ -157,7 +153,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
           {/* Order Summary */}
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
-              {t.orderSummary || 'Order Summary'}
+              {t.orderSummaryTitle}
             </h3>
 
             {/* Tire Details */}
@@ -184,7 +180,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <div className="space-y-2 border-t border-slate-200 pt-3">
               <div className="flex justify-between text-sm">
                 <span className="text-slate-600">
-                  Tires ({quantity}x ${tire.pricePerUnit.toFixed(2)})
+                  {t.tires || 'Tires'} ({quantity}x ${tire.pricePerUnit.toFixed(2)})
                 </span>
                 <span className="font-semibold text-slate-900">
                   ${tireSubtotal.toFixed(2)}
@@ -197,7 +193,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Installation & Balancing ({quantity}x $15.00)
+                    {t.installationAndBalancing} ({quantity}x $15.00)
                   </span>
                   <span className="font-semibold text-slate-900">
                     ${installationSubtotal.toFixed(2)}
@@ -206,21 +202,21 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               )}
 
               <div className="flex justify-between text-sm border-t border-slate-200 pt-2">
-                <span className="text-slate-600">Subtotal</span>
+                <span className="text-slate-600">{t.subtotal}</span>
                 <span className="font-semibold text-slate-900">
                   ${subtotal.toFixed(2)}
                 </span>
               </div>
 
               <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Taxes (15%)</span>
+                <span className="text-slate-600">{t.taxes}</span>
                 <span className="font-semibold text-slate-900">
                   ${taxes.toFixed(2)}
                 </span>
               </div>
 
               <div className="flex justify-between text-lg font-black border-t-2 border-slate-300 pt-3 mt-2">
-                <span className="text-slate-900">TOTAL</span>
+                <span className="text-slate-900">{t.total}</span>
                 <span className="text-red-600">
                   ${finalTotal.toFixed(2)}
                 </span>
@@ -237,10 +233,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </svg>
                 <div>
                   <h4 className="font-bold text-green-900 mb-1">
-                    {t.installationIncluded || 'Installation Included'}
+                    {t.installationIncluded}
                   </h4>
                   <p className="text-sm text-green-700">
-                    Your tires will be professionally installed, balanced, and old tires disposed of at a certified GCI Tire installer near you.
+                    {t.installationDescription}
                   </p>
                 </div>
               </div>
@@ -254,7 +250,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               disabled={isProcessing}
               className="flex-1 px-6 py-3 border-2 border-slate-300 text-slate-700 font-bold rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 uppercase tracking-wide"
             >
-              {t.cancel || 'Cancel'}
+              {t.cancel}
             </button>
             <button
               onClick={handleCheckout}
@@ -270,14 +266,14 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   {t.processing || 'Processing...'}
                 </span>
               ) : (
-                t.completeOrder || 'Complete Order'
+                t.completeOrder
               )}
             </button>
           </div>
 
           {/* Security Notice */}
           <p className="text-xs text-slate-500 text-center">
-            🔒 Secure checkout powered by Shopify
+            {t.secureCheckout}
           </p>
         </div>
       </div>
@@ -285,7 +281,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   );
 };
 
-// ✅ FEATURE 5: Email notification function
+// Email notification function
 async function sendConfirmationEmail(data: {
   to: string;
   name: string;
@@ -297,7 +293,6 @@ async function sendConfirmationEmail(data: {
   installerName?: string;
 }): Promise<void> {
   try {
-    // TODO: Replace with actual email service (SendGrid, Resend, etc.)
     const response = await fetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -327,7 +322,6 @@ async function sendConfirmationEmail(data: {
     }
   } catch (error) {
     console.error('Email error:', error);
-    // Don't throw - email failure shouldn't block checkout
   }
 }
 
