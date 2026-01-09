@@ -109,7 +109,10 @@ export async function getTireRecommendations(
 
   try {
     // ✅ CORRECT MODEL NAME (as of December 2024)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ 
+  model: "gemini-2.0-flash",
+  systemInstruction: "You are a professional translator for a Canadian tire retailer. Use professional, clear, and trust-inspiring language. Use Quebec-specific French (e.g., 'courriel' instead of 'e-mail').",
+});
 
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
