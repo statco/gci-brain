@@ -1,11 +1,9 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import InstallerApplicationForm from './components/InstallerApplicationForm';
 import React, { useState, useEffect } from 'react';
-<<<<<<< HEAD:src/App.tsx
+ 
 import { useJsApiLoader } from '@react-google-maps/api'; // ✅ ADDED
-=======
 import { useJsApiLoader } from '@react-google-maps/api'; 
->>>>>>> 11850b3d7c85eea16c67c643800f84e20aae5805:App.tsx
 import InputForm from './components/InputForm';
 import ProcessingOverlay from './components/ProcessingOverlay';
 import TireCard from './components/TireCard';
@@ -19,13 +17,9 @@ import type { ProcessingLog, TireProduct, Language } from './types';
 import { translations } from './utils/translations';
 import { AppStates, ProcessingStages } from './utils/appStates';
 
-<<<<<<< HEAD:src/App.tsx
 // ✅ ADDED: Google Maps libraries
 const GOOGLE_MAPS_LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
-=======
-const LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
->>>>>>> 11850b3d7c85eea16c67c643800f84e20aae5805:App.tsx
-
+ LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
 function TireMatchApp() {
   const [appState, setAppState] = useState<AppStates>(AppStates.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
@@ -37,7 +31,6 @@ function TireMatchApp() {
   const [reviewTire, setReviewTire] = useState<TireProduct | null>(null);
   const [lang, setLang] = useState<Language>('en');
 
-<<<<<<< HEAD:src/App.tsx
   // ✅ ADDED: Google Maps loader
   const { isLoaded: mapsLoaded } = useJsApiLoader({
     id: 'google-map-script',
@@ -119,7 +112,7 @@ function TireMatchApp() {
       } else if (normalizedLang.startsWith('en')) {
         setLang('en');
       }
-=======
+
   // ✅ Initialize Google Maps Loader
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
@@ -140,7 +133,6 @@ function TireMatchApp() {
            if (parsed.selectedTire) setSelectedTire(parsed.selectedTire);
         }
       } catch (e) { console.error("Load state failed", e); }
->>>>>>> 11850b3d7c85eea16c67c643800f84e20aae5805:App.tsx
     }
   }, []);
 
@@ -205,7 +197,6 @@ function TireMatchApp() {
           />
         )}
         {appState === AppStates.SUCCESS && selectedTire && (
-<<<<<<< HEAD:src/App.tsx
            <SuccessView 
               selectedTire={selectedTire}
               onReset={resetApp}
@@ -267,11 +258,9 @@ function TireMatchApp() {
           }}
         />
       )}
-=======
            <SuccessView selectedTire={selectedTire} onReset={resetApp} lang={lang} mapsLoaded={isLoaded} />
         )}
       </main>
->>>>>>> 11850b3d7c85eea16c67c643800f84e20aae5805:App.tsx
     </div>
   );
 }
