@@ -19,7 +19,6 @@ import { AppStates, ProcessingStages } from './utils/appStates';
 
 // ✅ ADDED: Google Maps libraries
 const GOOGLE_MAPS_LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
- LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
 function TireMatchApp() {
   const [appState, setAppState] = useState<AppStates>(AppStates.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
