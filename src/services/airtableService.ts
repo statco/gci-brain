@@ -15,7 +15,8 @@ const MOCK_DATA = [
     phone: '819-555-0123',
     calendlyLink: 'https://calendly.com/gci-tires',
     distance: 1.2,
-    coordinates: { lat: 48.2368, lng: -79.0228 }
+    lat: 48.2368,
+    lng: -79.0228
   }
 ];
 
@@ -141,14 +142,18 @@ export const airtableService = {
           phone: fields.Phone || '',
           // Support multiple potential field names for Calendly
           calendlyLink: fields['Calendar Link'] || fields.CalendlyLink || fields.Link,
+          pricePerTire: fields.PricePerTire || fields['Price Per Tire'],
+          rating: fields.Rating,
           distance: dist,
-          coordinates: hasValidCoords ? { lat, lng } : null
+          // ✅ FIXED: Return flat lat/lng instead of nested coordinates
+          lat: hasValidCoords ? lat : undefined,
+          lng: hasValidCoords ? lng : undefined
         };
       });
 
       // 5. Filter by radius and sort by distance
       const filtered = records
-        .filter((r: any) => r.coordinates !== null && r.distance <= radiusKm)
+        .filter((r: any) => r.lat !== undefined && r.lng !== undefined && r.distance <= radiusKm)
         .sort((a: any, b: any) => a.distance - b.distance);
 
       // 6. Final safety: if no real records found, return Mock data to show something on the map
