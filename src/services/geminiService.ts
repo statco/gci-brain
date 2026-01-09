@@ -109,7 +109,7 @@ export async function getTireRecommendations(
 
   try {
     // ✅ CORRECT MODEL NAME (as of December 2024)
-    const model = genAI.getGenerativeModel({ model: "gemini-3.0-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.0-flash" });
 
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
