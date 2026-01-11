@@ -76,6 +76,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         total,
         withInstallation,
         installerName: selectedInstaller?.name,
+        lang, // ✅ ADDED: Pass current language
       });
       
       console.log('✅ Email sent successfully');
@@ -281,7 +282,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   );
 };
 
-// Email notification function
+// ✅ UPDATED: Email notification function using Resend API
 async function sendConfirmationEmail(data: {
   to: string;
   name: string;
@@ -291,37 +292,38 @@ async function sendConfirmationEmail(data: {
   total: number;
   withInstallation: boolean;
   installerName?: string;
+  lang: string; // ✅ ADDED: Language parameter
 }): Promise<void> {
   try {
+    // Call our Vercel API endpoint
     const response = await fetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         to: data.to,
-        subject: `Order Confirmation - ${data.orderNumber}`,
-        html: `
-          <h1>Order Confirmed!</h1>
-          <p>Hi ${data.name},</p>
-          <p>Thank you for your order!</p>
-          <h2>Order Details:</h2>
-          <ul>
-            <li>Order Number: ${data.orderNumber}</li>
-            <li>Product: ${data.tire}</li>
-            <li>Quantity: ${data.quantity}</li>
-            <li>Total: $${data.total.toFixed(2)}</li>
-            ${data.withInstallation ? `<li>Installation at: ${data.installerName}</li>` : ''}
-          </ul>
-          <p>We'll send you another email when your order ships.</p>
-          <p>Best regards,<br>GCI Tire Team</p>
-        `,
+        name: data.name,
+        orderNumber: data.orderNumber,
+        tire: data.tire,
+        quantity: data.quantity,
+        total: data.total,
+        withInstallation: data.withInstallation,
+        installerName: data.installerName,
+        lang: data.lang, // ✅ ADDED: Include language
       }),
     });
 
     if (!response.ok) {
-      throw new Error('Email send failed');
+      const error = await response.json();
+      throw new Error(error.details || 'Email send failed');
     }
+
+    const result = await response.json();
+    console.log('✅ Email sent successfully:', result.id);
+    
   } catch (error) {
-    console.error('Email error:', error);
+    console.error('❌ Email error:', error);
+    // Don't throw - email failure shouldn't block checkout
+    // The user still gets the success page
   }
 }
 
