@@ -4,6 +4,14 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', 'https://match.gcitires.com');
+    res.setHeader('Access-Control-Allow-Methods', 'POST');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(200).end();
+  }
+
   // Only allow POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -26,9 +34,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const lang = req.body.lang || 'en';
     const isFrench = lang === 'fr';
 
-    // Send email via Resend
-    const data = await resend.emails.send({
-      from: 'GCI Tire <onboarding@resend.dev>', // Change to your domain after verification
+    // Send email via Resend - Using destructured response to handle types properly
+    const { data, error } = await resend.emails.send({
+      from: 'GCI Tire <noreply@updates.gcitires.ca>',
       to: [to],
       subject: isFrench 
         ? `Confirmation de commande - ${orderNumber}` 
@@ -45,8 +53,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     });
 
+    // Handle Resend API errors
+    if (error) {
+      console.error('❌ Resend API error:', error);
+      return res.status(500).json({ 
+        error: 'Failed to send email',
+        details: error.message
+      });
+    }
+
     console.log('✅ Email sent successfully:', data);
-    return res.status(200).json({ success: true, id: data.id });
+    return res.status(200).json({ success: true, id: data?.id });
 
   } catch (error) {
     console.error('❌ Email send failed:', error);
