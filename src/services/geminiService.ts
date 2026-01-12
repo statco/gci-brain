@@ -63,21 +63,21 @@ export async function getTireRecommendations(
       systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
     });
 
-    const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
+   const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
 Language: ${language === 'fr' ? 'French' : 'English'}
 
 Available Tire Products:
-${availableProducts.map((p, i) => `${i + 1}. ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
+${availableProducts.map((p, i) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
 
 Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
 
-Return ONLY a valid JSON array with the tire IDs (just the numbers), no other text:
-["1234567", "7654321"]
+Return ONLY a valid JSON array with the tire IDs from the list, no other text:
+["9187654321", "9187654322"]
 
 Rules:
-- Return only IDs from the available products above
+- Return only IDs shown in the "ID: XXX" format above
 - Match the customer's needs (size, season, performance, budget)
 - Return 2-4 recommendations
 - Consider Canadian climate if winter/all-season is mentioned
