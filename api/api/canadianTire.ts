@@ -1,4 +1,4 @@
-// api/canadiaTire.ts
+// api/canadaTire.ts
 // ============================================================
 // Canada Tire Supplier — NetSuite RESTlet API
 // Full implementation: Tire Search, Wheel Search,
