@@ -1,9 +1,8 @@
 import { Resend } from 'resend';
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', 'https://match.gcitires.com');
@@ -34,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const lang = req.body.lang || 'en';
     const isFrench = lang === 'fr';
 
-    // Send email via Resend - Using destructured response to handle types properly
+    // Send email via Resend
     const { data, error } = await resend.emails.send({
       from: 'GCI Tire <noreply@updates.gcitires.ca>',
       to: [to],
@@ -75,17 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // Generate email HTML (bilingual support)
-function generateEmailHTML(data: {
-  name: string;
-  orderNumber: string;
-  tire: string;
-  quantity: number;
-  total: number;
-  withInstallation: boolean;
-  installerName?: string;
-  lang: string;
-}): string {
-  const { name, orderNumber, tire, quantity, total, withInstallation, installerName, lang } = data;
+function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInstallation, installerName, lang }) {
   const isFrench = lang === 'fr';
 
   return `
@@ -131,8 +120,8 @@ function generateEmailHTML(data: {
               </h2>
               <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 16px;">
                 ${isFrench 
-                  ? \`Merci \${name}, votre commande a été reçue.\`
-                  : \`Thank you \${name}, your order has been received.\`
+                  ? `Merci ${name}, votre commande a été reçue.`
+                  : `Thank you ${name}, your order has been received.`
                 }
               </p>
             </td>
@@ -162,18 +151,18 @@ function generateEmailHTML(data: {
                     </p>
                   </td>
                 </tr>
-                ${withInstallation && installerName ? \`
+                ${withInstallation && installerName ? `
                 <tr>
                   <td style="padding-top: 15px; border-top: 1px solid #e5e7eb;">
                     <strong style="color: #1f2937; font-size: 14px;">
-                      \${isFrench ? 'Installation' : 'Installation'}:
+                      ${isFrench ? 'Installation' : 'Installation'}:
                     </strong>
                     <p style="margin: 5px 0 0 0; color: #4b5563;">
-                      \${installerName}
+                      ${installerName}
                     </p>
                   </td>
                 </tr>
-                \` : ''}
+                ` : ''}
                 <tr>
                   <td style="padding-top: 15px; border-top: 1px solid #e5e7eb;">
                     <strong style="color: #1f2937; font-size: 14px; text-transform: uppercase;">
@@ -201,14 +190,14 @@ function generateEmailHTML(data: {
                     : 'You will receive a tracking email once your tires ship.'
                   }
                 </li>
-                ${withInstallation ? \`
+                ${withInstallation ? `
                 <li>
-                  \${isFrench 
+                  ${isFrench 
                     ? "Réservez votre rendez-vous d'installation en ligne."
                     : 'Book your installation appointment online.'
                   }
                 </li>
-                \` : ''}
+                ` : ''}
                 <li>
                   ${isFrench 
                     ? 'Contactez-nous si vous avez des questions.'
