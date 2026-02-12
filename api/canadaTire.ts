@@ -1,4 +1,4 @@
-// api/canadiaTire.ts
+// api/canadaTire.ts
 // ============================================================
 // Canada Tire Supplier — NetSuite RESTlet API
 // Full implementation: Tire Search, Wheel Search,
@@ -558,6 +558,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ── Safe config debug — shows shape of credentials without exposing values ──
+      case 'debug-config': {
+        const mask = (s: string) => s
+          ? `${s.slice(0,4)}...(len:${s.length})...${s.slice(-4)}`
+          : '❌ MISSING';
+
+        return res.status(200).json({
+          environment:   CONFIG.useSandbox ? 'SANDBOX' : 'PRODUCTION',
+          realm:         CONFIG.realm,
+          baseUrl:       CONFIG.baseUrl,
+          credentials: {
+            consumerKey:    mask(CONFIG.consumerKey),
+            consumerSecret: mask(CONFIG.consumerSecret),
+            tokenId:        mask(CONFIG.tokenId),
+            tokenSecret:    mask(CONFIG.tokenSecret),
+            customerId:     CONFIG.customerId,        // not secret
+            customerToken:  mask(CONFIG.customerToken),
+          },
+          // Check for common copy-paste issues
+          issues: {
+            consumerKey_hasSpaces:    CONFIG.consumerKey    !== CONFIG.consumerKey.trim(),
+            consumerSecret_hasSpaces: CONFIG.consumerSecret !== CONFIG.consumerSecret.trim(),
+            tokenId_hasSpaces:        CONFIG.tokenId        !== CONFIG.tokenId.trim(),
+            tokenSecret_hasSpaces:    CONFIG.tokenSecret    !== CONFIG.tokenSecret.trim(),
+            customerToken_hasSpaces:  CONFIG.customerToken  !== CONFIG.customerToken.trim(),
+            anyMissing: !CONFIG.consumerKey || !CONFIG.consumerSecret || !CONFIG.tokenId || !CONFIG.tokenSecret || !CONFIG.customerToken,
+          },
+          scripts: SCRIPTS,
+        });
+      }
+
       // ── Search tires ──────────────────────────────────────────────────────
       case 'tires': {
         const tires = await searchTiresOnly(req.body?.filters);
@@ -635,6 +666,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           error: 'Unknown action',
           available: [
             'test',
+            'debug-config',
             'tires',
             'tires-by-size',
             'winter-tires',
