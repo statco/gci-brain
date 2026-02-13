@@ -31,75 +31,49 @@ const SYNC_TAG  = 'ct-sync';
 // Used when TireRack scrape fails. Stable CDN URLs from manufacturer websites.
 
 // Reliable JPEG product images per brand from TireRack CDN
-// Pattern: content.tirerack.com/tires/[brand]/[model]/[brand]_[model]_[size].jpg
-// Fallback: use known-good product images per brand
+// No brand fallback — products without a match keep no image
 
-const BRAND_IMAGES: Record<string, string> = {
-  'COOPER':       'https://content.tirerack.com/tires/Cooper/Cobra/Cooper_Cobra_Radial_GT_P235_60R14_96T_BW.jpg',
-  'MICHELIN':     'https://content.tirerack.com/tires/Michelin/Defender2/Michelin_Defender2_225_65R17_102T_BW.jpg',
-  'BRIDGESTONE':  'https://content.tirerack.com/tires/Bridgestone/Turanza/Bridgestone_Turanza_QuietTrack_225_50R17_94V_BW.jpg',
-  'GOODYEAR':     'https://content.tirerack.com/tires/Goodyear/AssuranceWeatherReady/Goodyear_Assurance_WeatherReady_225_65R17_102H_BW.jpg',
-  'CONTINENTAL':  'https://content.tirerack.com/tires/Continental/TrueContactTour/Continental_TrueContact_Tour_225_65R17_102T_BW.jpg',
-  'BFGOODRICH':   'https://content.tirerack.com/tires/BFGoodrich/AllTerrainTA_KO2/BFGoodrich_All-Terrain_TA_KO2_265_70R17_121_118S_OWL.jpg',
-  'FIRESTONE':    'https://content.tirerack.com/tires/Firestone/WeatherGrip/Firestone_WeatherGrip_225_65R17_102H_BW.jpg',
-  'GENERAL':      'https://content.tirerack.com/tires/General/AltiMAX365AW/General_AltiMAX_365AW_225_65R17_102H_BW.jpg',
-  'YOKOHAMA':     'https://content.tirerack.com/tires/Yokohama/BluEarth/Yokohama_BluEarth-GT_AE51_225_50R17_94W_BW.jpg',
-  'TOYO':         'https://content.tirerack.com/tires/Toyo/CelsiusSport/Toyo_Celsius_Sport_225_50R17_98V_BW.jpg',
-  'HANKOOK':      'https://content.tirerack.com/tires/Hankook/Kinergy4S2/Hankook_Kinergy_4S2_225_50R17_98V_BW.jpg',
-  'NEXEN':        'https://content.tirerack.com/tires/Nexen/NFera/Nexen_NFera_AU7_225_50R17_98W_BW.jpg',
-  'PIRELLI':      'https://content.tirerack.com/tires/Pirelli/CinturratoP7/Pirelli_Cinturato_P7_225_50R17_94W_BW.jpg',
-  'FALKEN':       'https://content.tirerack.com/tires/Falken/SinceraSN250AS/Falken_Sincera_SN250_A_S_225_65R17_102H_BW.jpg',
-  'NITTO':        'https://content.tirerack.com/tires/Nitto/NeoGen/Nitto_Neo_Gen_225_50R17_98W_BW.jpg',
-  'KUMHO':        'https://content.tirerack.com/tires/Kumho/SolusTa51a/Kumho_Solus_TA51a_225_65R17_102H_BW.jpg',
-  'HERCULES':     'https://content.tirerack.com/tires/Hercules/TerraTraxATX/Hercules_Terra_Trac_AT-X_265_70R17_121_118S_OWL.jpg',
-  'UNIROYAL':     'https://content.tirerack.com/tires/Uniroyal/TigerPaw/Uniroyal_Tiger_Paw_Touring_A_S_225_65R17_102H_BW.jpg',
-  'DUNLOP':       'https://content.tirerack.com/tires/Dunlop/SP/Dunlop_SP_Sport_Maxx_225_50R17_94W_BW.jpg',
-  'GT RADIAL':    'https://content.tirerack.com/tires/GTRadial/Champiro/GT_Radial_Champiro_228_225_65R17_102H_BW.jpg',
-};
+// ─── TIRESOURCECANADA.CA SCRAPER ─────────────────────────────────────────────
+// Server-side rendered Canadian tire site with predictable URLs
+// Pattern: /tires/{brand-slug}/{model-slug}
+// Image in HTML: <img src="/assets/images/tires/reg/{brand}_{model}_..._tires_YYYY.jpg">
 
-// Generic tire fallback if brand not in map
-const GENERIC_TIRE_IMAGE = 'https://content.tirerack.com/tires/Cooper/ProControl/Cooper_ProControl_225_65R17_102H_BW.jpg';
-
-// ─── TIRERACK URL PATTERNS ────────────────────────────────────────────────────
-// New clean URL pattern: /tires/[brand-slug]-[model-slug]
-
-function buildTireRackUrl(brand: string, model: string): string {
+function buildTireSourceUrl(brand: string, model: string): string {
   const slug = (s: string) => s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-
-  return `https://www.tirerack.com/tires/${slug(brand)}-${slug(model)}`;
+  return `https://www.tiresourcecanada.ca/tires/${slug(brand)}/${slug(model)}`;
 }
 
-// ─── SCRAPE OG:IMAGE FROM TIRERACK ───────────────────────────────────────────
-
-async function fetchTireRackImage(brand: string, model: string): Promise<string | null> {
-  const url = buildTireRackUrl(brand, model);
-
+async function fetchTireSourceImage(brand: string, model: string): Promise<string | null> {
+  const url = buildTireSourceUrl(brand, model);
   try {
     const res = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; GCITires/1.0)',
-        'Accept':     'text/html',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
       },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) return null;
-
     const html = await res.text();
 
-    // Extract og:image
-    const match = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/i)
-                || html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"/i);
+    // Primary: extract from <img> tag with /assets/images/tires/ path
+    const imgMatch = html.match(/src="(https?:\/\/www\.tiresourcecanada\.ca\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i)
+                  || html.match(/src="(\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
 
-    if (match?.[1]) {
-      const imgUrl = match[1].startsWith('//') ? `https:${match[1]}` : match[1];
-      // Only accept actual image URLs, not logos or SVGs
-      if (imgUrl.match(/\.(jpg|jpeg|png|webp)/i)) {
-        return imgUrl;
-      }
+    if (imgMatch?.[1]) {
+      const src = imgMatch[1];
+      return src.startsWith('/') ? `https://www.tiresourcecanada.ca${src}` : src;
+    }
+
+    // Fallback: og:image
+    const ogMatch = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)
+                 || html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
+    if (ogMatch?.[1]?.match(/\.(jpg|jpeg|png|webp)/i)) {
+      return ogMatch[1];
     }
 
     return null;
@@ -116,18 +90,16 @@ async function getImageForTire(brand: string, model: string): Promise<string | n
   const key = `${brand}::${model}`;
   if (imageCache.has(key)) return imageCache.get(key)!;
 
-  // 1. Try TireRack
-  const trImage = await fetchTireRackImage(brand, model);
+  // 1. Try tiresourcecanada.ca (Canadian, SSR, accessible)
+  const trImage = await fetchTireSourceImage(brand, model);
   if (trImage) {
     imageCache.set(key, trImage);
     return trImage;
   }
 
-  // 2. Brand-level fallback JPEG (always returns something)
-  const brandKey   = brand.toUpperCase();
-  const brandImage = BRAND_IMAGES[brandKey] || GENERIC_TIRE_IMAGE;
-  imageCache.set(key, brandImage);
-  return brandImage;
+  // 2. No image found — return null (product stays without image)
+  imageCache.set(key, null);
+  return null;
 }
 
 // ─── SHOPIFY HELPERS ──────────────────────────────────────────────────────────
