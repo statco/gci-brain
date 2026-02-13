@@ -54,7 +54,7 @@ async function fetchTireSourceImage(brand: string, model: string): Promise<strin
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml',
       },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(4000),
     });
 
     if (!res.ok) return null;
@@ -206,8 +206,17 @@ function parseBrandModel(title: string): { brand: string; model: string } {
     }
   }
 
-  // First word = brand, rest = full model name (includes submodel)
-  return { brand: parts[0], model: parts.slice(1).join(' ') };
+  // First word = brand, rest = full model name (strip season/type suffixes)
+  const SUFFIXES = ['ALL-WEATHER', 'ALL-SEASON', 'ALL WEATHER', 'ALL SEASON', 
+                    'WINTER', 'SUMMER', 'PERFORMANCE', '3PMS'];
+  let modelParts = parts.slice(1);
+  // Remove trailing suffix words
+  while (modelParts.length > 0) {
+    const last = modelParts[modelParts.length - 1].toUpperCase();
+    if (SUFFIXES.includes(last)) modelParts = modelParts.slice(0, -1);
+    else break;
+  }
+  return { brand: parts[0], model: modelParts.join(' ') };
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
@@ -248,7 +257,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Fetch one Shopify page (250 products) starting after since_id=offset
       // offset must be a real Shopify product ID (returned as nextOffset from previous call)
-      const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${offset ? `&since_id=${offset}` : ''}`;
+      const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=50&fields=id,title,vendor,images,variants${offset ? `&since_id=${offset}` : ''}`;
       const data: any = await shopifyFetch<any>(`/products.json?${q}`);
       const page: ShopifyProduct[] = data.products || [];
       const toProcess = page.filter(p => p.images.length === 0);
@@ -279,7 +288,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const duration = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
       const lastId   = page.length > 0 ? page[page.length - 1].id : null;
-      const done     = page.length < 250;
+      const done     = page.length < 50;
 
       return res.status(200).json({
         success: true,
