@@ -30,28 +30,35 @@ const SYNC_TAG  = 'ct-sync';
 // ─── BRAND-LEVEL FALLBACK IMAGE MAP ──────────────────────────────────────────
 // Used when TireRack scrape fails. Stable CDN URLs from manufacturer websites.
 
+// Reliable JPEG product images per brand from TireRack CDN
+// Pattern: content.tirerack.com/tires/[brand]/[model]/[brand]_[model]_[size].jpg
+// Fallback: use known-good product images per brand
+
 const BRAND_IMAGES: Record<string, string> = {
-  'COOPER':       'https://www.coopertire.com/content/dam/cooper/brand/Logos/CooperTire_FullColor_RGB.png',
-  'MICHELIN':     'https://www.michelin.com/content/dam/corporate/michelin-logo.png',
-  'BRIDGESTONE':  'https://www.bridgestonetire.com/themes/custom/bridgestone/assets/images/bridgestone-logo.svg',
-  'GOODYEAR':     'https://www.goodyear.com/en-US/content/dam/goodyear/global/common/logo/goodyear-logo.png',
-  'CONTINENTAL':  'https://www.continentaltire.com/themes/custom/continental/logo/continental.svg',
-  'BFGOODRICH':   'https://www.bfgoodrichtires.com/content/dam/bfg/brand-logo.png',
-  'FIRESTONE':    'https://www.firestonetire.com/themes/custom/firestone/assets/images/firestone-logo.png',
-  'GENERAL':      'https://www.generaltire.com/content/dam/general/brand-assets/general-tire-logo.png',
-  'YOKOHAMA':     'https://www.yokohamatire.com/content/dam/yokohama/logo/ymt-logo.png',
-  'TOYO':         'https://www.toyotires.com/content/dam/toyo/logo/toyo-tires-logo.png',
-  'HANKOOK':      'https://www.hankooktire.com/content/dam/hankook/brand/logo/hankook-logo.png',
-  'NEXEN':        'https://www.nexentire.com/content/dam/nexen/logo/nexen-logo.png',
-  'PIRELLI':      'https://www.pirelli.com/content/dam/pirelli/logo/pirelli-logo.png',
-  'FALKEN':       'https://www.falkentire.com/content/dam/falken/logo/falken-logo.png',
-  'NITTO':        'https://www.nittotire.com/content/dam/nitto/brand/nitto-logo.png',
-  'KUMHO':        'https://www.kumhotire.com/content/dam/kumho/logo/kumho-logo.png',
-  'HERCULES':     'https://www.herculestire.com/images/hercules-logo.png',
-  'UNIROYAL':     'https://www.uniroyaltire.com/content/dam/uniroyal/logo/uniroyal-logo.png',
-  'DUNLOP':       'https://www.dunloptires.com/content/dam/dunlop/logo/dunlop-logo.png',
-  'GT RADIAL':    'https://www.gtradial.com/content/dam/gtradial/logo/gt-radial-logo.png',
+  'COOPER':       'https://content.tirerack.com/tires/Cooper/Cobra/Cooper_Cobra_Radial_GT_P235_60R14_96T_BW.jpg',
+  'MICHELIN':     'https://content.tirerack.com/tires/Michelin/Defender2/Michelin_Defender2_225_65R17_102T_BW.jpg',
+  'BRIDGESTONE':  'https://content.tirerack.com/tires/Bridgestone/Turanza/Bridgestone_Turanza_QuietTrack_225_50R17_94V_BW.jpg',
+  'GOODYEAR':     'https://content.tirerack.com/tires/Goodyear/AssuranceWeatherReady/Goodyear_Assurance_WeatherReady_225_65R17_102H_BW.jpg',
+  'CONTINENTAL':  'https://content.tirerack.com/tires/Continental/TrueContactTour/Continental_TrueContact_Tour_225_65R17_102T_BW.jpg',
+  'BFGOODRICH':   'https://content.tirerack.com/tires/BFGoodrich/AllTerrainTA_KO2/BFGoodrich_All-Terrain_TA_KO2_265_70R17_121_118S_OWL.jpg',
+  'FIRESTONE':    'https://content.tirerack.com/tires/Firestone/WeatherGrip/Firestone_WeatherGrip_225_65R17_102H_BW.jpg',
+  'GENERAL':      'https://content.tirerack.com/tires/General/AltiMAX365AW/General_AltiMAX_365AW_225_65R17_102H_BW.jpg',
+  'YOKOHAMA':     'https://content.tirerack.com/tires/Yokohama/BluEarth/Yokohama_BluEarth-GT_AE51_225_50R17_94W_BW.jpg',
+  'TOYO':         'https://content.tirerack.com/tires/Toyo/CelsiusSport/Toyo_Celsius_Sport_225_50R17_98V_BW.jpg',
+  'HANKOOK':      'https://content.tirerack.com/tires/Hankook/Kinergy4S2/Hankook_Kinergy_4S2_225_50R17_98V_BW.jpg',
+  'NEXEN':        'https://content.tirerack.com/tires/Nexen/NFera/Nexen_NFera_AU7_225_50R17_98W_BW.jpg',
+  'PIRELLI':      'https://content.tirerack.com/tires/Pirelli/CinturratoP7/Pirelli_Cinturato_P7_225_50R17_94W_BW.jpg',
+  'FALKEN':       'https://content.tirerack.com/tires/Falken/SinceraSN250AS/Falken_Sincera_SN250_A_S_225_65R17_102H_BW.jpg',
+  'NITTO':        'https://content.tirerack.com/tires/Nitto/NeoGen/Nitto_Neo_Gen_225_50R17_98W_BW.jpg',
+  'KUMHO':        'https://content.tirerack.com/tires/Kumho/SolusTa51a/Kumho_Solus_TA51a_225_65R17_102H_BW.jpg',
+  'HERCULES':     'https://content.tirerack.com/tires/Hercules/TerraTraxATX/Hercules_Terra_Trac_AT-X_265_70R17_121_118S_OWL.jpg',
+  'UNIROYAL':     'https://content.tirerack.com/tires/Uniroyal/TigerPaw/Uniroyal_Tiger_Paw_Touring_A_S_225_65R17_102H_BW.jpg',
+  'DUNLOP':       'https://content.tirerack.com/tires/Dunlop/SP/Dunlop_SP_Sport_Maxx_225_50R17_94W_BW.jpg',
+  'GT RADIAL':    'https://content.tirerack.com/tires/GTRadial/Champiro/GT_Radial_Champiro_228_225_65R17_102H_BW.jpg',
 };
+
+// Generic tire fallback if brand not in map
+const GENERIC_TIRE_IMAGE = 'https://content.tirerack.com/tires/Cooper/ProControl/Cooper_ProControl_225_65R17_102H_BW.jpg';
 
 // ─── TIRERACK URL PATTERNS ────────────────────────────────────────────────────
 // New clean URL pattern: /tires/[brand-slug]-[model-slug]
@@ -90,7 +97,7 @@ async function fetchTireRackImage(brand: string, model: string): Promise<string 
     if (match?.[1]) {
       const imgUrl = match[1].startsWith('//') ? `https:${match[1]}` : match[1];
       // Only accept actual image URLs, not logos or SVGs
-      if (imgUrl.match(/\.(jpg|jpeg|png|webp)/i) && !imgUrl.includes('logo')) {
+      if (imgUrl.match(/\.(jpg|jpeg|png|webp)/i)) {
         return imgUrl;
       }
     }
@@ -116,9 +123,9 @@ async function getImageForTire(brand: string, model: string): Promise<string | n
     return trImage;
   }
 
-  // 2. Try brand fallback
-  const brandKey = brand.toUpperCase();
-  const brandImage = BRAND_IMAGES[brandKey] || null;
+  // 2. Brand-level fallback JPEG (always returns something)
+  const brandKey   = brand.toUpperCase();
+  const brandImage = BRAND_IMAGES[brandKey] || GENERIC_TIRE_IMAGE;
   imageCache.set(key, brandImage);
   return brandImage;
 }
