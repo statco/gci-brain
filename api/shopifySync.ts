@@ -245,18 +245,26 @@ async function processBatches<T>(items: T[], fn: (item: T) => Promise<void>): Pr
 
 // ─── MAIN SYNC ────────────────────────────────────────────────────────────────
 
-interface SyncStats { created:number; updated:number; skipped:number; errors:number; errorList:string[]; duration:string; timestamp:string; }
+interface SyncStats { created:number; updated:number; skipped:number; errors:number; errorList:string[]; duration:string; timestamp:string; totalCT?:number; offset?:number; chunkSize?:number; done?:boolean; }
 
-async function runSync(mode: 'full'|'daily'): Promise<SyncStats> {
+async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: number = 50): Promise<SyncStats> {
   const t0 = Date.now();
   const stats: SyncStats = { created:0, updated:0, skipped:0, errors:0, errorList:[], duration:'', timestamp:new Date().toISOString() };
 
-  console.log(`🚀 ${mode} sync started`);
+  console.log(`🚀 ${mode} sync — offset:${offset} chunkSize:${chunkSize}`);
   const [ctTires, existingMap] = await Promise.all([fetchAllCTTires(), fetchExistingProducts()]);
   console.log(`📦 CT:${ctTires.length} Shopify:${existingMap.size}`);
 
-  const toCreate = ctTires.filter(p => !existingMap.has(p.partNumber));
-  const toUpdate = ctTires.filter(p =>  existingMap.has(p.partNumber));
+  stats.totalCT  = ctTires.length;
+  stats.offset   = offset;
+  stats.chunkSize = chunkSize;
+
+  // Slice the chunk for this call
+  const chunk = ctTires.slice(offset, offset + chunkSize);
+  stats.done  = offset + chunkSize >= ctTires.length;
+
+  const toCreate = chunk.filter(p => !existingMap.has(p.partNumber));
+  const toUpdate = chunk.filter(p =>  existingMap.has(p.partNumber));
 
   // Create new products
   await processBatches(toCreate, async (ct) => {
@@ -290,7 +298,7 @@ async function runSync(mode: 'full'|'daily'): Promise<SyncStats> {
   });
 
   stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
-  console.log(`✅ Done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} errors:${stats.errors}`);
+  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} errors:${stats.errors} done:${stats.done}`);
   return stats;
 }
 
@@ -323,12 +331,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily' });
       }
       case 'full-import': {
-        const stats = await runSync('full');
+        const offset    = parseInt((req.body as any)?.offset    || '0', 10);
+        const chunkSize = parseInt((req.body as any)?.chunkSize || '50', 10);
+        const stats = await runSync('full', offset, chunkSize);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
       case 'daily-sync':
       default: {
-        const stats = await runSync('daily');
+        const stats = await runSync('daily', 0, 9999);
         return res.status(200).json({ success:true, mode:'daily-sync', ...stats });
       }
     }
