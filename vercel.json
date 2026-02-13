@@ -10,6 +10,12 @@
       "destination": "/index.html"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/shopifySync",
+      "schedule": "0 8 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -20,8 +26,5 @@
         }
       ]
     }
-  ],
-  "env": {
-    "NODE_VERSION": "18"
-  }
+  ]
 }
