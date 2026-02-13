@@ -25,6 +25,7 @@ const SHOPIFY = {
 };
 
 const CT_VENDOR = 'Canada Tire';
+const SYNC_TAG  = 'ct-sync';
 
 // ─── BRAND-LEVEL FALLBACK IMAGE MAP ──────────────────────────────────────────
 // Used when TireRack scrape fails. Stable CDN URLs from manufacturer websites.
