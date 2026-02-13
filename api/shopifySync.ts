@@ -1,478 +1,339 @@
 // api/shopifySync.ts
 // ============================================================
 // Canada Tire → Shopify Product Sync
+// SELF-CONTAINED — no imports from other api/ files
 //
-// Two modes:
-//   POST ?action=full-import   — create / update all 1,000 CT products
-//   POST ?action=daily-sync    — only update changed price / inventory
-//   POST ?action=status        — show last sync stats from metafields
-//
-// Vercel Cron (runs daily at 3:00 AM ET):
-//   GET  /api/shopifySync      — triggered by vercel.json cron config
-//
-// Auth: Vercel passes CRON_SECRET automatically as Bearer token.
-//       Manual calls need: Authorization: Bearer <CRON_SECRET>
+// POST ?action=full-import   — create / update all CT products
+// POST ?action=daily-sync    — only update changed price / inventory
+// POST ?action=status        — show Shopify connection + product count
+// GET  /api/shopifySync      — Vercel cron trigger (daily 3am ET)
 // ============================================================
 
+import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { searchTiresOnly, searchWheels, transformToAIMatchProduct } from './canadaTire';
 
-// ─── Extend default Vercel 60s timeout to 300s (Vercel Pro required) ─────────
 export const config = { maxDuration: 300 };
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
+// ─── CANADA TIRE CONFIG ───────────────────────────────────────────────────────
+
+const CT = {
+  consumerKey:    process.env.CT_CONSUMER_KEY       || '',
+  consumerSecret: process.env.CT_CONSUMER_SECRET    || '',
+  tokenId:        process.env.CT_TOKEN_ID           || '',
+  tokenSecret:    process.env.CT_TOKEN_SECRET       || '',
+  customerId:     process.env.CT_CUSTOMER_NUMBER    || '19997',
+  customerToken:  process.env.CT_CUSTOMER_API_TOKEN || '',
+  useSandbox:     process.env.CT_USE_SANDBOX !== 'false',
+  get realm()   { return this.useSandbox ? '8031691_SB1' : '8031691'; },
+  get baseUrl() {
+    return this.useSandbox
+      ? 'https://8031691-sb1.restlets.api.netsuite.com/app/site/hosting/restlet.nl'
+      : 'https://8031691.restlets.api.netsuite.com/app/site/hosting/restlet.nl';
+  },
+};
+
+const CT_SCRIPT  = 'customscript_item_search_rl';
+const CT_DEPLOY  = 'customdeploy_item_search_rl';
+
+// ─── SHOPIFY CONFIG ───────────────────────────────────────────────────────────
+
 const SHOPIFY = {
-  domain:      process.env.SHOPIFY_STORE_DOMAIN       || '',   // e.g. gci-tires.myshopify.com
-  token:       process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
-  apiVersion:  '2024-01',
+  domain:     process.env.SHOPIFY_STORE_DOMAIN       || '',
+  token:      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
+  apiVersion: '2024-01',
   get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
 };
 
-const SYNC_TAG    = 'ct-sync';          // tag applied to every CT product in Shopify
-const CT_VENDOR   = 'Canada Tire';      // Shopify vendor field
-const BATCH_SIZE  = 5;                  // concurrent Shopify requests
-const BATCH_DELAY = 250;               // ms between batches (stays under 2 req/s limit)
+const CT_VENDOR  = 'Canada Tire';
+const SYNC_TAG   = 'ct-sync';
+const BATCH_SIZE = 5;
+const BATCH_MS   = 300;
 
-// ─── TYPES ────────────────────────────────────────────────────────────────────
+// ─── CT OAUTH ─────────────────────────────────────────────────────────────────
 
-interface ShopifyVariant {
-  id:         number;
-  sku:        string;
-  price:      string;
-  product_id: number;
-  inventory_item_id: number;
+function pct(s: string): string {
+  return encodeURIComponent(s)
+    .replace(/!/g,'%21').replace(/'/g,'%27')
+    .replace(/\(/g,'%28').replace(/\)/g,'%29').replace(/\*/g,'%2A');
 }
 
-interface ShopifyProduct {
-  id:       number;
-  title:    string;
-  vendor:   string;
-  tags:     string;
-  variants: ShopifyVariant[];
+function buildAuthHeader(): string {
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const nc = crypto.randomBytes(16).toString('hex');
+
+  const sigParams: Record<string,string> = {
+    deploy:                 CT_DEPLOY,
+    oauth_consumer_key:     CT.consumerKey,
+    oauth_nonce:            nc,
+    oauth_signature_method: 'HMAC-SHA256',
+    oauth_timestamp:        ts,
+    oauth_token:            CT.tokenId,
+    oauth_version:          '1.0',
+    script:                 CT_SCRIPT,
+  };
+
+  const paramStr   = Object.keys(sigParams).sort().map(k => `${pct(k)}=${pct(sigParams[k])}`).join('&');
+  const base       = ['POST', pct(CT.baseUrl), pct(paramStr)].join('&');
+  const signingKey = `${pct(CT.consumerSecret)}&${pct(CT.tokenSecret)}`;
+  const sig        = crypto.createHmac('sha256', signingKey).update(base).digest('base64');
+
+  return [
+    `OAuth realm="${CT.realm}"`,
+    `oauth_consumer_key="${CT.consumerKey}"`,
+    `oauth_token="${CT.tokenId}"`,
+    `oauth_signature_method="HMAC-SHA256"`,
+    `oauth_timestamp="${ts}"`,
+    `oauth_nonce="${nc}"`,
+    `oauth_version="1.0"`,
+    `oauth_signature="${pct(sig)}"`,
+  ].join(', ');
 }
 
-interface SyncStats {
-  created:   number;
-  updated:   number;
-  skipped:   number;
-  errors:    number;
-  errorList: string[];
-  duration:  string;
-  timestamp: string;
+// ─── CT TYPES ────────────────────────────────────────────────────────────────
+
+interface CTInventory { location: string; quantity: number; }
+interface CTTire {
+  partNumber: string; name: string; brand: string; model: string;
+  size: string; performanceCategory: string;
+  isWinter: boolean; isRunFlat: boolean;
+  cost: string; msrp: string;
+  inventory: CTInventory[];
 }
 
-// ─── SHOPIFY REST HELPER ──────────────────────────────────────────────────────
+// ─── FETCH ALL CT TIRES ───────────────────────────────────────────────────────
 
-async function shopifyFetch<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = `${SHOPIFY.baseUrl}${path}`;
-  const res = await fetch(url, {
-    ...options,
+async function fetchAllCTTires(): Promise<CTTire[]> {
+  const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+  const res = await fetch(fullUrl, {
+    method: 'POST',
     headers: {
-      'Content-Type':              'application/json',
-      'X-Shopify-Access-Token':    SHOPIFY.token,
-      ...options.headers,
+      'Authorization': buildAuthHeader(),
+      'Content-Type':  'application/json',
+      'Accept':        'application/json',
     },
+    body: JSON.stringify({
+      customerId:    CT.customerId,
+      customerToken: CT.customerToken,
+      filters: {
+        width:'', rimSize:'', aspectRatio:'', size:'',
+        partNumber:[], brand:'', searchKey:'',
+        isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1,
+      },
+    }),
   });
 
-  if (res.status === 429) {
-    // Rate limited — wait 2 seconds and retry once
-    await delay(2000);
-    return shopifyFetch<T>(path, options);
-  }
+  if (!res.ok) throw new Error(`CT API HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
+  const data: any = await res.json();
+  if (!data.success) throw new Error(`CT API error: ${JSON.stringify(data.error)}`);
+  return data.data as CTTire[];
+}
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Shopify API ${res.status} on ${path}: ${body.slice(0, 200)}`);
-  }
+function getTotalQty(p: CTTire): number {
+  return p.inventory.reduce((s, l) => s + l.quantity, 0);
+}
 
+function getClosestWarehouse(p: CTTire): string {
+  const preferred = ['Sherbrooke', 'Levis', 'Valleyfield'];
+  for (const name of preferred) {
+    if (p.inventory.find(l => l.location === name && l.quantity > 0)) return name;
+  }
+  return p.inventory.find(l => l.quantity > 0)?.location || '';
+}
+
+function parseTireSize(raw: string): string {
+  const [w='',a='',r=''] = raw.toString().replace(/,/g,'/').split('/');
+  return `${w}/${a}R${r}`;
+}
+
+// ─── SHOPIFY HELPERS ──────────────────────────────────────────────────────────
+
+function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${SHOPIFY.baseUrl}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': SHOPIFY.token,
+      ...(options.headers || {}),
+    },
+  });
+  if (res.status === 429) { await delay(2000); return shopifyFetch<T>(path, options); }
+  if (!res.ok) throw new Error(`Shopify ${res.status} on ${path}: ${(await res.text()).slice(0,200)}`);
   return res.json() as Promise<T>;
 }
 
-function delay(ms: number) {
-  return new Promise(r => setTimeout(r, ms));
-}
+interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; }
 
-// ─── FETCH ALL EXISTING CT PRODUCTS FROM SHOPIFY ─────────────────────────────
-// Returns a Map<sku → { productId, variantId, inventoryItemId, price, title }>
-
-async function fetchExistingShopifyProducts(): Promise<Map<string, {
-  productId:       number;
-  variantId:       number;
-  inventoryItemId: number;
-  price:           string;
-  title:           string;
-}>> {
-  const skuMap = new Map<string, {
-    productId: number; variantId: number;
-    inventoryItemId: number; price: string; title: string;
-  }>();
-
-  let url = `/products.json?vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,title,vendor,variants`;
-
-  while (url) {
-    const data: any = await shopifyFetch<any>(url);
-    const products: ShopifyProduct[] = data.products || [];
-
+async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
+  const map = new Map<string,ExistingProduct>();
+  let sinceId = 0;
+  while (true) {
+    const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,variants${sinceId?`&since_id=${sinceId}`:''}`;
+    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+    const products = data.products || [];
     for (const p of products) {
       for (const v of p.variants) {
-        if (v.sku) {
-          skuMap.set(v.sku, {
-            productId:       p.id,
-            variantId:       v.id,
-            inventoryItemId: v.inventory_item_id,
-            price:           v.price,
-            title:           p.title,
-          });
-        }
+        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price });
       }
     }
-
-    // Cursor-based pagination via Link header
-    url = '';  // reset — Shopify returns next page info in response
-    if (products.length === 250 && data.products.length === 250) {
-      // Check if there's a page_info cursor in headers — handled via Link header
-      // For simplicity use offset-based with since_id
-      const lastId = products[products.length - 1]?.id;
-      if (lastId) {
-        url = `/products.json?vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,title,vendor,variants&since_id=${lastId}`;
-      }
-    }
+    if (products.length < 250) break;
+    sinceId = products[products.length-1].id;
   }
-
-  console.log(`📦 Found ${skuMap.size} existing CT products in Shopify`);
-  return skuMap;
+  return map;
 }
 
-// ─── PARSE TIRE SIZE FROM CT FORMAT ──────────────────────────────────────────
-// CT: "235,50,19" or "235/50/19" → "235/50R19"
-
-function parseTireSize(raw: string): { display: string; width: string; aspect: string; rim: string } {
-  const parts = raw.toString().replace(/,/g, '/').split('/');
-  const [width = '', aspect = '', rim = ''] = parts;
-  return {
-    display: `${width}/${aspect}R${rim}`,
-    width,
-    aspect,
-    rim,
-  };
+let _locationId: number | null = null;
+async function getLocationId(): Promise<number> {
+  if (_locationId) return _locationId;
+  const data: any = await shopifyFetch<any>('/locations.json?limit=1');
+  _locationId = data.locations?.[0]?.id;
+  if (!_locationId) throw new Error('No Shopify location found');
+  return _locationId;
 }
 
-// ─── BUILD SHOPIFY PRODUCT PAYLOAD ───────────────────────────────────────────
+async function setInventory(inventoryItemId: number, qty: number): Promise<void> {
+  try {
+    const locationId = await getLocationId();
+    await shopifyFetch('/inventory_levels/set.json', {
+      method: 'POST',
+      body: JSON.stringify({ location_id:locationId, inventory_item_id:inventoryItemId, available:Math.max(0,qty) }),
+    });
+  } catch (e) { console.warn(`⚠️ Inventory update failed for ${inventoryItemId}:`, e); }
+}
 
-function buildShopifyProductPayload(ct: ReturnType<typeof transformToAIMatchProduct>) {
-  const size = parseTireSize(ct.size);
-  const season = ct.isWinter ? 'Winter' : 'All-Season';
-  const productType = 'Tire';
-
-  const tags = [
-    SYNC_TAG,
-    `brand-${ct.brand.toLowerCase().replace(/\s+/g, '-')}`,
-    `size-${size.width}-${size.aspect}-${size.rim}`,
-    `rim-${size.rim}`,
-    `width-${size.width}`,
-    season.toLowerCase(),
-    ct.isRunFlat ? 'run-flat' : null,
-  ].filter(Boolean).join(', ');
-
-  const title = `${ct.brand} ${ct.model} ${size.display}`.trim();
-
-  const body_html = `
-    <p><strong>${ct.brand} ${ct.model}</strong> — ${size.display}</p>
-    <ul>
-      <li>Season: ${season}</li>
-      ${ct.isRunFlat     ? '<li>Run-Flat Technology</li>' : ''}
-      ${ct.isWinter      ? '<li>3PMSF Winter Certified</li>' : ''}
-      ${ct.performanceCategory ? `<li>Performance: ${ct.performanceCategory}</li>` : ''}
-      <li>Part #: ${ct.ctPartNumber}</li>
-    </ul>
-  `.trim();
+function buildPayload(ct: CTTire) {
+  const size    = parseTireSize(ct.size);
+  const season  = ct.isWinter ? 'Winter' : 'All-Season';
+  const qty     = getTotalQty(ct);
+  const closest = getClosestWarehouse(ct);
+  const tags    = [SYNC_TAG, `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`, season.toLowerCase(), ct.isRunFlat?'run-flat':null].filter(Boolean).join(', ');
 
   return {
     product: {
-      title,
-      body_html,
-      vendor:       ct.brand,               // brand as Shopify vendor for filtering
-      product_type: productType,
+      title:        `${ct.brand} ${ct.model} ${size}`.trim(),
+      body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li></ul>`,
+      vendor:       ct.brand,
+      product_type: 'Tire',
       tags,
-      variants: [
-        {
-          sku:                  ct.ctPartNumber,
-          price:                ct.pricePerUnit.toFixed(2),
-          inventory_management: 'shopify',
-          inventory_policy:     'deny',
-          requires_shipping:    true,
-          taxable:              true,
-          weight:               25,          // avg tire weight in lbs
-          weight_unit:          'lb',
-          option1:              size.display,
-        },
-      ],
+      variants: [{
+        sku: ct.partNumber,
+        price: (parseFloat(ct.msrp)||0).toFixed(2),
+        inventory_management: 'shopify',
+        inventory_policy: 'deny',
+        requires_shipping: true, taxable: true,
+        weight: 25, weight_unit: 'lb',
+        option1: size,
+      }],
       options: [{ name: 'Size' }],
-      // Store CT cost as a private metafield
       metafields: [
-        {
-          namespace: 'canada_tire',
-          key:       'cost',
-          value:     ct._cost.toFixed(2),
-          type:      'number_decimal',
-        },
-        {
-          namespace: 'canada_tire',
-          key:       'part_number',
-          value:     ct.ctPartNumber,
-          type:      'single_line_text_field',
-        },
+        { namespace:'canada_tire', key:'cost',        value:(parseFloat(ct.cost)||0).toFixed(2), type:'number_decimal' },
+        { namespace:'canada_tire', key:'part_number', value:ct.partNumber, type:'single_line_text_field' },
       ],
     },
   };
 }
 
-// ─── CREATE A NEW SHOPIFY PRODUCT ─────────────────────────────────────────────
+// ─── BATCH HELPER ─────────────────────────────────────────────────────────────
 
-async function createShopifyProduct(
-  ct: ReturnType<typeof transformToAIMatchProduct>
-): Promise<void> {
-  const payload = buildShopifyProductPayload(ct);
-  const data: any = await shopifyFetch<any>('/products.json', {
-    method: 'POST',
-    body:   JSON.stringify(payload),
+async function processBatches<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    await Promise.all(items.slice(i, i+BATCH_SIZE).map(fn));
+    if (i+BATCH_SIZE < items.length) await delay(BATCH_MS);
+  }
+}
+
+// ─── MAIN SYNC ────────────────────────────────────────────────────────────────
+
+interface SyncStats { created:number; updated:number; skipped:number; errors:number; errorList:string[]; duration:string; timestamp:string; }
+
+async function runSync(mode: 'full'|'daily'): Promise<SyncStats> {
+  const t0 = Date.now();
+  const stats: SyncStats = { created:0, updated:0, skipped:0, errors:0, errorList:[], duration:'', timestamp:new Date().toISOString() };
+
+  console.log(`🚀 ${mode} sync started`);
+  const [ctTires, existingMap] = await Promise.all([fetchAllCTTires(), fetchExistingProducts()]);
+  console.log(`📦 CT:${ctTires.length} Shopify:${existingMap.size}`);
+
+  const toCreate = ctTires.filter(p => !existingMap.has(p.partNumber));
+  const toUpdate = ctTires.filter(p =>  existingMap.has(p.partNumber));
+
+  // Create new products
+  await processBatches(toCreate, async (ct) => {
+    try {
+      const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(buildPayload(ct)) });
+      const invId = data.product?.variants?.[0]?.inventory_item_id;
+      if (invId) await setInventory(invId, getTotalQty(ct));
+      stats.created++;
+    } catch (e: any) { stats.errors++; stats.errorList.push(`CREATE ${ct.partNumber}: ${e.message}`); }
   });
 
-  // Set inventory level after creation
-  const variantId     = data.product?.variants?.[0]?.id;
-  const inventoryItem = data.product?.variants?.[0]?.inventory_item_id;
-  if (inventoryItem && ct.stockQty > 0) {
-    await setInventoryLevel(inventoryItem, ct.stockQty);
-  }
-}
+  // Update existing products
+  await processBatches(toUpdate, async (ct) => {
+    const ex = existingMap.get(ct.partNumber)!;
+    const newPrice = (parseFloat(ct.msrp)||0).toFixed(2);
+    const priceChanged = newPrice !== ex.price;
 
-// ─── UPDATE AN EXISTING SHOPIFY PRODUCT ──────────────────────────────────────
-
-async function updateShopifyProduct(
-  productId:       number,
-  variantId:       number,
-  inventoryItemId: number,
-  ct:              ReturnType<typeof transformToAIMatchProduct>,
-  currentPrice:    string,
-  forceUpdate:     boolean = false
-): Promise<'updated' | 'skipped'> {
-  const newPrice = ct.pricePerUnit.toFixed(2);
-  const priceChanged = newPrice !== currentPrice;
-
-  // Only update if something actually changed (or forced)
-  if (!priceChanged && !forceUpdate) {
-    return 'skipped';
-  }
-
-  if (priceChanged) {
-    await shopifyFetch(`/variants/${variantId}.json`, {
-      method: 'PUT',
-      body:   JSON.stringify({ variant: { id: variantId, price: newPrice } }),
-    });
-  }
-
-  // Always update inventory during daily sync
-  if (ct.stockQty >= 0) {
-    await setInventoryLevel(inventoryItemId, ct.stockQty);
-  }
-
-  return 'updated';
-}
-
-// ─── SET INVENTORY LEVEL ──────────────────────────────────────────────────────
-// Uses Shopify's primary location
-
-let _primaryLocationId: number | null = null;
-
-async function getPrimaryLocationId(): Promise<number> {
-  if (_primaryLocationId) return _primaryLocationId;
-  const data: any = await shopifyFetch<any>('/locations.json?limit=1');
-  _primaryLocationId = data.locations?.[0]?.id;
-  if (!_primaryLocationId) throw new Error('No Shopify location found');
-  return _primaryLocationId;
-}
-
-async function setInventoryLevel(inventoryItemId: number, qty: number): Promise<void> {
-  try {
-    const locationId = await getPrimaryLocationId();
-    await shopifyFetch('/inventory_levels/set.json', {
-      method: 'POST',
-      body:   JSON.stringify({
-        location_id:        locationId,
-        inventory_item_id:  inventoryItemId,
-        available:          Math.max(0, qty),
-      }),
-    });
-  } catch (e) {
-    // Non-fatal — product exists, inventory update failed
-    console.warn(`⚠️ Inventory update failed for item ${inventoryItemId}:`, e);
-  }
-}
-
-// ─── BATCH PROCESSOR ─────────────────────────────────────────────────────────
-// Runs items in batches of BATCH_SIZE with BATCH_DELAY between batches
-
-async function processBatches<T, R>(
-  items:     T[],
-  processor: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    const batch = items.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(processor));
-    results.push(...batchResults);
-    if (i + BATCH_SIZE < items.length) {
-      await delay(BATCH_DELAY);
+    if (!priceChanged && mode === 'daily') {
+      await setInventory(ex.inventoryItemId, getTotalQty(ct));
+      stats.skipped++;
+      return;
     }
-  }
 
-  return results;
-}
-
-// ─── MAIN SYNC ORCHESTRATOR ───────────────────────────────────────────────────
-
-async function runSync(mode: 'full' | 'daily'): Promise<SyncStats> {
-  const startTime = Date.now();
-  const stats: SyncStats = {
-    created: 0, updated: 0, skipped: 0, errors: 0,
-    errorList: [], duration: '', timestamp: new Date().toISOString(),
-  };
-
-  console.log(`🚀 Starting ${mode} sync — ${new Date().toISOString()}`);
-
-  // 1. Fetch all CT products
-  console.log('📥 Fetching Canada Tire products...');
-  const ctRaw = await searchTiresOnly({ page: 1 });
-  const ctProducts = ctRaw.map(transformToAIMatchProduct);
-  console.log(`✅ Got ${ctProducts.length} CT products`);
-
-  // 2. Fetch all existing Shopify products keyed by SKU
-  console.log('📥 Fetching existing Shopify products...');
-  const existingBySku = await fetchExistingShopifyProducts();
-
-  // 3. Separate into creates vs updates
-  const toCreate = ctProducts.filter(p => !existingBySku.has(p.ctPartNumber));
-  const toUpdate = ctProducts.filter(p =>  existingBySku.has(p.ctPartNumber));
-
-  console.log(`📊 To create: ${toCreate.length} | To update: ${toUpdate.length}`);
-
-  // 4. Create new products
-  if (toCreate.length > 0) {
-    console.log(`➕ Creating ${toCreate.length} new products...`);
-    await processBatches(toCreate, async (ct) => {
-      try {
-        await createShopifyProduct(ct);
-        stats.created++;
-        if (stats.created % 50 === 0) console.log(`  ✅ Created ${stats.created}/${toCreate.length}`);
-      } catch (e: any) {
-        stats.errors++;
-        stats.errorList.push(`CREATE ${ct.ctPartNumber}: ${e.message}`);
-        console.error(`  ❌ Create failed for ${ct.ctPartNumber}:`, e.message);
+    try {
+      if (priceChanged) {
+        await shopifyFetch(`/variants/${ex.variantId}.json`, { method:'PUT', body:JSON.stringify({ variant:{ id:ex.variantId, price:newPrice } }) });
       }
-    });
-  }
+      await setInventory(ex.inventoryItemId, getTotalQty(ct));
+      stats.updated++;
+    } catch (e: any) { stats.errors++; stats.errorList.push(`UPDATE ${ct.partNumber}: ${e.message}`); }
+  });
 
-  // 5. Update existing products
-  if (toUpdate.length > 0) {
-    console.log(`🔄 Checking ${toUpdate.length} existing products for changes...`);
-    const forceUpdate = mode === 'full';  // full-import updates all; daily only updates changed
-
-    await processBatches(toUpdate, async (ct) => {
-      const existing = existingBySku.get(ct.ctPartNumber)!;
-      try {
-        const result = await updateShopifyProduct(
-          existing.productId,
-          existing.variantId,
-          existing.inventoryItemId,
-          ct,
-          existing.price,
-          forceUpdate,
-        );
-        if (result === 'updated') stats.updated++;
-        else stats.skipped++;
-      } catch (e: any) {
-        stats.errors++;
-        stats.errorList.push(`UPDATE ${ct.ctPartNumber}: ${e.message}`);
-        console.error(`  ❌ Update failed for ${ct.ctPartNumber}:`, e.message);
-      }
-    });
-  }
-
-  stats.duration = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
-  console.log(`\n✅ Sync complete in ${stats.duration}`);
-  console.log(`   Created: ${stats.created} | Updated: ${stats.updated} | Skipped: ${stats.skipped} | Errors: ${stats.errors}`);
-
+  stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
+  console.log(`✅ Done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} errors:${stats.errors}`);
   return stats;
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // ── Auth check ──────────────────────────────────────────────────────────────
-  const secret    = process.env.CRON_SECRET || '';
-  const authHeader = req.headers.authorization || '';
-  const isCronCall = req.method === 'GET';              // Vercel cron uses GET
-  const isManual   = req.method === 'POST';
+  const isCron   = req.method === 'GET';
+  const isManual = req.method === 'POST';
+  if (!isCron && !isManual) return res.status(405).json({ error: 'Use GET (cron) or POST (manual)' });
 
-  if (!isManual && !isCronCall) {
-    return res.status(405).json({ error: 'Use GET (cron) or POST (manual)' });
-  }
-
-  // Protect manual POST calls with CRON_SECRET
+  const secret = process.env.CRON_SECRET || '';
   if (isManual && secret) {
-    const provided = authHeader.replace('Bearer ', '');
-    if (provided !== secret) {
-      return res.status(401).json({ error: 'Unauthorized — provide CRON_SECRET as Bearer token' });
-    }
+    const provided = (req.headers.authorization || '').replace('Bearer ', '');
+    if (provided !== secret) return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // Verify Shopify config
   if (!SHOPIFY.domain || !SHOPIFY.token) {
     return res.status(500).json({
       error: 'Missing Shopify config',
-      missing: [
-        !SHOPIFY.domain ? 'SHOPIFY_STORE_DOMAIN' : null,
-        !SHOPIFY.token  ? 'SHOPIFY_ADMIN_ACCESS_TOKEN' : null,
-      ].filter(Boolean),
+      missing: [!SHOPIFY.domain?'SHOPIFY_STORE_DOMAIN':null, !SHOPIFY.token?'SHOPIFY_ADMIN_ACCESS_TOKEN':null].filter(Boolean),
     });
   }
 
-  const action = (req.query.action as string) || (isCronCall ? 'daily-sync' : 'status');
+  const action = (req.query.action as string) || (isCron ? 'daily-sync' : 'status');
 
   try {
     switch (action) {
-
-      // ── Status check (no sync) ───────────────────────────────────────────────
       case 'status': {
-        const existing = await fetchExistingShopifyProducts();
-        return res.status(200).json({
-          success:            true,
-          shopifyProductCount: existing.size,
-          domain:             SHOPIFY.domain,
-          nextCronRun:        '3:00 AM ET daily',
-          actions:            ['full-import', 'daily-sync', 'status'],
-        });
+        const existing = await fetchExistingProducts();
+        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily' });
       }
-
-      // ── Full import (create + force-update all products) ────────────────────
       case 'full-import': {
         const stats = await runSync('full');
-        return res.status(200).json({ success: true, mode: 'full-import', ...stats });
+        return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
-
-      // ── Daily sync (create new + update changed only) ────────────────────────
       case 'daily-sync':
       default: {
         const stats = await runSync('daily');
-        return res.status(200).json({ success: true, mode: 'daily-sync', ...stats });
+        return res.status(200).json({ success:true, mode:'daily-sync', ...stats });
       }
     }
   } catch (e: any) {
-    console.error('❌ Sync error:', e);
-    return res.status(500).json({ success: false, error: e.message });
+    console.error('❌ shopifySync error:', e);
+    return res.status(500).json({ success:false, error:e.message });
   }
 }
