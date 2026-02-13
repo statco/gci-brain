@@ -183,24 +183,31 @@ async function attachImage(productId: number, imageUrl: string): Promise<void> {
 }
 
 // ─── PARSE BRAND/MODEL FROM PRODUCT TITLE ────────────────────────────────────
-// Title format: "COOPER PROCONTROL 225/50R17"
-// We need brand=COOPER, model=PROCONTROL
+// CT title format: "COOPER DISCOVERER AT3 4S 2654519/R"
+// Size is always at the end: digits+slash+R (CT format) or standard 265/45R19
+// We need brand=COOPER, model=DISCOVERER AT3 4S → slug=discoverer-at3-4s
 
 function parseBrandModel(title: string): { brand: string; model: string } {
-  const parts = title.split(' ').filter(Boolean);
+  // Strip trailing size — CT format: 7-8 digits + /R, or standard NNN/NNRnn
+  const withoutSize = title
+    .replace(/\s+\d{6,8}\/R.*$/i, '')     // CT format: 2654519/R
+    .replace(/\s+\d{3}\/\d{2}R\d{2}.*$/i, '') // Standard: 265/45R19
+    .trim();
+
+  const parts = withoutSize.split(' ').filter(Boolean);
   if (parts.length < 2) return { brand: parts[0] || '', model: '' };
 
   // Known multi-word brands
   const multiWordBrands = ['BF GOODRICH', 'GT RADIAL'];
   for (const mwb of multiWordBrands) {
-    if (title.toUpperCase().startsWith(mwb)) {
-      const rest   = title.slice(mwb.length).trim().split(' ');
-      return { brand: mwb, model: rest[0] || '' };
+    if (withoutSize.toUpperCase().startsWith(mwb)) {
+      const model = withoutSize.slice(mwb.length).trim();
+      return { brand: mwb, model };
     }
   }
 
-  // First word = brand, second = model (rest is size)
-  return { brand: parts[0], model: parts[1] };
+  // First word = brand, rest = full model name (includes submodel)
+  return { brand: parts[0], model: parts.slice(1).join(' ') };
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
