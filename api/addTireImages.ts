@@ -300,7 +300,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    return res.status(400).json({ error: 'Unknown action', available: ['status', 'add-images'] });
+    // ── List unique brand+model combos ──────────────────────────────────────────
+    if (action === 'list-models') {
+      const models = new Map<string, number>();
+      let cursor = 0;
+      while (true) {
+        const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title${cursor ? `&since_id=${cursor}` : ''}`;
+        const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+        const page: ShopifyProduct[] = data.products || [];
+        for (const p of page) {
+          const { brand, model } = parseBrandModel(p.title);
+          const key = `${brand} ${model}`.trim().toUpperCase();
+          models.set(key, (models.get(key) || 0) + 1);
+        }
+        if (page.length < 250) break;
+        cursor = page[page.length - 1].id;
+      }
+      const sorted = [...models.entries()].sort((a,b) => a[0].localeCompare(b[0]));
+      return res.status(200).json({ total: sorted.length, models: Object.fromEntries(sorted) });
+    }
+
+    // ── Debug single URL ────────────────────────────────────────────────────────
+    if (action === 'debug') {
+      const brand = (req.query.brand as string) || 'cooper';
+      const model = (req.query.model as string) || 'procontrol';
+      const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const url = `https://www.tiresourcecanada.ca/tires/${slug(brand)}/${slug(model)}`;
+      try {
+        const r = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+          signal: AbortSignal.timeout(8000),
+        });
+        const html = await r.text();
+        const imgMatch = html.match(/src="([^"]*\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
+        const ogMatch  = html.match(/content="([^"]*tiresourcecanada[^"]+\.(?:jpg|jpeg|png|webp))"/i);
+        return res.status(200).json({
+          url, status: r.status, htmlLength: html.length,
+          imgMatch: imgMatch?.[1] || null,
+          ogMatch:  ogMatch?.[1]  || null,
+          snippet:  html.slice(0, 500),
+        });
+      } catch(e: any) { return res.status(200).json({ url, error: e.message }); }
+    }
+
+    return res.status(400).json({ error: 'Unknown action', available: ['status', 'add-images', 'debug'] });
 
   } catch (e: any) {
     console.error('❌ addTireImages error:', e);
