@@ -131,11 +131,24 @@ interface ShopifyProduct {
 }
 
 async function getProductsWithoutImages(limit: number, sinceId: number = 0): Promise<ShopifyProduct[]> {
-  // Filter by ct-sync tag since vendor = brand name (COOPER, MICHELIN etc), not "Canada Tire"
-  const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
-  const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-  const all: ShopifyProduct[] = data.products || [];
-  return all.filter(p => p.images.length === 0).slice(0, limit);
+  // Paginate through ALL products using since_id, return only those without images
+  // We may need multiple Shopify pages to fill our limit since many products have images
+  const results: ShopifyProduct[] = [];
+  let cursor = sinceId;
+
+  while (results.length < limit) {
+    const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${cursor ? `&since_id=${cursor}` : ''}`;
+    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+    const page: ShopifyProduct[] = data.products || [];
+    if (page.length === 0) break;
+
+    const withoutImages = page.filter(p => p.images.length === 0);
+    results.push(...withoutImages);
+    cursor = page[page.length - 1].id; // advance cursor regardless of image status
+    if (page.length < 250) break; // last page
+  }
+
+  return results.slice(0, limit);
 }
 
 async function countProductsWithoutImages(): Promise<{ withImages: number; withoutImages: number; total: number }> {
@@ -207,7 +220,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const action  = (req.query.action as string) || 'status';
   const offset  = parseInt((req.query.offset as string) || '0', 10);
-  const chunkSize = 20; // 20 products per call (each needs a TireRack fetch)
 
   try {
     // ── Status ──────────────────────────────────────────────────────────────
@@ -227,11 +239,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const t0 = Date.now();
       const stats = { attached: 0, notFound: 0, errors: 0, errorList: [] as string[], processed: 0 };
 
-      // Fetch products without images (paginated by offset via sinceId approximation)
-      const products = await getProductsWithoutImages(chunkSize, offset);
-      stats.processed = products.length;
+      // Fetch one Shopify page (250 products) starting after since_id=offset
+      // offset must be a real Shopify product ID (returned as nextOffset from previous call)
+      const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${offset ? `&since_id=${offset}` : ''}`;
+      const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+      const page: ShopifyProduct[] = data.products || [];
+      const toProcess = page.filter(p => p.images.length === 0);
+      stats.processed = toProcess.length;
 
-      for (const product of products) {
+      for (const product of toProcess) {
         try {
           const { brand, model } = parseBrandModel(product.title);
           if (!brand || !model) { stats.notFound++; continue; }
@@ -241,13 +257,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (imageUrl) {
             await attachImage(product.id, imageUrl);
             stats.attached++;
-            console.log(`✅ Image attached: ${product.title} → ${imageUrl.slice(0, 60)}...`);
+            console.log(`✅ ${product.title} → ${imageUrl.slice(0, 60)}...`);
           } else {
             stats.notFound++;
-            console.log(`⚠️ No image found: ${brand} ${model}`);
+            console.log(`⚠️ No image: ${brand} ${model}`);
           }
 
-          await delay(200); // gentle rate limit
+          await delay(200);
         } catch (e: any) {
           stats.errors++;
           stats.errorList.push(`${product.title}: ${e.message}`);
@@ -255,17 +271,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const duration = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
-      const done     = products.length < chunkSize;
+      const lastId   = page.length > 0 ? page[page.length - 1].id : null;
+      const done     = page.length < 250;
 
       return res.status(200).json({
         success: true,
         ...stats,
         duration,
         done,
-        nextOffset: done ? null : offset + chunkSize,
-        message: done
-          ? '🎉 All products processed!'
-          : `Run again with offset=${offset + chunkSize} to continue`,
+        nextOffset: done ? null : lastId,
+        message: done ? '🎉 All products processed!' : `Run again with offset=${lastId}`,
       });
     }
 
