@@ -151,7 +151,8 @@ interface ShopifyProduct {
 }
 
 async function getProductsWithoutImages(limit: number, sinceId: number = 0): Promise<ShopifyProduct[]> {
-  const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,title,vendor,images,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+  // Filter by ct-sync tag since vendor = brand name (COOPER, MICHELIN etc), not "Canada Tire"
+  const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
   const data: any = await shopifyFetch<any>(`/products.json?${q}`);
   const all: ShopifyProduct[] = data.products || [];
   return all.filter(p => p.images.length === 0).slice(0, limit);
@@ -163,7 +164,7 @@ async function countProductsWithoutImages(): Promise<{ withImages: number; witho
   let withoutImages = 0;
 
   while (true) {
-    const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,images${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products: ShopifyProduct[] = data.products || [];
 
