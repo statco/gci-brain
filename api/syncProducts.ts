@@ -96,84 +96,61 @@ interface ShopifyProductPayload {
     vendor: string;
     product_type: string;
     tags: string;
+    status?: string;
     variants: {
       price: string;
       sku: string;
       inventory_management: string | null;
-      inventory_policy: string;
-      option1: string;
-      barcode: string;
-    }[];
-    options: { name: string; values: string[] }[];
-    metafields: {
-      namespace: string;
-      key: string;
-      value: string;
-      type: string;
+      requires_shipping?: boolean;
+      weight?: number;
+      weight_unit?: string;
     }[];
   };
 }
 
 function buildShopifyProduct(ct: CTTireProduct): ShopifyProductPayload {
   const size = parseCTSize(ct.size);
-  const season = ct.isWinter ? 'Winter Tire' : 'All-Season Tire';
-  const totalQty = getTotalInventory(ct);
+  const season = ct.isWinter ? 'Winter' : 'All-Season';
+  const title = `${ct.brand} ${ct.model || ct.name || ''} ${size} ${season}`.replace(/\s+/g, ' ').trim();
+
+  // Handle price strings that may include $ or commas
+  const rawPrice = typeof ct.msrp === 'string'
+    ? parseFloat(ct.msrp.replace(/[^0-9.]/g, ''))
+    : (parseFloat(ct.msrp) || 0);
+  const price = (isNaN(rawPrice) ? 0 : rawPrice).toFixed(2);
 
   const features: string[] = [];
   if (ct.isWinter) features.push('Winter certified (3PMSF)');
   if (ct.isRunFlat) features.push('Run-flat technology');
   if (ct.performanceCategory) features.push(`${ct.performanceCategory} performance`);
 
-  const bodyHtml = `
-    <p>${ct.brand} ${ct.model} - ${size}</p>
-    <ul>
-      ${features.map(f => `<li>${f}</li>`).join('\n      ')}
-      <li>Season: ${season}</li>
-      <li>In stock: ${totalQty} units</li>
-    </ul>
-  `.trim();
+  const bodyHtml = `<p>${title}</p><ul><li>Part: ${ct.partNumber}</li><li>Size: ${size}</li><li>Season: ${season}</li>${features.map(f => `<li>${f}</li>`).join('')}</ul>`;
 
   const tags = [
-    'ai-match',
-    'canada-tire',
-    `ct-${ct.partNumber}`,
-    ct.brand,
-    ct.model,
-    season.toLowerCase().replace(/\s+/g, '-'),
+    'ai-match', 'canada-tire', 'ct-sync',
+    `ct-${ct.partNumber}`, ct.brand, ct.model || '',
+    season, size,
     ct.performanceCategory || '',
     ct.isRunFlat ? 'run-flat' : '',
-    ct.isWinter ? 'winter' : 'all-season',
-    size,
   ].filter(Boolean).join(', ');
 
   return {
     product: {
-      title: `${ct.brand} ${ct.model} ${size}`,
+      title,
       body_html: bodyHtml,
       vendor: ct.brand,
-      product_type: season,
+      product_type: 'Tires',
       tags,
+      status: 'active',
       variants: [
         {
-          price: (parseFloat(ct.msrp) || 0).toFixed(2),
+          price,
           sku: ct.partNumber,
-          inventory_management: null, // Don't track through Shopify inventory system
-          inventory_policy: totalQty > 0 ? 'deny' : 'deny',
-          option1: size,
-          barcode: ct.partNumber,
+          inventory_management: null,
+          requires_shipping: true,
+          weight: 10,
+          weight_unit: 'kg',
         },
-      ],
-      options: [{ name: 'Size', values: [size] }],
-      metafields: [
-        { namespace: 'canada_tire', key: 'part_number', value: ct.partNumber, type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'brand', value: ct.brand, type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'model', value: ct.model, type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'season', value: ct.isWinter ? 'winter' : 'all-season', type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'is_run_flat', value: ct.isRunFlat ? 'true' : 'false', type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'performance_category', value: ct.performanceCategory || '', type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'total_inventory', value: totalQty.toString(), type: 'number_integer' },
-        { namespace: 'canada_tire', key: 'raw_size', value: ct.size, type: 'single_line_text_field' },
-        { namespace: 'canada_tire', key: 'source', value: 'canada_tire', type: 'single_line_text_field' },
       ],
     },
   };
@@ -208,8 +185,9 @@ async function getExistingProductsBySku(): Promise<Map<string, ShopifyProduct>> 
     const data = await shopifyAdmin<{ products: ShopifyProduct[] }>(url);
 
     for (const product of data.products) {
-      // Only index products that came from Canada Tire
-      if (product.tags && product.tags.includes('canada-tire')) {
+      // Only index products that came from Canada Tire (match all known tag patterns)
+      const tags = product.tags || '';
+      if (tags.includes('canada-tire') || tags.includes('ct-sync') || tags.includes('ct-')) {
         for (const variant of product.variants) {
           if (variant.sku) {
             map.set(variant.sku, product);
@@ -369,16 +347,11 @@ async function fullSync(brand?: string) {
       const totalQty = getTotalInventory(ct);
 
       const tags = [
-        'ai-match',
-        'canada-tire',
-        `ct-${ct.partNumber}`,
-        ct.brand,
-        ct.model,
-        season.toLowerCase().replace(/\s+/g, '-'),
+        'ai-match', 'canada-tire', 'ct-sync',
+        `ct-${ct.partNumber}`, ct.brand, ct.model || '',
+        season, size,
         ct.performanceCategory || '',
         ct.isRunFlat ? 'run-flat' : '',
-        ct.isWinter ? 'winter' : 'all-season',
-        size,
       ].filter(Boolean).join(', ');
 
       // Update product tags + type
@@ -545,20 +518,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Auth: Vercel cron jobs send CRON_SECRET, manual calls need a header
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = req.headers.authorization;
-  const isCron = cronSecret && authHeader === `Bearer ${cronSecret}`;
   const action = (req.query.action as string) || '';
-
-  // For cron-triggered actions, verify the secret
-  if (action === 'price-sync' && cronSecret && !isCron) {
-    // Allow manual calls without CRON_SECRET if env var not set (dev mode)
-    // But if CRON_SECRET exists, require it
-    if (!authHeader) {
-      return res.status(401).json({ error: 'Authorization required for price-sync' });
-    }
-  }
 
   // Validate Shopify config
   if (!SHOPIFY_DOMAIN || !SHOPIFY_ADMIN_TOKEN) {
