@@ -55,15 +55,17 @@ async function shopifyAdmin(endpoint, method = 'GET', body = null) {
 
 function buildShopifyProduct(ct) {
   const size = parseCTSize(ct.size);
-  const season = ct.isWinter ? 'Winter' : 'All-Season';
-  const title = `${ct.brand} ${ct.model || ct.name || ''} ${size} ${season}`.replace(/\s+/g, ' ').trim();
+  const totalInv = (ct.inventory || []).reduce((sum, loc) => sum + (loc.quantity || 0), 0);
+  const season = ct.isWinter ? 'Winter / All-Weather' : 'All-Season';
+  const title = `${ct.brand} ${ct.model || ''} ${size}`.replace(/\s+/g, ' ').trim();
   const rawPrice = typeof ct.msrp === 'string' ? parseFloat(ct.msrp.replace(/[^0-9.]/g, '')) : (ct.msrp || 0);
   const price = (isNaN(rawPrice) ? 0 : rawPrice).toFixed(2);
 
   const tags = [
     'ai-match', 'canada-tire', 'ct-sync',
     `ct-${ct.partNumber}`, ct.brand, ct.model || '',
-    season, size,
+    ct.isWinter ? 'winter' : 'all-season',
+    size,
   ].filter(Boolean).join(', ');
 
   return {
@@ -73,15 +75,23 @@ function buildShopifyProduct(ct) {
       product_type: 'Tires',
       tags,
       status: 'active',
-      body_html: `<p>${title}</p><ul><li>Part: ${ct.partNumber}</li><li>Size: ${size}</li><li>Season: ${season}</li><li>Performance: ${ct.performanceCategory || 'N/A'}</li></ul>`,
+      body_html: `<p>${title} - ${season} tire. ${ct.performanceCategory || ''}</p>`,
       variants: [{
         sku: ct.partNumber,
         price,
-        inventory_management: null,
+        inventory_management: 'shopify',
+        inventory_quantity: totalInv,
         requires_shipping: true,
         weight: 10,
         weight_unit: 'kg',
       }],
+      metafields: [
+        { namespace: 'ct', key: 'part_number', value: ct.partNumber || '', type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'size_raw', value: String(ct.size || ''), type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'season', value: season, type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'performance', value: ct.performanceCategory || '', type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'run_flat', value: String(ct.isRunFlat || false), type: 'single_line_text_field' },
+      ],
     },
   };
 }

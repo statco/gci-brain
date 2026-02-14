@@ -100,18 +100,26 @@ interface ShopifyProductPayload {
     variants: {
       price: string;
       sku: string;
-      inventory_management: string | null;
+      inventory_management: string;
+      inventory_quantity: number;
       requires_shipping?: boolean;
       weight?: number;
       weight_unit?: string;
+    }[];
+    metafields?: {
+      namespace: string;
+      key: string;
+      value: string;
+      type: string;
     }[];
   };
 }
 
 function buildShopifyProduct(ct: CTTireProduct): ShopifyProductPayload {
   const size = parseCTSize(ct.size);
-  const season = ct.isWinter ? 'Winter' : 'All-Season';
-  const title = `${ct.brand} ${ct.model || ct.name || ''} ${size} ${season}`.replace(/\s+/g, ' ').trim();
+  const totalInv = (ct.inventory || []).reduce((sum: number, loc: { quantity?: number }) => sum + (loc.quantity || 0), 0);
+  const season = ct.isWinter ? 'Winter / All-Weather' : 'All-Season';
+  const title = `${ct.brand} ${ct.model || ''} ${size}`.replace(/\s+/g, ' ').trim();
 
   // Handle price strings that may include $ or commas
   const rawPrice = typeof ct.msrp === 'string'
@@ -119,19 +127,13 @@ function buildShopifyProduct(ct: CTTireProduct): ShopifyProductPayload {
     : (parseFloat(ct.msrp) || 0);
   const price = (isNaN(rawPrice) ? 0 : rawPrice).toFixed(2);
 
-  const features: string[] = [];
-  if (ct.isWinter) features.push('Winter certified (3PMSF)');
-  if (ct.isRunFlat) features.push('Run-flat technology');
-  if (ct.performanceCategory) features.push(`${ct.performanceCategory} performance`);
-
-  const bodyHtml = `<p>${title}</p><ul><li>Part: ${ct.partNumber}</li><li>Size: ${size}</li><li>Season: ${season}</li>${features.map(f => `<li>${f}</li>`).join('')}</ul>`;
+  const bodyHtml = `<p>${title} - ${season} tire. ${ct.performanceCategory || ''}</p>`;
 
   const tags = [
     'ai-match', 'canada-tire', 'ct-sync',
     `ct-${ct.partNumber}`, ct.brand, ct.model || '',
-    season, size,
-    ct.performanceCategory || '',
-    ct.isRunFlat ? 'run-flat' : '',
+    ct.isWinter ? 'winter' : 'all-season',
+    size,
   ].filter(Boolean).join(', ');
 
   return {
@@ -146,11 +148,19 @@ function buildShopifyProduct(ct: CTTireProduct): ShopifyProductPayload {
         {
           price,
           sku: ct.partNumber,
-          inventory_management: null,
+          inventory_management: 'shopify',
+          inventory_quantity: totalInv,
           requires_shipping: true,
           weight: 10,
           weight_unit: 'kg',
         },
+      ],
+      metafields: [
+        { namespace: 'ct', key: 'part_number', value: ct.partNumber || '', type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'size_raw', value: String(ct.size || ''), type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'season', value: season, type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'performance', value: ct.performanceCategory || '', type: 'single_line_text_field' },
+        { namespace: 'ct', key: 'run_flat', value: String(ct.isRunFlat || false), type: 'single_line_text_field' },
       ],
     },
   };
@@ -369,7 +379,8 @@ async function fullSync(brand?: string) {
 
       // Update variant price
       if (shopifyProduct.variants[0]) {
-        const newPrice = (parseFloat(ct.msrp) || 0).toFixed(2);
+        const rawP2 = typeof ct.msrp === 'string' ? parseFloat(ct.msrp.replace(/[^0-9.]/g, '')) : (parseFloat(ct.msrp) || 0);
+        const newPrice = (isNaN(rawP2) ? 0 : rawP2).toFixed(2);
         if (shopifyProduct.variants[0].price !== newPrice) {
           await shopifyAdmin(
             `/variants/${shopifyProduct.variants[0].id}.json`,
@@ -438,7 +449,8 @@ async function priceSync() {
   const result = await processBatch(
     toSync,
     async ({ ct, shopifyProduct }) => {
-      const newPrice = (parseFloat(ct.msrp) || 0).toFixed(2);
+      const rawP = typeof ct.msrp === 'string' ? parseFloat(ct.msrp.replace(/[^0-9.]/g, '')) : (parseFloat(ct.msrp) || 0);
+      const newPrice = (isNaN(rawP) ? 0 : rawP).toFixed(2);
       const currentPrice = shopifyProduct.variants[0]?.price;
 
       if (currentPrice === newPrice) {
