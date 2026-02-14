@@ -61,8 +61,8 @@ function sleep(ms: number): Promise<void> {
 // CT size is numeric like "2355518" meaning 235/55R18
 // We parse it into human-readable format
 
-function parseCTSize(rawSize: string): string {
-  const s = rawSize.replace(/,/g, '').trim();
+function parseCTSize(rawSize: string | number): string {
+  const s = String(rawSize || '').replace(/,/g, '').trim();
   // Common tire size: 7 digits like 2355518 -> 235/55R18
   if (/^\d{7}$/.test(s)) {
     const width = s.slice(0, 3);

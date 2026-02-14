@@ -51,7 +51,7 @@ function percentEncode(str) {
 }
 
 function parseCTSize(rawSize) {
-  const s = rawSize.replace(/,/g, '').trim();
+  const s = String(rawSize || '').replace(/,/g, '').trim();
   if (/^\d{7}$/.test(s)) return `${s.slice(0,3)}/${s.slice(3,5)}R${s.slice(5,7)}`;
   if (/^\d{8}$/.test(s)) return `${s.slice(0,3)}/${s.slice(3,5)}R${s.slice(5,8)}`;
   if (/^\d{6}$/.test(s)) return `${s.slice(0,3)}/R${s.slice(4,6)}`;
