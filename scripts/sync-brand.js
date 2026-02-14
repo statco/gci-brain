@@ -16,7 +16,7 @@ const crypto = require('crypto');
 // --- EDIT THESE FOR EACH RUN ---
 const BRAND  = 'VREDESTEIN';
 const OFFSET = 0;
-const LIMIT  = 80;
+const LIMIT  = 30;
 // --------------------------------
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
@@ -108,23 +108,27 @@ function buildOAuthHeader(baseUrl, script, deploy) {
 async function fetchCTTires(brand) {
   const all = [];
   let page = 1;
+  const MAX_PAGES = 2; // Limit pages to fit within sandbox timeout
 
-  while (true) {
+  while (page <= MAX_PAGES) {
+    console.log(`  Fetching page ${page} of max ${MAX_PAGES}...`);
     const { script, deploy } = SCRIPTS.tireSearch;
     const fullUrl = `${CT.baseUrl}?script=${script}&deploy=${deploy}`;
     const auth = buildOAuthHeader(CT.baseUrl, script, deploy);
 
     const body = {
-      custId: CT.customerId,
-      custApiToken: CT.customerToken,
-      brand: brand,
-      isTire: true,
-      isWheel: false,
-      isWinter: '',
-      width: '', aspectRatio: '', rimSize: '',
-      loadIndex: '', speedRating: '', plyRating: '',
-      partNumber: '', boltPattern: '', offset: '', centreBore: '',
-      page: page,
+      customerId: CT.customerId,
+      customerToken: CT.customerToken,
+      filters: {
+        brand: brand,
+        isTire: true,
+        isWheel: false,
+        isWinter: '',
+        width: '', aspectRatio: '', rimSize: '',
+        size: '', partNumber: [], searchKey: '',
+        isRunFlat: '',
+        page: page,
+      },
     };
 
     const res = await fetch(fullUrl, {
@@ -136,13 +140,14 @@ async function fetchCTTires(brand) {
     if (!res.ok) throw new Error(`CT API HTTP ${res.status}`);
     const data = await res.json();
 
-    if (!data.success) throw new Error(data.error?.errorMsg || 'CT error');
+    if (data.success === false) throw new Error(data.error?.errorMsg || 'CT error');
 
-    const items = data.data || [];
+    const items = Array.isArray(data) ? data : (data.data || []);
     all.push(...items);
-    console.log(`  Page ${page}: ${items.length} tires`);
+    console.log(`  Page ${page}: ${items.length} tires (total so far: ${all.length})`);
 
     if (items.length === 0) break;
+    if (all.length >= OFFSET + LIMIT) break; // Have enough
     page++;
     await sleep(300);
   }
