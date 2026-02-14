@@ -3,7 +3,7 @@
  * Uses the same OAuth 1.0 HMAC-SHA256 signing as api/canadaTire.ts.
  */
 
-import crypto from 'crypto';
+const crypto = require('crypto');
 
 // ── Config from environment ──────────────────────────────────────────────────
 const CONFIG = {
