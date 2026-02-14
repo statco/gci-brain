@@ -16,7 +16,7 @@ const SHOPIFY = {
 
 // --- EDIT FOR EACH RUN ---
 const OFFSET = 5;  // Skip first N (already synced from test-5)
-const LIMIT  = 20; // How many to create this run
+const LIMIT  = 10; // How many to create this run
 // -------------------------
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -57,7 +57,8 @@ function buildShopifyProduct(ct) {
   const size = parseCTSize(ct.size);
   const season = ct.isWinter ? 'Winter' : 'All-Season';
   const title = `${ct.brand} ${ct.model || ct.name || ''} ${size} ${season}`.replace(/\s+/g, ' ').trim();
-  const price = (ct.msrp || 0).toFixed(2);
+  const rawPrice = typeof ct.msrp === 'string' ? parseFloat(ct.msrp.replace(/[^0-9.]/g, '')) : (ct.msrp || 0);
+  const price = (isNaN(rawPrice) ? 0 : rawPrice).toFixed(2);
 
   const tags = [
     'ai-match', 'canada-tire', 'ct-sync',
@@ -182,16 +183,11 @@ async function main() {
   let page = 1;
   const neededTotal = OFFSET + LIMIT;
 
-  while (allTires.length < neededTotal) {
-    console.log(`  Page ${page}...`);
-    const items = await fetchCTPage('VREDESTEIN', page);
-    if (items.length === 0) break;
-    allTires = allTires.concat(items);
-    console.log(`  Got ${items.length} items (total: ${allTires.length})`);
-    page++;
-    if (page > 20) break;
-    await sleep(300);
-  }
+  // CT returns all results in a single page, so just fetch once
+  console.log('  Page 1...');
+  const items = await fetchCTPage('VREDESTEIN', 1);
+  allTires = items;
+  console.log(`  Got ${allTires.length} items`);
 
   // Slice the chunk we need
   const chunk = allTires.slice(OFFSET, OFFSET + LIMIT);
