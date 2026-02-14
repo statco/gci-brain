@@ -30,12 +30,28 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
     email: '',
     phone: '',
   });
+  const [shippingAddress, setShippingAddress] = useState({
+    addr1: '',
+    city: '',
+    province: 'QC',
+    postalCode: '',
+    country: 'CA',
+  });
   const t = translations[lang];
+
+  // Detect if this is a Canada Tire product (no Shopify variant ID)
+  const isCTProduct = !tire.shopifyVariantId;
 
   const handleCheckout = async () => {
     // Validate customer info
     if (!customerInfo.name || !customerInfo.email || !customerInfo.phone) {
       alert(t.pleaseFillAllFields || 'Please fill in all fields');
+      return;
+    }
+
+    // Validate shipping address for CT products
+    if (isCTProduct && (!shippingAddress.addr1 || !shippingAddress.city || !shippingAddress.postalCode)) {
+      alert(lang === 'fr' ? 'Veuillez remplir l\'adresse de livraison' : 'Please fill in the shipping address');
       return;
     }
 
@@ -64,8 +80,52 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         console.log('✅ Installation job created successfully');
       }
 
+      // Submit order to Canada Tire if this is a CT product
+      if (isCTProduct) {
+        console.log('Submitting order to Canada Tire...');
+        try {
+          const ctOrderRes = await fetch('/api/canadaTire?action=submit-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderDetails: {
+                poNumber: orderNumber,
+                location: 'Sherbrooke',
+                email: customerInfo.email,
+                phone: customerInfo.phone,
+                shipping: {
+                  attention: customerInfo.name,
+                  addressee: customerInfo.name,
+                  addr1: shippingAddress.addr1,
+                  city: shippingAddress.city,
+                  province: shippingAddress.province,
+                  postalCode: shippingAddress.postalCode,
+                  country: shippingAddress.country,
+                },
+                items: [
+                  {
+                    partNumber: tire.ctPartNumber || tire.id,
+                    quantity: quantity,
+                  },
+                ],
+              },
+            }),
+          });
+
+          if (ctOrderRes.ok) {
+            const ctResult = await ctOrderRes.json();
+            console.log('Canada Tire order submitted:', ctResult);
+          } else {
+            console.error('Canada Tire order submission failed:', await ctOrderRes.text());
+            // Don't block checkout -- CT order failure is logged but non-blocking
+          }
+        } catch (ctErr) {
+          console.error('Canada Tire order error:', ctErr);
+        }
+      }
+
       // Send confirmation email
-      console.log('📧 Sending confirmation email...');
+      console.log('Sending confirmation email...');
       
       await sendConfirmationEmail({
         to: customerInfo.email,
@@ -150,6 +210,72 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
               />
             </div>
           </div>
+
+          {/* Shipping Address -- shown for Canada Tire products */}
+          {isCTProduct && (
+            <div>
+              <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
+                {lang === 'fr' ? 'Adresse de livraison' : 'Shipping Address'}
+              </h3>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder={lang === 'fr' ? 'Adresse' : 'Street Address'}
+                  value={shippingAddress.addr1}
+                  onChange={(e) => setShippingAddress({ ...shippingAddress, addr1: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                  required
+                />
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder={lang === 'fr' ? 'Ville' : 'City'}
+                    value={shippingAddress.city}
+                    onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
+                    className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                    required
+                  />
+                  <select
+                    value={shippingAddress.province}
+                    onChange={(e) => setShippingAddress({ ...shippingAddress, province: e.target.value })}
+                    className="w-24 px-3 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors bg-white"
+                  >
+                    <option value="QC">QC</option>
+                    <option value="ON">ON</option>
+                    <option value="AB">AB</option>
+                    <option value="BC">BC</option>
+                    <option value="MB">MB</option>
+                    <option value="NB">NB</option>
+                    <option value="NL">NL</option>
+                    <option value="NS">NS</option>
+                    <option value="NT">NT</option>
+                    <option value="NU">NU</option>
+                    <option value="PE">PE</option>
+                    <option value="SK">SK</option>
+                    <option value="YT">YT</option>
+                  </select>
+                </div>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder={lang === 'fr' ? 'Code postal' : 'Postal Code'}
+                    value={shippingAddress.postalCode}
+                    onChange={(e) => setShippingAddress({ ...shippingAddress, postalCode: e.target.value.toUpperCase() })}
+                    className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
+                    required
+                  />
+                  <select
+                    value={shippingAddress.country}
+                    onChange={(e) => setShippingAddress({ ...shippingAddress, country: e.target.value })}
+                    className="w-24 px-3 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors bg-white"
+                  >
+                    <option value="CA">CA</option>
+                    <option value="US">US</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Order Summary */}
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">

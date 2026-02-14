@@ -1,34 +1,137 @@
 // src/services/geminiService.ts
-// ✅ FULLY DYNAMIC VERSION - Fetches products from Shopify automatically
+// FULLY DYNAMIC VERSION - Fetches products from Canada Tire API with Shopify fallback
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { TireProduct, Language } from '../types';
-import { fetchProductsByCollection, fetchProductsByTag, fetchProductsByType } from './shopifyProductService';
+import { fetchProductsByTag } from './shopifyProductService';
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 
 if (!API_KEY) {
-  console.warn('⚠️ VITE_GEMINI_API_KEY not set. Using fallback recommendations.');
+  console.warn('VITE_GEMINI_API_KEY not set. Using fallback recommendations.');
 }
 
 const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
 
-// ✅ NO MORE MOCK_PRODUCTS!
-// Products are now fetched from Shopify dynamically
+// ─── EXTRACT SEARCH HINTS FROM USER REQUEST ──────────────────────────────────
 
-/**
- * ✅ Fetch available tire products from Shopify
- * Choose ONE of these methods:
- */
-async function getAvailableProducts(): Promise<TireProduct[]> {
-  // OPTION 1: By Collection (RECOMMENDED)
-  // return await fetchProducts('ai-match');
-  
-  // OPTION 2: By Tag
+interface SearchHints {
+  brand?: string;
+  isWinter?: boolean;
+  width?: number;
+  aspectRatio?: number;
+  rimSize?: number;
+}
+
+function extractSearchHints(request: string): SearchHints {
+  const lower = request.toLowerCase();
+  const hints: SearchHints = {};
+
+  // Brand detection
+  const brandMap: Record<string, string> = {
+    'michelin': 'MICHELIN', 'bridgestone': 'BRIDGESTONE', 'goodyear': 'GOODYEAR',
+    'continental': 'CONTINENTAL', 'pirelli': 'PIRELLI', 'yokohama': 'YOKOHAMA',
+    'hankook': 'HANKOOK', 'dunlop': 'DUNLOP', 'vredestein': 'VREDESTEIN',
+    'nokian': 'NOKIAN', 'toyo': 'TOYO', 'firestone': 'FIRESTONE',
+    'bfgoodrich': 'BFGOODRICH', 'cooper': 'COOPER', 'kumho': 'KUMHO',
+    'nexen': 'NEXEN', 'general': 'GENERAL', 'falken': 'FALKEN',
+    'nitto': 'NITTO', 'maxxis': 'MAXXIS', 'gislaved': 'GISLAVED',
+    'uniroyal': 'UNIROYAL', 'gt radial': 'GT RADIAL', 'sailun': 'SAILUN',
+    'hercules': 'HERCULES', 'motomaster': 'MOTOMASTER', 'nordic': 'NORDIC',
+    'zeetex': 'ZEETEX', 'ironman': 'IRONMAN', 'starfire': 'STARFIRE',
+  };
+  for (const [key, value] of Object.entries(brandMap)) {
+    if (lower.includes(key)) {
+      hints.brand = value;
+      break;
+    }
+  }
+
+  // Season detection
+  if (lower.includes('winter') || lower.includes('snow') || lower.includes('ice') || lower.includes('hiver') || lower.includes('neige')) {
+    hints.isWinter = true;
+  } else if (lower.includes('all-season') || lower.includes('all season') || lower.includes('toutes saisons') || lower.includes('summer') || lower.includes('ete')) {
+    hints.isWinter = false;
+  }
+
+  // Size detection: patterns like 265/60R18, 265/60/18, 265 60 18
+  const sizeMatch = lower.match(/(\d{3})\s*[\/\\]\s*(\d{2})\s*[rR\/\\]?\s*(\d{2})/);
+  if (sizeMatch) {
+    hints.width = parseInt(sizeMatch[1]);
+    hints.aspectRatio = parseInt(sizeMatch[2]);
+    hints.rimSize = parseInt(sizeMatch[3]);
+  }
+
+  return hints;
+}
+
+// ─── FETCH PRODUCTS FROM CANADA TIRE API ──────────────────────────────────────
+
+async function fetchFromCanadaTireAPI(hints: SearchHints): Promise<TireProduct[]> {
+  const body: Record<string, unknown> = {
+    filters: {
+      brand: hints.brand || '',
+      isWinter: hints.isWinter !== undefined ? hints.isWinter : '',
+      width: hints.width || '',
+      aspectRatio: hints.aspectRatio || '',
+      rimSize: hints.rimSize || '',
+      isTire: true,
+      isWheel: false,
+      page: 1,
+    },
+  };
+
+  const res = await fetch('/api/canadaTire?action=ai-match-products', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`CT API returned HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (!data.success) {
+    throw new Error(data.error?.errorMsg || 'CT API error');
+  }
+
+  return (data.data || []) as TireProduct[];
+}
+
+// ─── GET AVAILABLE PRODUCTS (CT primary, Shopify fallback) ────────────────────
+
+async function getAvailableProducts(userRequest?: string): Promise<TireProduct[]> {
+  const hints = userRequest ? extractSearchHints(userRequest) : {};
+
+  try {
+    console.log('Fetching products from Canada Tire API...', hints);
+    const ctProducts = await fetchFromCanadaTireAPI(hints);
+
+    if (ctProducts.length > 0) {
+      console.log(`Got ${ctProducts.length} products from Canada Tire API`);
+      // Prioritize: in-stock first, brand match first, limit to 50 for Gemini token budget
+      const sorted = ctProducts.sort((a, b) => {
+        const aInStock = a.inStock ? 1 : 0;
+        const bInStock = b.inStock ? 1 : 0;
+        if (aInStock !== bInStock) return bInStock - aInStock;
+        // Brand match gets priority
+        if (hints.brand) {
+          const aMatch = a.brand?.toUpperCase() === hints.brand ? 1 : 0;
+          const bMatch = b.brand?.toUpperCase() === hints.brand ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+        }
+        return 0;
+      });
+      return sorted.slice(0, 50);
+    }
+  } catch (err) {
+    console.warn('Canada Tire API fetch failed, falling back to Shopify:', err);
+  }
+
+  // Fallback to Shopify (which now has synced CT products)
+  console.log('Falling back to Shopify product fetch...');
   return await fetchProductsByTag('ai-match');
-  
-  // OPTION 3: By Product Type
-  // return await fetchProductsByType('Tires');
 }
 
 /**
@@ -39,11 +142,11 @@ export async function getTireRecommendations(
   userRequest: string,
   language: Language = 'en'
 ): Promise<TireProduct[]> {
-  console.log('🤖 Requesting Gemini AI recommendations...');
+  console.log('Requesting Gemini AI recommendations...');
   console.log('   User request:', userRequest);
 
-  // ✅ Fetch products from Shopify
-  const availableProducts = await getAvailableProducts();
+  // Fetch products from Canada Tire API (with Shopify fallback)
+  const availableProducts = await getAvailableProducts(userRequest);
   console.log('   Available products:', availableProducts.length);
 
   if (availableProducts.length === 0) {
@@ -165,7 +268,7 @@ function getFallbackRecommendations(userRequest: string, products: TireProduct[]
 }
 
 /**
- * Get available tire sizes from Shopify inventory
+ * Get available tire sizes from inventory
  */
 export async function getAvailableSizes(): Promise<string[]> {
   const products = await getAvailableProducts();
@@ -173,7 +276,7 @@ export async function getAvailableSizes(): Promise<string[]> {
 }
 
 /**
- * Get available brands from Shopify inventory
+ * Get available brands from inventory
  */
 export async function getAvailableBrands(): Promise<string[]> {
   const products = await getAvailableProducts();
@@ -182,7 +285,7 @@ export async function getAvailableBrands(): Promise<string[]> {
 
 /**
  * Search tires by specific criteria
- * ✅ Now searches Shopify products dynamically
+ * Searches Canada Tire API with Shopify fallback
  */
 export async function searchTires(criteria: {
   size?: string;

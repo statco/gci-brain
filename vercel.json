@@ -23,5 +23,11 @@
   ],
   "env": {
     "NODE_VERSION": "18"
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/syncProducts?action=price-sync",
+      "schedule": "0 9 * * *"
+    }
+  ]
 }
