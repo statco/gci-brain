@@ -313,7 +313,14 @@ function transformShopifyProducts(edges: any[]) {
  * Helper: Extract brand from title
  */
 function extractBrandFromTitle(title: string): string {
-  const brands = ['Michelin', 'Goodyear', 'Bridgestone', 'Continental', 'Pirelli', 'Yokohama', 'Hankook', 'Dunlop'];
+  const brands = [
+    'Michelin', 'Goodyear', 'Bridgestone', 'Continental', 'Pirelli',
+    'Yokohama', 'Hankook', 'Dunlop', 'Vredestein', 'Nokian',
+    'Toyo', 'Firestone', 'BFGoodrich', 'Cooper', 'Kumho',
+    'Nexen', 'General', 'Falken', 'Nitto', 'Maxxis',
+    'Gislaved', 'Uniroyal', 'GT Radial', 'Sailun', 'Hercules',
+    'Motomaster', 'Nordic', 'Zeetex', 'Ironman', 'Starfire',
+  ];
   const titleUpper = title.toUpperCase();
   
   for (const brand of brands) {

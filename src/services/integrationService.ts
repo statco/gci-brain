@@ -184,7 +184,7 @@ Respond ONLY with valid JSON, no additional text.
       // Fallback parsing
       return {
         averagePrice: 180,
-        popularBrands: ['Michelin', 'Bridgestone', 'Goodyear', 'Continental'],
+        popularBrands: ['Michelin', 'Bridgestone', 'Goodyear', 'Continental', 'Vredestein', 'Nokian', 'Hankook'],
         recentReviews: ['Good traction in winter', 'Quiet ride', 'Long tread life'],
         trends: ['Increasing demand for all-season tires', 'Preference for Canadian-made tires'],
       };
@@ -192,7 +192,7 @@ Respond ONLY with valid JSON, no additional text.
       console.error('Perplexity API error:', error);
       return {
         averagePrice: 180,
-        popularBrands: ['Michelin', 'Bridgestone', 'Goodyear'],
+        popularBrands: ['Michelin', 'Bridgestone', 'Goodyear', 'Vredestein', 'Nokian'],
         recentReviews: [],
         trends: [],
       };
@@ -313,7 +313,7 @@ Respond ONLY with valid JSON, no additional text.
       {
         size: 'P215/55R17',
         season: 'All-Season',
-        brands: ['Michelin', 'Bridgestone', 'Goodyear'],
+        brands: ['Michelin', 'Bridgestone', 'Goodyear', 'Vredestein', 'Continental'],
         priceRange: { min: 150, max: 220 },
         confidence: 0.75,
         reasoning: 'Common size for this vehicle class with reliable all-season performance',
@@ -321,7 +321,7 @@ Respond ONLY with valid JSON, no additional text.
       {
         size: 'P215/55R17',
         season: 'Winter',
-        brands: ['Michelin X-Ice', 'Bridgestone Blizzak', 'Nokian Hakkapeliitta'],
+        brands: ['Michelin X-Ice', 'Bridgestone Blizzak', 'Nokian Hakkapeliitta', 'Vredestein Wintrac Pro'],
         priceRange: { min: 180, max: 280 },
         confidence: 0.80,
         reasoning: 'Essential for Canadian winters - superior snow and ice traction',

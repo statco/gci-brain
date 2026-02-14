@@ -146,7 +146,7 @@ function getFallbackRecommendations(userRequest: string, products: TireProduct[]
   }
 
   // Filter by brand
-  const brandMatch = requestLower.match(/michelin|bridgestone|goodyear|continental|pirelli|yokohama/);
+  const brandMatch = requestLower.match(/michelin|bridgestone|goodyear|continental|pirelli|yokohama|hankook|dunlop|vredestein|nokian|toyo|firestone|bfgoodrich|cooper|kumho|nexen|general|falken|nitto|maxxis|gislaved|uniroyal|gt radial|sailun|hercules|motomaster|nordic|zeetex|ironman|starfire/);
   if (brandMatch) {
     filtered = filtered.filter(p => p.brand.toLowerCase().includes(brandMatch[0]));
   }
