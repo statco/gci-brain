@@ -1,352 +1,186 @@
-// api/addTireImages.ts
-// ============================================================
-// Attach product images to Shopify tire products
+// =============================================================================
+// addTireImages.ts — Static IMAGE_MAP lookup (zero HTTP, zero timeouts)
+// =============================================================================
+// Sources:
+//   Nexen US:     nexentireusa.com/wp-content/uploads (WordPress CDN)
+//   Nexen Global: nexentire.com/international (for Canada/EU-only models)
+//   Cooper:       coopertire.ca Demandware CDN (Sites-goodyear-master-catalog)
+//   Bridgestone:  cdn.pneusecono.ca (Canadian CDN)
 //
-// Strategy (in order of priority):
-//   1. TireRack product page og:image  (model-specific photo)
-//   2. Brand-level CDN fallback        (brand generic image)
-//   3. Skip                            (manual upload later)
-//
-// POST ?action=add-images&offset=0    — process 20 products/call
-// POST ?action=status                 — show how many still need images
-// ============================================================
+// Confidence markers:
+//   ✅ confirmed  — fetched and visually verified
+//   🔧 inferred  — constructed from known product ID, filename pattern matches CDN
+//   🔄 fallback  — model discontinued/global-only, using closest visual equivalent
+// =============================================================================
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+const DW = (file: string) =>
+  `https://www.coopertire.ca/dw/image/v2/BJQJ_PRD/on/demandware.static/-/Sites-goodyear-master-catalog/default/images/large/${file}.png?sw=900&sh=800&sm=fit&sfrm=png`;
 
-export const config = { maxDuration: 120 };
+const NX = (file: string) =>
+  `https://www.nexentireusa.com/wp-content/uploads/2025/11/${file}`;
 
-// ─── SHOPIFY CONFIG ───────────────────────────────────────────────────────────
+const NXG = (path: string) =>
+  `https://www.nexentire.com/international/product/${path}`;
 
-const SHOPIFY = {
-  domain:     process.env.SHOPIFY_STORE_DOMAIN       || '',
-  token:      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
-  apiVersion: '2024-01',
-  get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
+export const IMAGE_MAP: Record<string, string> = {
+
+  // ── BRIDGESTONE ────────────────────────────────────────────────────────────
+  "BRIDGESTONE BLIZZAK WS90":
+    "https://cdn.pneusecono.ca/images/produits/Blizzak-WS90.png",              // ✅
+
+  // ── COOPER ─────────────────────────────────────────────────────────────────
+  "COOPER COBRA INSTINCT":              DW("Cobra_Instinct_24821"),             // 🔧
+  "COOPER COBRA RADIAL GT":             DW("Cobra_Radial_GT_24818"),            // 🔧
+  "COOPER CS5 GRAND TOURING":           DW("CS5_Grand_Touring_24809"),          // 🔧
+  "COOPER CS5 ULTRA TOURING":           DW("CS5_Ultra_Touring_24808"),          // 🔧
+
+  "COOPER DISCOVERER AT3 4S":           DW("Discoverer_AT3_4S_24484"),          // ✅
+  "COOPER DISCOVERER AT3 LT":           DW("Discoverer_AT3_LT_24485"),          // ✅
+  "COOPER DISCOVERER AT3 XLT":          DW("Discoverer_AT3_XLT_24486"),         // ✅
+  "COOPER DISCOVERER AT3 XLT 3313/R":   DW("Discoverer_AT3_XLT_24486"),         // ✅
+  "COOPER DISCOVERER AT3 XLT 3513/R":   DW("Discoverer_AT3_XLT_24486"),         // ✅
+  "COOPER DISCOVERER AT3 XLT 3713/R":   DW("Discoverer_AT3_XLT_24486"),         // ✅
+  "COOPER DISCOVERER HT3":              DW("Discoverer_Enduramax_24487"),        // ✅ HT3 replaced Enduramax
+
+  "COOPER DISCOVERER ROAD TRAIL AT ALL WEATHER": DW("Road_Trail_AT_24910"),    // 🔧
+  "COOPER DISCOVERER RUGGED TREK":      DW("Discoverer_Rugged_Trek_24497"),     // 🔧
+  "COOPER DISCOVERER RUGGED TREK AW":   DW("Discoverer_Rugged_Trek_24497"),     // 🔧 same base
+  "COOPER DISCOVERER RUGGED TREK LT":          DW("Discoverer_Rugged_Trek_LT_24496"),   // 🔧
+  "COOPER DISCOVERER RUGGED TREK LT 3313/R":   DW("Discoverer_Rugged_Trek_LT_24496"),   // 🔧
+  "COOPER DISCOVERER RUGGED TREK LT 3513/R":   DW("Discoverer_Rugged_Trek_LT_24496"),   // 🔧
+  "COOPER DISCOVERER RUGGED TREK LT 3713/R":   DW("Discoverer_Rugged_Trek_LT_24496"),   // 🔧
+
+  "COOPER DISCOVERER SNOW CLAW":        DW("Discoverer_Snow_Claw_24488"),       // 🔧
+  "COOPER DISCOVERER SNOW CLAW LT":     DW("Discoverer_Snow_Claw_LT_24490"),    // ✅ filename confirmed
+  "COOPER DISCOVERER SRX":              DW("Discoverer_Snow_Claw_LT_24490"),    // 🔄 discontinued → Snow Claw LT
+
+  "COOPER DISCOVERER ST MAXX":          DW("Discoverer_ST_Maxx_24489"),         // 🔧
+  "COOPER DISCOVERER ST MAXX 3513/R":   DW("Discoverer_ST_Maxx_24489"),         // 🔧
+
+  "COOPER DISCOVERER STT PRO":          DW("Discoverer_STT_Pro_24494"),         // ✅ filename confirmed
+  "COOPER DISCOVERER STT PRO 310/R":    DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3111/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3212/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3313/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3513/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3514/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3713/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3714/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3814/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 3816/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+  "COOPER DISCOVERER STT PRO 4014/R":   DW("Discoverer_STT_Pro_24494"),         // ✅
+
+  "COOPER EVOLUTION HT":                DW("Evolution_HT_24810"),               // 🔧
+  "COOPER EVOLUTION MT":                DW("Evolution_MT_24500"),               // ✅ filename confirmed
+
+  "COOPER ROADMASTER RM300":            DW("Discoverer_STT_Pro_24494"),         // 🔄 commercial → STT Pro
+
+  // ── NEXEN ──────────────────────────────────────────────────────────────────
+  "NEXEN ARIA AH7":                     NX("ARIA-AH7-Main350-4.jpg"),           // ✅
+  "NEXEN CP662 OE":                     NX("cp672-tilted-4.jpg"),               // 🔄 predecessor
+  "NEXEN CP671":                        NX("cp672-tilted-4.jpg"),               // 🔄 same generation
+  "NEXEN CP671 OE":                     NX("cp672-tilted-4.jpg"),               // 🔄
+  "NEXEN CP672":                        NX("cp672-tilted-4.jpg"),               // ✅
+
+  "NEXEN EURO-WIN":
+    NXG("winter/__icsFiles/afieldfile/2020/12/04/eurowin_product.png"),         // ✅ global site
+
+  "NEXEN NBLUE 4S":                     NX("nblue-4-season-2-tilted-4.jpg"),    // 🔄 predecessor
+  "NEXEN NBLUE 4S VAN":                 NX("nblue-4-season-2-tilted-4.jpg"),    // 🔄
+  "NEXEN NBLUE 4SEASON 2":              NX("nblue-4-season-2-tilted-4.jpg"),    // ✅
+
+  "NEXEN NFERA AU7":                    NX("NFERA-AU7-Main350-4.jpg"),          // ✅
+  "NEXEN NFERA AU7 OE":                 NX("NFERA-AU7-Main350-4.jpg"),          // ✅
+  "NEXEN NFERA RU1":
+    NXG("suv/__icsFiles/afieldfile/2020/12/04/nfera_ru1_product.png"),          // ✅ global site
+  "NEXEN NFERA SPORT R":                NX("NFera-Sport-R-Tilt-4.jpg"),         // ✅
+  "NEXEN NFERA SU1":                    NX("NFERA-SU1-Main350-4.jpg"),          // ✅
+  "NEXEN NFERA SUPREME":
+    NXG("passenger/__icsFiles/afieldfile/2025/08/21/supreme_ev_root.png"),      // ✅ global site
+
+  "NEXEN NPRIZ AH5":                    NX("NPRIZ-AH5-Main350-4.jpg"),          // ✅
+  "NEXEN NPRIZ AH8":                    NX("NPRIZ-AH8-Main350-4.jpg"),          // ✅
+  "NEXEN NPRIZ AH8 OE":                 NX("NPRIZ-AH8-Main350-4.jpg"),          // ✅
+  "NEXEN NPRIZ RH7 OE":                 NX("NPRIZ-AH8-Main350-4.jpg"),          // 🔄 OE predecessor
+
+  "NEXEN ROADIAN AT PRO RA8 OE":        NX("RO-AT-Pro-Main350-4.jpg"),          // ✅
+  "NEXEN ROADIAN AT PRO RA8 LT 3513/R": NX("RO-AT-Pro-Main350-4.jpg"),          // ✅
+  "NEXEN ROADIAN AT PRO RA8 LT AW":     NX("RO-AT-Pro-Main350-4.jpg"),          // ✅
+  "NEXEN ROADIAN ATX":                  NX("Roadian-ATX_tilt-4.jpg"),           // ✅
+  "NEXEN ROADIAN ATX LT":               NX("Roadian-ATX_tilt-4.jpg"),           // ✅
+  "NEXEN ROADIAN ATX OE":               NX("Roadian-ATX_tilt-4.jpg"),           // ✅
+  "NEXEN ROADIAN CT8 HL":               NX("RO-CT8-HL-Main350-4.jpg"),          // ✅
+  "NEXEN ROADIAN CT8 HL OE":            NX("RO-CT8-HL-Main350-4.jpg"),          // ✅
+  "NEXEN ROADIAN GTX":                  NX("Roadian-GTX_Tilted-4.jpg"),         // ✅
+  "NEXEN ROADIAN HP":                   NX("roadian-hp-tilt-4.jpg"),            // ✅
+  "NEXEN ROADIAN HTX 2 OE":             NX("Roadian-HTX2-Tilt-4.jpg"),          // ✅
+  "NEXEN ROADIAN HTX RH5 OE":           NX("RO-HTX-Main350-4.jpg"),             // ✅
+  "NEXEN ROADIAN MTX RM7":              NX("RO-MTX-Main350-4.jpg"),             // ✅
+  "NEXEN ROADIAN MTX RM7 3313/R":       NX("RO-MTX-Main350-4.jpg"),             // ✅
+  "NEXEN ROADIAN MTX RM7 3513/R":       NX("RO-MTX-Main350-4.jpg"),             // ✅
+  "NEXEN ROADIAN MTX RM7 3713/R":       NX("RO-MTX-Main350-4.jpg"),             // ✅
+  "NEXEN ROADIAN MTX RM7 3714/R":       NX("RO-MTX-Main350-4.jpg"),             // ✅
+
+  "NEXEN WINGUARD ICE SUV":
+    NXG("suv/__icsFiles/afieldfile/2020/12/04/wg_ice_suv_product.png"),         // ✅ global site
+  "NEXEN WINGUARD SPORT":               NX("Winguard_Sport_2_Main-350x416-5.jpg"), // 🔄 predecessor
+  "NEXEN WINGUARD SPORT 2":             NX("Winguard_Sport_2_Main-350x416-5.jpg"), // ✅
+  "NEXEN WINGUARD WINSPIKE 3":          NX("Winspike-3_Tilted-4.jpg"),          // ✅
+  "NEXEN WINGUARD WINSPIKE 3 LT":       NX("Winspike-3_Tilted-4.jpg"),          // ✅
+  "NEXEN WINGUARD WT1":
+    NXG("ltr/__icsFiles/afieldfile/2020/12/04/wg_wt1_product.png"),             // ✅ global site
 };
 
-const CT_VENDOR = 'Canada Tire';
-const SYNC_TAG  = 'ct-sync';
-
-// ─── BRAND-LEVEL FALLBACK IMAGE MAP ──────────────────────────────────────────
-// Used when TireRack scrape fails. Stable CDN URLs from manufacturer websites.
-
-// Reliable JPEG product images per brand from TireRack CDN
-// No brand fallback — products without a match keep no image
-
-// ─── TIRESOURCECANADA.CA SCRAPER ─────────────────────────────────────────────
-// Server-side rendered Canadian tire site with predictable URLs
-// Pattern: /tires/{brand-slug}/{model-slug}
-// Image in HTML: <img src="/assets/images/tires/reg/{brand}_{model}_..._tires_YYYY.jpg">
-
-function buildTireSourceUrl(brand: string, model: string): string {
-  const slug = (s: string) => s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  return `https://www.tiresourcecanada.ca/tires/${slug(brand)}/${slug(model)}`;
+// =============================================================================
+// Lookup function — normalizes key then does O(1) map lookup
+// =============================================================================
+export function getTireImageUrl(brandModel: string): string | undefined {
+  const key = brandModel.trim().toUpperCase();
+  return IMAGE_MAP[key];
 }
 
-async function fetchTireSourceImage(brand: string, model: string): Promise<string | null> {
-  const url = buildTireSourceUrl(brand, model);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-      signal: AbortSignal.timeout(4000),
-    });
-
-    if (!res.ok) return null;
-    const html = await res.text();
-
-    // Primary: extract from <img> tag with /assets/images/tires/ path
-    const imgMatch = html.match(/src="(https?:\/\/www\.tiresourcecanada\.ca\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i)
-                  || html.match(/src="(\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
-
-    if (imgMatch?.[1]) {
-      const src = imgMatch[1];
-      return src.startsWith('/') ? `https://www.tiresourcecanada.ca${src}` : src;
-    }
-
-    // Fallback: og:image
-    const ogMatch = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)
-                 || html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
-    if (ogMatch?.[1]?.match(/\.(jpg|jpeg|png|webp)/i)) {
-      return ogMatch[1];
-    }
-
-    return null;
-  } catch {
-    return null;
+// =============================================================================
+// Shopify bulk attachment — call this with your Shopify Admin client
+// =============================================================================
+export async function attachTireImages(
+  products: Array<{ id: string; title: string }>,
+  shopifyClient: {
+    post: (query: string, variables: Record<string, unknown>) => Promise<unknown>;
   }
-}
+): Promise<{ attached: number; skipped: number; failed: number }> {
+  let attached = 0;
+  let skipped = 0;
+  let failed = 0;
 
-// ─── IN-MEMORY CACHE (per invocation) ────────────────────────────────────────
-
-const imageCache = new Map<string, string | null>();
-
-async function getImageForTire(brand: string, model: string): Promise<string | null> {
-  const key = `${brand}::${model}`;
-  if (imageCache.has(key)) return imageCache.get(key)!;
-
-  // 1. Try tiresourcecanada.ca (Canadian, SSR, accessible)
-  const trImage = await fetchTireSourceImage(brand, model);
-  if (trImage) {
-    imageCache.set(key, trImage);
-    return trImage;
-  }
-
-  // 2. No image found — return null (product stays without image)
-  imageCache.set(key, null);
-  return null;
-}
-
-// ─── SHOPIFY HELPERS ──────────────────────────────────────────────────────────
-
-function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
-
-async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${SHOPIFY.baseUrl}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': SHOPIFY.token,
-      ...(options.headers || {}),
-    },
-  });
-  if (res.status === 429) { await delay(2000); return shopifyFetch<T>(path, options); }
-  if (!res.ok) throw new Error(`Shopify ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json() as Promise<T>;
-}
-
-// ─── GET PRODUCTS WITHOUT IMAGES ─────────────────────────────────────────────
-
-interface ShopifyProduct {
-  id:       number;
-  title:    string;
-  vendor:   string;
-  images:   { id: number; src: string }[];
-  variants: { sku: string }[];
-}
-
-async function getProductsWithoutImages(limit: number, sinceId: number = 0): Promise<ShopifyProduct[]> {
-  // Paginate through ALL products using since_id, return only those without images
-  // We may need multiple Shopify pages to fill our limit since many products have images
-  const results: ShopifyProduct[] = [];
-  let cursor = sinceId;
-
-  while (results.length < limit) {
-    const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title,vendor,images,variants${cursor ? `&since_id=${cursor}` : ''}`;
-    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-    const page: ShopifyProduct[] = data.products || [];
-    if (page.length === 0) break;
-
-    const withoutImages = page.filter(p => p.images.length === 0);
-    results.push(...withoutImages);
-    cursor = page[page.length - 1].id; // advance cursor regardless of image status
-    if (page.length < 250) break; // last page
-  }
-
-  return results.slice(0, limit);
-}
-
-async function countProductsWithoutImages(): Promise<{ withImages: number; withoutImages: number; total: number }> {
-  let sinceId = 0;
-  let withImages = 0;
-  let withoutImages = 0;
-
-  while (true) {
-    const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,images${sinceId ? `&since_id=${sinceId}` : ''}`;
-    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-    const products: ShopifyProduct[] = data.products || [];
-
-    for (const p of products) {
-      if (p.images.length > 0) withImages++;
-      else withoutImages++;
-    }
-
-    if (products.length < 250) break;
-    sinceId = products[products.length - 1].id;
-  }
-
-  return { withImages, withoutImages, total: withImages + withoutImages };
-}
-
-// ─── ATTACH IMAGE TO SHOPIFY PRODUCT ─────────────────────────────────────────
-
-async function attachImage(productId: number, imageUrl: string): Promise<void> {
-  await shopifyFetch(`/products/${productId}/images.json`, {
-    method: 'POST',
-    body:   JSON.stringify({ image: { src: imageUrl } }),
-  });
-}
-
-// ─── PARSE BRAND/MODEL FROM PRODUCT TITLE ────────────────────────────────────
-// CT title format: "COOPER DISCOVERER AT3 4S 2654519/R"
-// Size is always at the end: digits+slash+R (CT format) or standard 265/45R19
-// We need brand=COOPER, model=DISCOVERER AT3 4S → slug=discoverer-at3-4s
-
-function parseBrandModel(title: string): { brand: string; model: string } {
-  // Strip trailing size — CT format: 7-8 digits + /R, or standard NNN/NNRnn
-  const withoutSize = title
-    .replace(/\s+\d{6,8}\/R.*$/i, '')     // CT format: 2654519/R
-    .replace(/\s+\d{3}\/\d{2}R\d{2}.*$/i, '') // Standard: 265/45R19
-    .trim();
-
-  const parts = withoutSize.split(' ').filter(Boolean);
-  if (parts.length < 2) return { brand: parts[0] || '', model: '' };
-
-  // Known multi-word brands
-  const multiWordBrands = ['BF GOODRICH', 'GT RADIAL'];
-  for (const mwb of multiWordBrands) {
-    if (withoutSize.toUpperCase().startsWith(mwb)) {
-      const model = withoutSize.slice(mwb.length).trim();
-      return { brand: mwb, model };
-    }
-  }
-
-  // First word = brand, rest = full model name (strip season/type suffixes)
-  const SUFFIXES = ['ALL-WEATHER', 'ALL-SEASON', 'ALL WEATHER', 'ALL SEASON', 
-                    'WINTER', 'SUMMER', 'PERFORMANCE', '3PMS'];
-  let modelParts = parts.slice(1);
-  // Remove trailing suffix words
-  while (modelParts.length > 0) {
-    const last = modelParts[modelParts.length - 1].toUpperCase();
-    if (SUFFIXES.includes(last)) modelParts = modelParts.slice(0, -1);
-    else break;
-  }
-  return { brand: parts[0], model: modelParts.join(' ') };
-}
-
-// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-
-  const secret = process.env.CRON_SECRET || '';
-  if (secret) {
-    const provided = (req.headers.authorization || '').replace('Bearer ', '');
-    if (provided !== secret) return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  if (!SHOPIFY.domain || !SHOPIFY.token) {
-    return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
-  }
-
-  const action  = (req.query.action as string) || 'status';
-  const offset  = parseInt((req.query.offset as string) || '0', 10);
-
-  try {
-    // ── Status ──────────────────────────────────────────────────────────────
-    if (action === 'status') {
-      const counts = await countProductsWithoutImages();
-      return res.status(200).json({
-        success: true,
-        ...counts,
-        nextAction: counts.withoutImages > 0
-          ? `Run ?action=add-images in a loop until done`
-          : '🎉 All products have images!',
-      });
-    }
-
-    // ── Add images ───────────────────────────────────────────────────────────
-    if (action === 'add-images') {
-      const t0 = Date.now();
-      const stats = { attached: 0, notFound: 0, errors: 0, errorList: [] as string[], processed: 0 };
-
-      // Fetch one Shopify page (250 products) starting after since_id=offset
-      // offset must be a real Shopify product ID (returned as nextOffset from previous call)
-      const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=50&fields=id,title,vendor,images,variants${offset ? `&since_id=${offset}` : ''}`;
-      const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-      const page: ShopifyProduct[] = data.products || [];
-      const toProcess = page.filter(p => p.images.length === 0);
-      stats.processed = toProcess.length;
-
-      for (const product of toProcess) {
-        try {
-          const { brand, model } = parseBrandModel(product.title);
-          if (!brand || !model) { stats.notFound++; continue; }
-
-          const imageUrl = await getImageForTire(brand, model);
-
-          if (imageUrl) {
-            await attachImage(product.id, imageUrl);
-            stats.attached++;
-            console.log(`✅ ${product.title} → ${imageUrl.slice(0, 60)}...`);
-          } else {
-            stats.notFound++;
-            console.log(`⚠️ No image: ${brand} ${model}`);
-          }
-
-          await delay(200);
-        } catch (e: any) {
-          stats.errors++;
-          stats.errorList.push(`${product.title}: ${e.message}`);
-        }
+  const CREATE_MEDIA = `
+    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+      productCreateMedia(productId: $productId, media: $media) {
+        media { ... on MediaImage { image { url } } }
+        mediaUserErrors { field message }
       }
+    }
+  `;
 
-      const duration = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
-      const lastId   = page.length > 0 ? page[page.length - 1].id : null;
-      const done     = page.length < 50;
+  for (const product of products) {
+    const imageUrl = getTireImageUrl(product.title);
+    if (!imageUrl) {
+      skipped++;
+      continue;
+    }
 
-      return res.status(200).json({
-        success: true,
-        ...stats,
-        duration,
-        done,
-        nextOffset: done ? null : lastId,
-        message: done ? '🎉 All products processed!' : `Run again with offset=${lastId}`,
+    try {
+      await shopifyClient.post(CREATE_MEDIA, {
+        productId: product.id,
+        media: [{ mediaContentType: "IMAGE", originalSource: imageUrl }],
       });
+      attached++;
+    } catch (err) {
+      console.error(`Failed to attach image to "${product.title}":`, err);
+      failed++;
     }
-
-    // ── List unique brand+model combos ──────────────────────────────────────────
-    if (action === 'list-models') {
-      const models = new Map<string, number>();
-      let cursor = 0;
-      while (true) {
-        const q = `tag=${encodeURIComponent(SYNC_TAG)}&limit=250&fields=id,title${cursor ? `&since_id=${cursor}` : ''}`;
-        const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-        const page: ShopifyProduct[] = data.products || [];
-        for (const p of page) {
-          const { brand, model } = parseBrandModel(p.title);
-          const key = `${brand} ${model}`.trim().toUpperCase();
-          models.set(key, (models.get(key) || 0) + 1);
-        }
-        if (page.length < 250) break;
-        cursor = page[page.length - 1].id;
-      }
-      const sorted = [...models.entries()].sort((a,b) => a[0].localeCompare(b[0]));
-      return res.status(200).json({ total: sorted.length, models: Object.fromEntries(sorted) });
-    }
-
-    // ── Debug single URL ────────────────────────────────────────────────────────
-    if (action === 'debug') {
-      const brand = (req.query.brand as string) || 'cooper';
-      const model = (req.query.model as string) || 'procontrol';
-      const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      const url = `https://www.tiresourcecanada.ca/tires/${slug(brand)}/${slug(model)}`;
-      try {
-        const r = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
-          signal: AbortSignal.timeout(8000),
-        });
-        const html = await r.text();
-        const imgMatch = html.match(/src="([^"]*\/assets\/images\/tires\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
-        const ogMatch  = html.match(/content="([^"]*tiresourcecanada[^"]+\.(?:jpg|jpeg|png|webp))"/i);
-        return res.status(200).json({
-          url, status: r.status, htmlLength: html.length,
-          imgMatch: imgMatch?.[1] || null,
-          ogMatch:  ogMatch?.[1]  || null,
-          snippet:  html.slice(0, 500),
-        });
-      } catch(e: any) { return res.status(200).json({ url, error: e.message }); }
-    }
-
-    return res.status(400).json({ error: 'Unknown action', available: ['status', 'add-images', 'debug'] });
-
-  } catch (e: any) {
-    console.error('❌ addTireImages error:', e);
-    return res.status(500).json({ success: false, error: e.message });
   }
+
+  return { attached, skipped, failed };
 }
+
+export default IMAGE_MAP;
