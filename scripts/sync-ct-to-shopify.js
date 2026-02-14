@@ -203,7 +203,9 @@ async function getExistingShopifyProducts() {
     const products = data.products || [];
 
     for (const p of products) {
-      if (p.tags && p.tags.includes('canada-tire')) {
+      // Match existing CT products by any known tag pattern
+      const tags = p.tags || '';
+      if (tags.includes('canada-tire') || tags.includes('ct-sync') || tags.includes('ct-')) {
         for (const v of p.variants) {
           if (v.sku) skuMap.set(v.sku, { productId: p.id, variantId: v.id, price: v.price, title: p.title });
         }
@@ -240,7 +242,7 @@ function buildShopifyProduct(ct) {
   `.trim();
 
   const tags = [
-    'ai-match', 'canada-tire',
+    'ai-match', 'canada-tire', 'ct-sync',
     `ct-${ct.partNumber}`, ct.brand, ct.model,
     season.toLowerCase().replace(/\s+/g, '-'),
     ct.performanceCategory || '',
@@ -336,7 +338,7 @@ async function main() {
   console.log('[4/4] Syncing products...\n');
 
   let created = 0, updated = 0, unchanged = 0, errors = 0;
-  const BATCH = 4;
+  const BATCH = 2;
 
   for (let i = 0; i < ctProducts.length; i += BATCH) {
     const batch = ctProducts.slice(i, i + BATCH);
@@ -383,7 +385,7 @@ async function main() {
 
     // Rate limit pause between batches
     if (i + BATCH < ctProducts.length) {
-      await sleep(2500);
+      await sleep(1500);
     }
   }
 
