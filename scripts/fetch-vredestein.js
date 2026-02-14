@@ -13,13 +13,17 @@ const CONFIG = {
   tokenSecret:    process.env.CT_TOKEN_SECRET    || '',
   customerId:     process.env.CT_CUSTOMER_NUMBER || '19997',
   customerToken:  process.env.CT_CUSTOMER_API_TOKEN || '',
-  useSandbox:     (process.env.CT_USE_SANDBOX ?? 'true') === 'true',
+  useSandbox:     process.env.CT_USE_SANDBOX !== 'false',
   get realm()   { return this.useSandbox ? '8031691_SB1' : '8031691'; },
-  get baseUrl() { return `https://${this.realm}.restlets.api.netsuite.com/app/site/hosting/restlet.nl`; },
+  get baseUrl() {
+    return this.useSandbox
+      ? 'https://8031691-sb1.restlets.api.netsuite.com/app/site/hosting/restlet.nl'
+      : 'https://8031691.restlets.api.netsuite.com/app/site/hosting/restlet.nl';
+  },
 };
 
 const SCRIPTS = {
-  tireSearch: { script: 'customscript_gci_tire_search', deploy: 'customdeploy_gci_tire_search' },
+  tireSearch: { script: 'customscript_item_search_rl', deploy: 'customdeploy_item_search_rl' },
 };
 
 // ── OAuth 1.0 HMAC-SHA256 ────────────────────────────────────────────────────
@@ -27,45 +31,52 @@ function percentEncode(str) {
   return encodeURIComponent(str).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
-function buildOAuthHeader(url, method = 'POST') {
+function buildOAuthHeader(baseUrl, script, deploy) {
   const nonce     = crypto.randomBytes(16).toString('hex');
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  const params = {
+  // All params that go into the signature (alphabetical order)
+  // Must include script + deploy, matching api/canadaTire.ts exactly
+  const sigParams = {
+    deploy,
     oauth_consumer_key:     CONFIG.consumerKey,
     oauth_nonce:            nonce,
     oauth_signature_method: 'HMAC-SHA256',
     oauth_timestamp:        timestamp,
     oauth_token:            CONFIG.tokenId,
     oauth_version:          '1.0',
+    script,
   };
 
-  const baseString = [
-    method.toUpperCase(),
-    percentEncode(url),
-    percentEncode(
-      Object.keys(params).sort()
-        .map(k => `${percentEncode(k)}=${percentEncode(params[k])}`)
-        .join('&')
-    ),
-  ].join('&');
+  const paramStr = Object.keys(sigParams).sort()
+    .map(k => `${percentEncode(k)}=${percentEncode(sigParams[k])}`)
+    .join('&');
 
+  // Sign the base URL only (no query string)
+  const baseString = ['POST', percentEncode(baseUrl), percentEncode(paramStr)].join('&');
   const signingKey = `${percentEncode(CONFIG.consumerSecret)}&${percentEncode(CONFIG.tokenSecret)}`;
   const signature  = crypto.createHmac('sha256', signingKey).update(baseString).digest('base64');
 
-  return `OAuth realm="${CONFIG.realm}", ` +
-    Object.keys({ ...params, oauth_signature: signature }).sort()
-      .map(k => `${percentEncode(k)}="${percentEncode(k === 'oauth_signature' ? signature : params[k])}"`)
-      .join(', ');
+  return [
+    `OAuth realm="${CONFIG.realm}"`,
+    `oauth_consumer_key="${CONFIG.consumerKey}"`,
+    `oauth_token="${CONFIG.tokenId}"`,
+    `oauth_signature_method="HMAC-SHA256"`,
+    `oauth_timestamp="${timestamp}"`,
+    `oauth_nonce="${nonce}"`,
+    `oauth_version="1.0"`,
+    `oauth_signature="${percentEncode(signature)}"`,
+  ].join(', ');
 }
 
 // ── POST helper ──────────────────────────────────────────────────────────────
 async function ctPost(scriptKey, body) {
   const { script, deploy } = SCRIPTS[scriptKey];
-  const url = `${CONFIG.baseUrl}?script=${script}&deploy=${deploy}`;
-  const auth = buildOAuthHeader(url);
+  const baseUrl = CONFIG.baseUrl;
+  const fullUrl = `${baseUrl}?script=${script}&deploy=${deploy}`;
+  const auth = buildOAuthHeader(baseUrl, script, deploy);
 
-  const response = await fetch(url, {
+  const response = await fetch(fullUrl, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
