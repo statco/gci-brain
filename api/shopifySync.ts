@@ -492,21 +492,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // "Best" = most images; tiebreak = lowest product ID (oldest).
         // Default is DRY RUN — pass { confirm: true } in body to actually delete.
         const dryRun = !(req.body as any)?.confirm;
+        // Collect ALL ct-sync products into a deduplicated ID map first.
+        // Note: Shopify since_id + tag filter can skip/double-count — we dedupe by ID
+        // before any group processing.
+        const allById = new Map<number, { id: number; title: string; imageCount: number }>();
         let sinceId = 0;
-        const byTitle = new Map<string, Array<{ id: number; title: string; imageCount: number }>>();
-
-        // Page through all ct-sync products
-        while (true) {
+        let safetyLimit = 20; // max 20 pages × 250 = 5,000 products
+        while (safetyLimit-- > 0) {
           const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
           const data: any = await shopifyFetch<any>(`/products.json?${q}`);
           const products = data.products || [];
           for (const p of products) {
-            const key = p.title.trim().toUpperCase();
-            if (!byTitle.has(key)) byTitle.set(key, []);
-            byTitle.get(key)!.push({ id: p.id, title: p.title, imageCount: p.images?.length || 0 });
+            if (!allById.has(p.id)) {
+              allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
+            }
           }
           if (products.length < 250) break;
           sinceId = products[products.length - 1].id;
+        }
+
+        // Group deduplicated products by title
+        const byTitle = new Map<string, Array<{ id: number; title: string; imageCount: number }>>();
+        for (const p of allById.values()) {
+          const key = p.title.trim().toUpperCase();
+          if (!byTitle.has(key)) byTitle.set(key, []);
+          byTitle.get(key)!.push(p);
         }
 
         // Identify duplicates
