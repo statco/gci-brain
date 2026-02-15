@@ -161,6 +161,7 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   });
   if (res.status === 429) { await delay(2000); return shopifyFetch<T>(path, options); }
   if (!res.ok) throw new Error(`Shopify ${res.status} on ${path}: ${(await res.text()).slice(0,200)}`);
+  if (res.status === 204 || res.headers.get('content-length') === '0') return {} as T;
   return res.json() as Promise<T>;
 }
 
@@ -485,6 +486,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const bfLimit  = parseInt((req.body as any)?.limit  ?? req.query.limit  ?? '100', 10);
         const bfStats  = await runImageBackfill(bfOffset, bfLimit);
         return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
+      }
+      case 'dedup': {
+        // Finds duplicate ct-sync products (same title) and deletes all but the best copy.
+        // "Best" = most images; tiebreak = lowest product ID (oldest).
+        // Default is DRY RUN — pass { confirm: true } in body to actually delete.
+        const dryRun = !(req.body as any)?.confirm;
+        let sinceId = 0;
+        const byTitle = new Map<string, Array<{ id: number; title: string; imageCount: number }>>();
+
+        // Page through all ct-sync products
+        while (true) {
+          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+          const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+          const products = data.products || [];
+          for (const p of products) {
+            const key = p.title.trim().toUpperCase();
+            if (!byTitle.has(key)) byTitle.set(key, []);
+            byTitle.get(key)!.push({ id: p.id, title: p.title, imageCount: p.images?.length || 0 });
+          }
+          if (products.length < 250) break;
+          sinceId = products[products.length - 1].id;
+        }
+
+        // Identify duplicates
+        const duplicateGroups: Array<{ title: string; keep: number; delete: number[] }> = [];
+        for (const [title, group] of byTitle.entries()) {
+          if (group.length < 2) continue;
+          // Sort: most images first, then lowest ID (oldest) as tiebreak
+          group.sort((a, b) => b.imageCount - a.imageCount || a.id - b.id);
+          duplicateGroups.push({
+            title,
+            keep: group[0].id,
+            delete: group.slice(1).map(p => p.id),
+          });
+        }
+
+        const toDelete = duplicateGroups.flatMap(g => g.delete);
+
+        if (!dryRun) {
+          let deleted = 0, failed = 0;
+          for (const id of toDelete) {
+            try {
+              await shopifyFetch(`/products/${id}.json`, { method: 'DELETE' });
+              deleted++;
+            } catch (err) {
+              console.error(`[dedup] Failed to delete product ${id}:`, err);
+              failed++;
+            }
+            await new Promise(r => setTimeout(r, 250)); // rate-limit: 4 req/s
+          }
+          return res.status(200).json({
+            success: true, mode: 'dedup', dryRun: false,
+            duplicateGroups: duplicateGroups.length,
+            deleted, failed,
+            detail: duplicateGroups,
+          });
+        }
+
+        // Dry run — just report what would be deleted
+        return res.status(200).json({
+          success: true, mode: 'dedup', dryRun: true,
+          duplicateGroups: duplicateGroups.length,
+          wouldDelete: toDelete.length,
+          detail: duplicateGroups,
+        });
       }
       case 'daily-sync':
       default: {
