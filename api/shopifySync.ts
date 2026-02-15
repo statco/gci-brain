@@ -1,7 +1,7 @@
 // api/shopifySync.ts
 // ============================================================
 // Canada Tire → Shopify Product Sync
-// SELF-CONTAINED — no imports from other api/ files
+// Imports: addTireImages (static image map, same api/ folder)
 //
 // POST ?action=full-import   — create / update all CT products
 // POST ?action=daily-sync    — only update changed price / inventory
@@ -11,6 +11,7 @@
 
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getTireImageUrl } from './addTireImages';
 
 export const config = { maxDuration: 300 };
 
@@ -202,6 +203,97 @@ async function setInventory(inventoryItemId: number, qty: number): Promise<void>
   } catch (e) { console.warn(`⚠️ Inventory update failed for ${inventoryItemId}:`, e); }
 }
 
+// ─── IMAGE ATTACHMENT ─────────────────────────────────────────────────────────
+
+/**
+ * Attach a tire image to a Shopify product via the Admin REST API.
+ * Uses the static IMAGE_MAP — zero extra network calls for the lookup itself.
+ * Only called for newly created products (updates skip to avoid duplicates).
+ */
+async function attachProductImage(productId: number, ct: CTTire): Promise<boolean> {
+  const lookupKey = `${ct.brand} ${ct.model}`;
+  const imageUrl  = getTireImageUrl(lookupKey);
+
+  if (!imageUrl) {
+    console.log(`⚠️  No image in map for: "${lookupKey}"`);
+    return false;
+  }
+
+  try {
+    await shopifyFetch(`/products/${productId}/images.json`, {
+      method: 'POST',
+      body: JSON.stringify({ image: { src: imageUrl, alt: lookupKey } }),
+    });
+    console.log(`🖼️  Image attached for: "${lookupKey}"`);
+    return true;
+  } catch (e: any) {
+    console.warn(`⚠️  Image attach failed for ${productId} ("${lookupKey}"): ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Backfill: attach images to existing products that have none.
+ * Run once manually via POST ?action=backfill-images
+ */
+async function runImageBackfill(): Promise<{ attached: number; skipped: number; missing: number; errors: number }> {
+  const stats = { attached: 0, skipped: 0, missing: 0, errors: 0 };
+
+  // Fetch all CT-synced products with their current images
+  let sinceId = 0;
+  const allProducts: Array<{ id: number; title: string; images: any[] }> = [];
+
+  while (true) {
+    const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+    const products = data.products || [];
+    allProducts.push(...products);
+    if (products.length < 250) break;
+    sinceId = products[products.length - 1].id;
+  }
+
+  console.log(`🔍 Backfill: checking ${allProducts.length} products for missing images...`);
+
+  await processBatches(allProducts, async (p) => {
+    // Skip if already has an image
+    if (p.images && p.images.length > 0) {
+      stats.skipped++;
+      return;
+    }
+
+    // title format: "Brand Model Size" — strip trailing size to get brand+model
+    const titleParts = p.title.trim().split(' ');
+    // Try full title first, then drop last token (size) iteratively
+    let imageUrl: string | undefined;
+    let matchedKey = '';
+    for (let drop = 0; drop < 3; drop++) {
+      const key = titleParts.slice(0, titleParts.length - drop).join(' ');
+      imageUrl = getTireImageUrl(key);
+      if (imageUrl) { matchedKey = key; break; }
+    }
+
+    if (!imageUrl) {
+      console.log(`❌ No image map match for: "${p.title}"`);
+      stats.missing++;
+      return;
+    }
+
+    try {
+      await shopifyFetch(`/products/${p.id}/images.json`, {
+        method: 'POST',
+        body: JSON.stringify({ image: { src: imageUrl, alt: matchedKey } }),
+      });
+      console.log(`🖼️  Backfill image attached: "${matchedKey}"`);
+      stats.attached++;
+    } catch (e: any) {
+      console.warn(`⚠️  Backfill image failed for ${p.id}: ${e.message}`);
+      stats.errors++;
+    }
+  });
+
+  return stats;
+}
+
 function buildPayload(ct: CTTire) {
   const size    = parseTireSize(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
@@ -270,8 +362,10 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   await processBatches(toCreate, async (ct) => {
     try {
       const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(buildPayload(ct)) });
-      const invId = data.product?.variants?.[0]?.inventory_item_id;
-      if (invId) await setInventory(invId, getTotalQty(ct));
+      const productId = data.product?.id;
+      const invId     = data.product?.variants?.[0]?.inventory_item_id;
+      if (invId)     await setInventory(invId, getTotalQty(ct));
+      if (productId) await attachProductImage(productId, ct);  // 🖼️ attach from static map
       stats.created++;
     } catch (e: any) { stats.errors++; stats.errorList.push(`CREATE ${ct.partNumber}: ${e.message}`); }
   });
@@ -335,6 +429,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const chunkSize = parseInt((req.body as any)?.chunkSize || '50', 10);
         const stats = await runSync('full', offset, chunkSize);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
+      }
+      case 'backfill-images': {
+        const bfStats = await runImageBackfill();
+        return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
       }
       case 'daily-sync':
       default: {
