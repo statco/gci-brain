@@ -422,7 +422,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const action = (req.query.action as string) || (isCron ? 'daily-sync' : 'status');
+  const action = (req.query.action as string) || (req.body as any)?.action || (isCron ? 'daily-sync' : 'status');
 
   try {
     switch (action) {
