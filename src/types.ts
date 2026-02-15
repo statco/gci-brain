@@ -30,6 +30,7 @@ export interface TireProduct {
   model: string;
   size: string;
   season: 'All-Season' | 'Winter' | 'Summer';
+  pricePerUnit: number;
   price: number;
   rating?: number;
   reviews?: number;
@@ -41,6 +42,9 @@ export interface TireProduct {
   speedRating?: string;
   loadIndex?: string;
   shopifyVariantId?: string;
+  shopifyHandle?: string;
+  shopifyProductId?: string;
+  visualizationUrl?: string;
 }
 
 // Vehicle information
