@@ -11,7 +11,7 @@
 
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getTireImageUrl } from './addTireImages';
+import { getTireImageUrl } from './addTireImages.js';
 
 export const config = { maxDuration: 300 };
 
