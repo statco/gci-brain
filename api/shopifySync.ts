@@ -170,7 +170,7 @@ async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
   const map = new Map<string,ExistingProduct>();
   let sinceId = 0;
   while (true) {
-    const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,variants${sinceId?`&since_id=${sinceId}`:''}`;
+    const q = `tag=${SYNC_TAG}&limit=250&fields=id,variants${sinceId?`&since_id=${sinceId}`:''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products = data.products || [];
     for (const p of products) {
@@ -244,7 +244,7 @@ async function runImageBackfill(): Promise<{ attached: number; skipped: number; 
   const allProducts: Array<{ id: number; title: string; images: any[] }> = [];
 
   while (true) {
-    const q = `vendor=${encodeURIComponent(CT_VENDOR)}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products = data.products || [];
     allProducts.push(...products);
