@@ -435,6 +435,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const stats = await runSync('full', offset, chunkSize);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
+      case 'missing-images': {
+        // Returns all unique titles that have NO image — to identify map gaps
+        let sinceId = 0;
+        const noImageTitles = new Set<string>();
+        const withImageTitles = new Set<string>();
+
+        while (true) {
+          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+          const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+          const products = data.products || [];
+          for (const p of products) {
+            // Strip size suffix from title (last token e.g. "235/65R18" or "2356518/R")
+            const tokens = p.title.trim().split(' ');
+            const modelKey = tokens.slice(0, -1).join(' ').toUpperCase();
+            if (!p.images || p.images.length === 0) {
+              noImageTitles.add(modelKey);
+            } else {
+              withImageTitles.add(modelKey);
+            }
+          }
+          if (products.length < 250) break;
+          sinceId = products[products.length - 1].id;
+        }
+
+        // Only report models that NEVER have an image (not just some variants missing)
+        const trulyMissing = [...noImageTitles].filter(t => !withImageTitles.has(t)).sort();
+        return res.status(200).json({
+          success: true, mode: 'missing-images',
+          missingCount: trulyMissing.length,
+          missing: trulyMissing,
+        });
+      }
       case 'debug-images': {
         // Returns first 5 products with their image state for diagnosis
         let sinceId = 0;
