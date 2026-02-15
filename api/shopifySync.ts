@@ -236,8 +236,8 @@ async function attachProductImage(productId: number, ct: CTTire): Promise<boolea
  * Backfill: attach images to existing products that have none.
  * Run once manually via POST ?action=backfill-images
  */
-async function runImageBackfill(): Promise<{ attached: number; skipped: number; missing: number; errors: number }> {
-  const stats = { attached: 0, skipped: 0, missing: 0, errors: 0 };
+async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: number; skipped: number; missing: number; errors: number; total: number; nextOffset: number; done: boolean }> {
+  const stats = { attached: 0, skipped: 0, missing: 0, errors: 0, total: 0, nextOffset: 0, done: false };
 
   // Fetch all CT-synced products with their current images
   let sinceId = 0;
@@ -252,9 +252,14 @@ async function runImageBackfill(): Promise<{ attached: number; skipped: number; 
     sinceId = products[products.length - 1].id;
   }
 
-  console.log(`🔍 Backfill: checking ${allProducts.length} products for missing images...`);
+  stats.total     = allProducts.length;
+  const chunk     = allProducts.slice(offset, offset + limit);
+  stats.nextOffset = offset + limit;
+  stats.done      = stats.nextOffset >= allProducts.length;
 
-  await processBatches(allProducts, async (p) => {
+  console.log(`🔍 Backfill: chunk ${offset}–${offset + chunk.length} of ${allProducts.length} products...`);
+
+  await processBatches(chunk, async (p) => {
     // Skip if already has an image
     if (p.images && p.images.length > 0) {
       stats.skipped++;
@@ -431,7 +436,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
       case 'backfill-images': {
-        const bfStats = await runImageBackfill();
+        const bfOffset = parseInt((req.body as any)?.offset ?? req.query.offset ?? '0', 10);
+        const bfLimit  = parseInt((req.body as any)?.limit  ?? req.query.limit  ?? '100', 10);
+        const bfStats  = await runImageBackfill(bfOffset, bfLimit);
         return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
       }
       case 'daily-sync':
