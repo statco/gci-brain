@@ -492,23 +492,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // "Best" = most images; tiebreak = lowest product ID (oldest).
         // Default is DRY RUN — pass { confirm: true } in body to actually delete.
         const dryRun = !(req.body as any)?.confirm;
-        // Collect ALL ct-sync products into a deduplicated ID map first.
-        // Note: Shopify since_id + tag filter can skip/double-count — we dedupe by ID
-        // before any group processing.
+        // Collect ALL ct-sync products using cursor-based pagination (Link header).
+        // since_id is unreliable with tag filters — cursor pagination is the correct method.
         const allById = new Map<number, { id: number; title: string; imageCount: number }>();
-        let sinceId = 0;
-        let safetyLimit = 20; // max 20 pages × 250 = 5,000 products
-        while (safetyLimit-- > 0) {
-          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
-          const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-          const products = data.products || [];
-          for (const p of products) {
-            if (!allById.has(p.id)) {
-              allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
-            }
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
+        let safetyLimit = 20;
+        while (nextUrl && safetyLimit-- > 0) {
+          const res = await fetch(nextUrl, {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': SHOPIFY.token,
+            },
+          });
+          if (!res.ok) throw new Error(`Shopify ${res.status} paginating products`);
+          const data: any = await res.json();
+          for (const p of (data.products || [])) {
+            allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
           }
-          if (products.length < 250) break;
-          sinceId = products[products.length - 1].id;
+          // Parse Link header for next cursor
+          const link = res.headers.get('link') || '';
+          const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+          nextUrl = nextMatch ? nextMatch[1] : null;
         }
 
         // Group deduplicated products by title
