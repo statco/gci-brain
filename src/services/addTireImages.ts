@@ -1,7 +1,7 @@
 // =============================================================================
 // addTireImages.ts  —  Static IMAGE_MAP  (zero HTTP, O(1) lookup)
 //
-//  81 keys total:  57 ✅ confirmed  |  9 🔧 inferred  |  15 🔄 fallback
+//  101 keys total: 58 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
 //
 //  Sources
 //  ├─ Cooper:      coopertire.ca Demandware CDN — URLs verified via live fetch
@@ -33,6 +33,12 @@ const NX = (file: string) =>
 
 const NXG = (path: string) =>
   `https://www.nexentire.com/international/product/${path}`;
+
+const VR_BASE = "https://www.vredestein.com/content/dam/orbit/syncforce/products";
+/** Vredestein syncforce CDN — confirmed from live product pages */
+const VR = (id: string, img: string) =>
+  `${VR_BASE}/${id}/${img}.png`;
+
 
 // Named URL aliases — reused across multiple size variants
 const STTRO     = DWH("dwbeb09d07", "Discoverer_STT_Pro_24494");
@@ -154,13 +160,37 @@ export const IMAGE_MAP: Record<string, string> = {
   "NEXEN WINGUARD WINSPIKE 3 LT": NX("Winspike-3_Tilted-4.jpg"),           // ✅
   "NEXEN WINGUARD WT1":
     NXG("ltr/__icsFiles/afieldfile/2020/12/04/wg_wt1_product.png"),        // ✅ global site
+
+  // ── COOPER (additional — IDs confirmed from coopertire.ca URLs) ────────────
+  "COOPER DISCOVERER ENDURAMAX":    HT3,                                    // 🔄 HT3 replaced Enduramax
+  "COOPER DISCOVERER SRX-LE":       HT3,                                    // 🔄 discontinued → HT3 fallback
+  "COOPER DISCOVERER TRUE NORTH":   DW("Discoverer_True_North_24495"),       // 🔧 product 24495
+  "COOPER ENDEAVOR":                DW("Endeavor_24498"),                    // 🔧 product 24498
+  "COOPER ENDEAVOR PLUS":           DW("Endeavor_Plus_24499"),               // 🔧 product 24499
+  "COOPER EVOLUTION WINTER":        DW("Evolution_Winter_24501"),            // 🔧 product 24501
+  "COOPER ZEON RS3-G1":             DWH("dwfdc729c9", "Zeon_RS3-G1_24508"), // 🔧 product 24508 hash confirmed
+
+  // ── VREDESTEIN ─────────────────────────────────────────────────────────────
+  // Images verified from vredestein.com/content/dam/orbit/syncforce/products/
+  "VREDESTEIN QUATRAC":             VR("1998", "T0015902"),                  // 🔄 all-season family tile
+  "VREDESTEIN QUATRAC PRO PLUS":    VR("1998", "T0015902"),                  // ✅ product 1998 T0015902
+  "VREDESTEIN WINTRAC":             VR("1582", "T0017030"),                  // 🔄 winter family tile
+
 };
 
 // =============================================================================
 // Lookup — normalises key then O(1) map lookup
 // =============================================================================
 export function getTireImageUrl(brandModel: string): string | undefined {
-  return IMAGE_MAP[brandModel.trim().toUpperCase()];
+  const tokens = brandModel.trim().toUpperCase().split(/\s+/);
+  // Progressive prefix search: strips trailing tokens (size/spec codes) until a match is found.
+  // e.g. "COOPER COBRA RADIAL GT 195/65R15" → "COOPER COBRA RADIAL GT" → hit ✅
+  while (tokens.length >= 2) {
+    const key = tokens.join(" ");
+    if (IMAGE_MAP[key]) return IMAGE_MAP[key];
+    tokens.pop();
+  }
+  return undefined;
 }
 
 // =============================================================================
