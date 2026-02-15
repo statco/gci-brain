@@ -512,14 +512,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Identify duplicates
         const duplicateGroups: Array<{ title: string; keep: number; delete: number[] }> = [];
         for (const [title, group] of byTitle.entries()) {
-          if (group.length < 2) continue;
+          // Deduplicate by product ID first (since_id pagination can yield same product twice)
+          const seen = new Map<number, { id: number; title: string; imageCount: number }>();
+          for (const p of group) seen.set(p.id, p);
+          const unique = [...seen.values()];
+          if (unique.length < 2) continue;
           // Sort: most images first, then lowest ID (oldest) as tiebreak
-          group.sort((a, b) => b.imageCount - a.imageCount || a.id - b.id);
-          duplicateGroups.push({
-            title,
-            keep: group[0].id,
-            delete: group.slice(1).map(p => p.id),
-          });
+          unique.sort((a, b) => b.imageCount - a.imageCount || a.id - b.id);
+          const keepId = unique[0].id;
+          const deleteIds = [...new Set(unique.slice(1).map(p => p.id))].filter(id => id !== keepId);
+          if (deleteIds.length === 0) continue;
+          duplicateGroups.push({ title, keep: keepId, delete: deleteIds });
         }
 
         const toDelete = duplicateGroups.flatMap(g => g.delete);
