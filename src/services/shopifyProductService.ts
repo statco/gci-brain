@@ -1,5 +1,5 @@
 // src/services/shopifyProductService.ts
-// Automatically fetch product images from Shopify
+// FULLY DYNAMIC VERSION - Fetches all products from Shopify automatically
 
 import { getTireImageUrl } from './addTireImages';
 
@@ -9,38 +9,70 @@ const API_VERSION = import.meta.env.VITE_SHOPIFY_API_VERSION || '2024-01';
 
 const STOREFRONT_API_URL = `https://${SHOPIFY_DOMAIN}/api/${API_VERSION}/graphql.json`;
 
-// Cache images to avoid repeated API calls
-const imageCache = new Map<string, string>();
-
-interface ShopifyProductData {
-  imageUrl: string;
-  price: number;
-  available: boolean;
-}
+// Cache products to avoid repeated API calls
+let cachedProducts: any[] | null = null;
+let cacheTimestamp = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Fetch product image by Shopify handle
+ * ✅ OPTION 1: Fetch products by collection handle
+ * This is the RECOMMENDED approach
  */
-export async function fetchProductImage(handle: string): Promise<string | null> {
-  // Check cache first
-  if (imageCache.has(handle)) {
-    console.log(`✅ Using cached image for: ${handle}`);
-    return imageCache.get(handle)!;
-  }
+export async function fetchProductsByCollection(collectionHandle: string = 'ai-match-tires') {
+  console.log(`🔍 Fetching products from collection: ${collectionHandle}`);
 
-  if (!SHOPIFY_DOMAIN || !STOREFRONT_TOKEN) {
-    console.warn('⚠️ Shopify credentials missing');
-    return null;
+  // Check cache
+  if (cachedProducts && Date.now() - cacheTimestamp < CACHE_DURATION) {
+    console.log('✅ Using cached products');
+    return cachedProducts;
   }
 
   const query = `
-    query getProduct($handle: String!) {
-      product(handle: $handle) {
-        images(first: 1) {
+    query getCollection($handle: String!) {
+      collection(handle: $handle) {
+        products(first: 50) {
           edges {
             node {
-              url
-              altText
+              id
+              title
+              handle
+              description
+              productType
+              tags
+              images(first: 1) {
+                edges {
+                  node {
+                    url
+                    altText
+                  }
+                }
+              }
+              variants(first: 1) {
+                edges {
+                  node {
+                    id
+                    title
+                    priceV2 {
+                      amount
+                      currencyCode
+                    }
+                    availableForSale
+                  }
+                }
+              }
+              metafields(identifiers: [
+                {namespace: "custom", key: "tire_size"}
+                {namespace: "custom", key: "tire_season"}
+                {namespace: "custom", key: "tire_brand"}
+                {namespace: "custom", key: "tire_model"}
+                {namespace: "custom", key: "tire_rating"}
+                {namespace: "custom", key: "tire_reviews"}
+                {namespace: "custom", key: "speed_rating"}
+                {namespace: "custom", key: "load_index"}
+              ]) {
+                key
+                value
+              }
             }
           }
         }
@@ -49,8 +81,6 @@ export async function fetchProductImage(handle: string): Promise<string | null> 
   `;
 
   try {
-    console.log(`🖼️ Fetching image for: ${handle}`);
-    
     const response = await fetch(STOREFRONT_API_URL, {
       method: 'POST',
       headers: {
@@ -59,66 +89,102 @@ export async function fetchProductImage(handle: string): Promise<string | null> 
       },
       body: JSON.stringify({
         query,
-        variables: { handle }
+        variables: { handle: collectionHandle }
       }),
     });
-
-    if (!response.ok) {
-      console.error(`❌ HTTP error for ${handle}:`, response.status);
-      return null;
-    }
 
     const result = await response.json();
     
     if (result.errors) {
-      console.error(`❌ GraphQL errors for ${handle}:`, result.errors);
-      return null;
+      console.error('❌ GraphQL errors:', result.errors);
+      return [];
     }
 
-    const imageUrl = result.data?.product?.images?.edges[0]?.node?.url;
+    const products = result.data?.collection?.products?.edges || [];
     
-    if (imageUrl) {
-      // Cache the image URL
-      imageCache.set(handle, imageUrl);
-      console.log(`✅ Image fetched for: ${handle}`);
-      return imageUrl;
-    }
+    const transformedProducts = products.map((edge: any) => {
+      const product = edge.node;
+      const variant = product.variants.edges[0]?.node;
+      const shopifyImage = product.images.edges[0]?.node.url || '';
+      const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
 
-    console.warn(`⚠️ No image found for: ${handle}`);
-    return null;
+      // Extract metafield values
+      const metafields = product.metafields || [];
+      const getMetafield = (key: string) => {
+        const field = metafields.find((m: any) => m.key === key);
+        return field?.value || '';
+      };
+
+      return {
+        id: product.id.split('/').pop(), // Extract numeric ID
+        title: product.title,
+        brand: getMetafield('tire_brand') || extractBrandFromTitle(product.title),
+        model: getMetafield('tire_model') || product.title,
+        size: getMetafield('tire_size') || extractSizeFromTitle(product.title),
+        season: getMetafield('tire_season') || extractSeasonFromTags(product.tags),
+        pricePerUnit: parseFloat(variant?.priceV2.amount || '0'),
+        rating: parseFloat(getMetafield('tire_rating') || '4.5'),
+        reviews: parseInt(getMetafield('tire_reviews') || '0'),
+        imageUrl,
+        description: product.description || '',
+        features: extractFeaturesFromDescription(product.description),
+        inStock: variant?.availableForSale || false,
+        warranty: '6-year limited', // Default, can be metafield
+        speedRating: getMetafield('speed_rating') || 'H',
+        loadIndex: getMetafield('load_index') || '94',
+        shopifyVariantId: variant?.id || '',
+        shopifyHandle: product.handle,
+        shopifyProductId: product.id
+      };
+    });
+
+    console.log(`✅ Fetched ${transformedProducts.length} products from Shopify`);
+    
+    // Cache the results
+    cachedProducts = transformedProducts;
+    cacheTimestamp = Date.now();
+    
+    return transformedProducts;
 
   } catch (error) {
-    console.error(`❌ Error fetching image for ${handle}:`, error);
-    return null;
+    console.error('❌ Error fetching products:', error);
+    return [];
   }
 }
 
 /**
- * Fetch complete product data (image + price + availability)
+ * ✅ OPTION 2: Fetch products by tag
  */
-export async function fetchProductData(handle: string): Promise<ShopifyProductData | null> {
-  if (!SHOPIFY_DOMAIN || !STOREFRONT_TOKEN) {
-    console.warn('⚠️ Shopify credentials missing');
-    return null;
-  }
+export async function fetchProductsByTag(tag: string = 'ai-match') {
+  console.log(`🔍 Fetching products with tag: ${tag}`);
 
   const query = `
-    query getProduct($handle: String!) {
-      product(handle: $handle) {
-        images(first: 1) {
-          edges {
-            node {
-              url
-            }
-          }
-        }
-        variants(first: 1) {
-          edges {
-            node {
-              priceV2 {
-                amount
+    query getProducts($query: String!) {
+      products(first: 50, query: $query) {
+        edges {
+          node {
+            id
+            title
+            handle
+            description
+            tags
+            images(first: 1) {
+              edges {
+                node {
+                  url
+                }
               }
-              availableForSale
+            }
+            variants(first: 1) {
+              edges {
+                node {
+                  id
+                  priceV2 {
+                    amount
+                  }
+                  availableForSale
+                }
+              }
             }
           }
         }
@@ -135,105 +201,224 @@ export async function fetchProductData(handle: string): Promise<ShopifyProductDa
       },
       body: JSON.stringify({
         query,
-        variables: { handle }
+        variables: { query: `tag:${tag}` }
       }),
     });
 
     const result = await response.json();
-    const product = result.data?.product;
-
-    if (!product) return null;
-
-    const imageUrl = product.images.edges[0]?.node.url || '';
-    const variant = product.variants.edges[0]?.node;
+    const products = result.data?.products?.edges || [];
     
-    return {
-      imageUrl,
-      price: parseFloat(variant?.priceV2.amount || '0'),
-      available: variant?.availableForSale || false
-    };
+    return transformShopifyProducts(products);
 
   } catch (error) {
-    console.error(`❌ Error fetching product data for ${handle}:`, error);
-    return null;
+    console.error('❌ Error fetching products by tag:', error);
+    return [];
   }
 }
 
 /**
- * Enrich tire products with Shopify images
- * This is the main function you'll use
+ * ✅ OPTION 3: Fetch products by product type
  */
-export async function enrichTiresWithImages<T extends { shopifyHandle?: string; imageUrl?: string; title?: string; brand?: string; model?: string }>(
-  tires: T[]
-): Promise<T[]> {
-  console.log(`🖼️ Enriching ${tires.length} products with images...`);
+export async function fetchProductsByType(productType: string = 'Tires') {
+  console.log(`🔍 Fetching products with type: ${productType}`);
 
-  const enrichedTires = await Promise.all(
-    tires.map(async (tire) => {
-      // ── 1. Static IMAGE_MAP lookup (O(1), zero network) ──────────────────
-      const lookupKey =
-        (tire.title) ||
-        (tire.brand && tire.model ? `${tire.brand} ${tire.model}` : null);
-
-      if (lookupKey) {
-        const staticUrl = getTireImageUrl(lookupKey);
-        if (staticUrl) {
-          console.log(`✅ [static map] image for: ${lookupKey}`);
-          return { ...tire, imageUrl: staticUrl };
+  const query = `
+    query getProducts($query: String!) {
+      products(first: 50, query: $query) {
+        edges {
+          node {
+            id
+            title
+            handle
+            description
+            images(first: 1) {
+              edges {
+                node {
+                  url
+                }
+              }
+            }
+            variants(first: 1) {
+              edges {
+                node {
+                  id
+                  priceV2 {
+                    amount
+                  }
+                  availableForSale
+                }
+              }
+            }
+          }
         }
       }
-
-      // ── 2. Fallback: Shopify Storefront API ───────────────────────────────
-      if (!tire.shopifyHandle) {
-        console.warn(`⚠️ No static image or Shopify handle for tire:`, lookupKey ?? tire);
-        return tire;
-      }
-
-      const imageUrl = await fetchProductImage(tire.shopifyHandle);
-
-      return {
-        ...tire,
-        imageUrl: imageUrl || tire.imageUrl || ''
-      };
-    })
-  );
-
-  const successCount = enrichedTires.filter(t => t.imageUrl).length;
-  console.log(`✅ Successfully enriched ${successCount}/${tires.length} products with images`);
-
-  return enrichedTires;
-}
-
-/**
- * Batch fetch images for multiple handles
- * More efficient than individual fetches
- */
-export async function batchFetchImages(handles: string[]): Promise<Map<string, string>> {
-  const images = new Map<string, string>();
-
-  console.log(`🖼️ Batch fetching images for ${handles.length} products...`);
-
-  // Fetch all images in parallel
-  const results = await Promise.all(
-    handles.map(handle => fetchProductImage(handle))
-  );
-
-  // Map handles to image URLs
-  handles.forEach((handle, index) => {
-    const imageUrl = results[index];
-    if (imageUrl) {
-      images.set(handle, imageUrl);
     }
-  });
+  `;
 
-  console.log(`✅ Successfully fetched ${images.size}/${handles.length} images`);
-  return images;
+  try {
+    const response = await fetch(STOREFRONT_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
+      },
+      body: JSON.stringify({
+        query,
+        variables: { query: `product_type:${productType}` }
+      }),
+    });
+
+    const result = await response.json();
+    const products = result.data?.products?.edges || [];
+    
+    return transformShopifyProducts(products);
+
+  } catch (error) {
+    console.error('❌ Error fetching products by type:', error);
+    return [];
+  }
 }
 
 /**
- * Clear the image cache (useful for debugging)
+ * Transform Shopify products to TireProduct format
  */
-export function clearImageCache(): void {
-  imageCache.clear();
-  console.log('🗑️ Image cache cleared');
+function transformShopifyProducts(edges: any[]) {
+  return edges.map((edge: any) => {
+    const product = edge.node;
+    const variant = product.variants.edges[0]?.node;
+    const shopifyImage = product.images.edges[0]?.node.url || '';
+    const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
+
+    return {
+      id: product.id.split('/').pop(),
+      title: product.title,
+      brand: extractBrandFromTitle(product.title),
+      model: product.title,
+      size: extractSizeFromTitle(product.title),
+      season: extractSeasonFromTags(product.tags || []),
+      pricePerUnit: parseFloat(variant?.priceV2.amount || '0'),
+      rating: 4.5, // Default
+      reviews: 0, // Default
+      imageUrl,
+      description: product.description || '',
+      features: extractFeaturesFromDescription(product.description),
+      inStock: variant?.availableForSale || false,
+      warranty: '6-year limited',
+      speedRating: 'H',
+      loadIndex: '94',
+      shopifyVariantId: variant?.id || '',
+      shopifyHandle: product.handle,
+      shopifyProductId: product.id
+    };
+  });
+}
+
+/**
+ * Helper: Extract brand from title
+ */
+function extractBrandFromTitle(title: string): string {
+  const brands = ['Michelin', 'Goodyear', 'Bridgestone', 'Continental', 'Pirelli', 'Yokohama', 'Hankook', 'Dunlop'];
+  const titleUpper = title.toUpperCase();
+  
+  for (const brand of brands) {
+    if (titleUpper.includes(brand.toUpperCase())) {
+      return brand;
+    }
+  }
+  
+  return title.split(' ')[0]; // First word as fallback
+}
+
+/**
+ * Helper: Extract tire size from title (e.g., "245/40R18")
+ */
+function extractSizeFromTitle(title: string): string {
+  const sizeMatch = title.match(/\d{3}\/\d{2}R?\d{2}/i);
+  return sizeMatch ? sizeMatch[0] : '225/65R17';
+}
+
+/**
+ * Helper: Extract season from tags
+ */
+function extractSeasonFromTags(tags: string[]): string {
+  const tagString = tags.join(' ').toLowerCase();
+  
+  if (tagString.includes('winter') || tagString.includes('snow')) return 'Winter';
+  if (tagString.includes('summer') || tagString.includes('performance')) return 'Summer';
+  if (tagString.includes('all-season') || tagString.includes('all season')) return 'All-Season';
+  
+  return 'All-Season'; // Default
+}
+
+/**
+ * Helper: Extract features from description
+ */
+function extractFeaturesFromDescription(description: string): string[] {
+  if (!description) return [];
+  
+  // Look for bullet points or line breaks
+  const lines = description.split('\n').filter(line => line.trim());
+  
+  // Take first 3 non-empty lines as features
+  return lines.slice(0, 3).map(line => 
+    line.replace(/^[-•*]\s*/, '').trim()
+  ).filter(Boolean);
+}
+
+/**
+ * Clear product cache (useful for debugging or forcing refresh)
+ */
+export function clearProductCache() {
+  cachedProducts = null;
+  cacheTimestamp = 0;
+  console.log('🗑️ Product cache cleared');
+}
+
+/**
+ * Get cache status
+ */
+export function getCacheStatus() {
+  const isCached = cachedProducts !== null;
+  const cacheAge = Date.now() - cacheTimestamp;
+  const cacheValid = cacheAge < CACHE_DURATION;
+  
+  return {
+    isCached,
+    cacheAge,
+    cacheValid,
+    productCount: cachedProducts?.length || 0
+  };
+}
+
+/**
+ * Enrich tire products with images — checks static map first (O(1)),
+ * falls back to Shopify Storefront API if not found.
+ * Backward-compatible with geminiService.ts consumers.
+ */
+export async function enrichTiresWithImages<T extends {
+  shopifyHandle?: string;
+  imageUrl?: string;
+  title?: string;
+  brand?: string;
+  model?: string;
+}>(tires: T[]): Promise<T[]> {
+  return tires.map((tire) => {
+    // Already has an image — skip
+    if (tire.imageUrl) return tire;
+
+    // Try static map via title or brand+model
+    const lookupKey =
+      tire.title ||
+      (tire.brand && tire.model ? `${tire.brand} ${tire.model}` : null);
+
+    if (lookupKey) {
+      const staticUrl = getTireImageUrl(lookupKey);
+      if (staticUrl) {
+        console.log(`✅ [static map] ${lookupKey}`);
+        return { ...tire, imageUrl: staticUrl };
+      }
+    }
+
+    return tire;
+  });
 }
