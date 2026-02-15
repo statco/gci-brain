@@ -435,6 +435,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const stats = await runSync('full', offset, chunkSize);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
+      case 'debug-images': {
+        // Returns first 5 products with their image state for diagnosis
+        let sinceId = 0;
+        const q = `tag=${SYNC_TAG}&limit=5&fields=id,title,images`;
+        const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+        const sample = (data.products || []).map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          imageCount: p.images?.length || 0,
+          firstImageSrc: p.images?.[0]?.src || null,
+        }));
+        return res.status(200).json({ success: true, mode: 'debug-images', sample });
+      }
       case 'backfill-images': {
         const bfOffset = parseInt((req.body as any)?.offset ?? req.query.offset ?? '0', 10);
         const bfLimit  = parseInt((req.body as any)?.limit  ?? req.query.limit  ?? '100', 10);
