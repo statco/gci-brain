@@ -270,49 +270,121 @@ async function createSheetsClient(): Promise<SheetsClient | null> {
 }
 
 // ─── READ COMPETITOR DATA FROM GOOGLE SHEETS ──────────────────────────────────
-// Reads the Summary tab from the price monitor spreadsheet
+// Reads the Summary tab and builds TWO lookup maps:
+//   1. By SKU / CT part number (direct match)
+//   2. By normalized brand+model+size key (fuzzy match to Shopify titles)
 
-interface CompetitorPriceData {
-  sku: string;
-  lowestCompetitorPrice: number | null;
+interface CompetitorData {
+  bySku: Map<string, number>;           // "VRED-WINTRAC-195-45R16" → lowest price
+  byBrandModelSize: Map<string, number>; // "vredestein-wintrac-19545r16" → lowest price
+}
+
+/** Normalize brand+model+size into a comparable key */
+function normalizeTireKey(brand: string, model: string, size: string): string {
+  return [brand, model, size]
+    .join('-')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')  // strip everything except letters and digits
+    .trim();
+}
+
+/** Extract brand+model+size key from a Shopify product title like "COOPER COBRA INSTINCT 2154517/R" */
+function keyFromTitle(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
 }
 
 async function readCompetitorPrices(
   sheetsClient: SheetsClient
-): Promise<Map<string, number>> {
-  const competitorMap = new Map<string, number>();
+): Promise<CompetitorData> {
+  const data: CompetitorData = {
+    bySku: new Map(),
+    byBrandModelSize: new Map(),
+  };
 
   const rows = await sheetsClient.readSheet('Summary');
   if (rows.length < 2) {
     console.warn('⚠️ Summary sheet is empty or has no data rows');
-    return competitorMap;
+    return data;
   }
 
   // Find column indices from header row
   const headers = rows[0].map(h => h.toLowerCase().trim());
-  const skuIdx = headers.findIndex(h => h.includes('sku'));
+  const skuIdx    = headers.findIndex(h => h.includes('sku'));
+  const ctPartIdx = headers.findIndex(h => h.includes('ct part'));
+  const brandIdx  = headers.findIndex(h => h.includes('brand'));
+  const modelIdx  = headers.findIndex(h => h.includes('model'));
+  const sizeIdx   = headers.findIndex(h => h.includes('size') && !h.includes('msrp'));
   const lowestIdx = headers.findIndex(h => h.includes('lowest'));
 
-  if (skuIdx === -1 || lowestIdx === -1) {
-    console.warn('⚠️ Could not find SKU or Lowest Competitor columns in Summary sheet');
-    return competitorMap;
+  if (lowestIdx === -1) {
+    console.warn('⚠️ Could not find Lowest Competitor column in Summary sheet');
+    return data;
   }
+
+  console.log(`📊 Sheet columns found — SKU:${skuIdx} CTPart:${ctPartIdx} Brand:${brandIdx} Model:${modelIdx} Size:${sizeIdx} Lowest:${lowestIdx}`);
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || !row[skuIdx]) continue;
+    if (!row) continue;
 
-    const sku = row[skuIdx].trim().toUpperCase();
     const priceStr = (row[lowestIdx] || '').replace(/[$,]/g, '').trim();
     const price = parseFloat(priceStr);
+    if (isNaN(price) || price <= 0) continue;
 
-    if (sku && !isNaN(price) && price > 0) {
-      competitorMap.set(sku, price);
+    // Map 1a: by monitor SKU (e.g. "VRED-WINTRAC-195-45R16")
+    if (skuIdx !== -1 && row[skuIdx]) {
+      const sku = row[skuIdx].trim().toUpperCase();
+      data.bySku.set(sku, price);
+    }
+
+    // Map 1b: by CT part number (e.g. "AP19555016HWTRA02") — direct match to Shopify SKU
+    if (ctPartIdx !== -1 && row[ctPartIdx]) {
+      const ctPart = row[ctPartIdx].trim().toUpperCase();
+      data.bySku.set(ctPart, price);
+    }
+
+    // Map 2: by brand+model+size (if columns exist)
+    if (brandIdx !== -1 && modelIdx !== -1 && sizeIdx !== -1) {
+      const brand = row[brandIdx] || '';
+      const model = row[modelIdx] || '';
+      const size  = row[sizeIdx]  || '';
+      if (brand && size) {
+        const key = normalizeTireKey(brand, model, size);
+        data.byBrandModelSize.set(key, price);
+      }
     }
   }
 
-  console.log(`📊 Read ${competitorMap.size} competitor prices from Summary sheet`);
-  return competitorMap;
+  console.log(`📊 Competitor prices loaded — bySku: ${data.bySku.size}, byBrandModelSize: ${data.byBrandModelSize.size}`);
+  return data;
+}
+
+/** Look up competitor price for a Shopify product using all available matching methods */
+function findCompetitorPrice(
+  product: ShopifyProductForPricing,
+  compData: CompetitorData,
+): number | null {
+  // Method 1: Direct SKU match (works if price monitor uses same CT part numbers)
+  const bySkuPrice = compData.bySku.get(product.sku);
+  if (bySkuPrice) {
+    console.log(`  ✅ SKU match: ${product.sku} → $${bySkuPrice}`);
+    return bySkuPrice;
+  }
+
+  // Method 2: Brand+model+size match from Shopify title
+  const titleKey = keyFromTitle(product.title);
+  for (const [sheetKey, price] of compData.byBrandModelSize) {
+    // Check if title contains the brand+model+size key (handles extra words in title)
+    if (titleKey.includes(sheetKey) || sheetKey.includes(titleKey)) {
+      console.log(`  ✅ Title match: "${product.title}" ↔ key "${sheetKey}" → $${price}`);
+      return price;
+    }
+  }
+
+  return null;
 }
 
 // ─── GET ALL SHOPIFY PRODUCTS WITH COST DATA ──────────────────────────────────
@@ -577,24 +649,25 @@ async function runPriceUpdate(
   const shopifyProducts = await getShopifyProductsForPricing();
   result.totalProducts = shopifyProducts.length;
 
-  // 2. Get competitor prices from Google Sheets
+  // 2. Get competitor prices from Google Sheets (dual-lookup: SKU + brand/model/size)
   const sheetsClient = await createSheetsClient();
-  let competitorPrices = new Map<string, number>();
+  let compData: CompetitorData = { bySku: new Map(), byBrandModelSize: new Map() };
 
   if (sheetsClient) {
-    competitorPrices = await readCompetitorPrices(sheetsClient);
+    compData = await readCompetitorPrices(sheetsClient);
   }
 
-  // 3. Merge manual price overrides
+  // 3. Merge manual price overrides (into the SKU map)
   if (manualPrices) {
     for (const [sku, price] of Object.entries(manualPrices)) {
-      competitorPrices.set(sku.trim().toUpperCase(), price);
+      compData.bySku.set(sku.trim().toUpperCase(), price);
     }
   }
 
   // 4. Calculate recommendations for each product
   for (const product of shopifyProducts) {
-    const compPrice = competitorPrices.get(product.sku) ?? null;
+    // Try all matching methods: SKU, then brand+model+size from title
+    const compPrice = findCompetitorPrice(product, compData);
     const manualPrice = manualPrices?.[product.sku] ?? manualPrices?.[product.sku.toLowerCase()];
 
     if (compPrice) result.withCompetitorData++;
