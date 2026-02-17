@@ -658,8 +658,12 @@ async function getPriceHistory(limit: number = 100): Promise<string[][]> {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST')
-    return res.status(405).json({ error: 'Use POST' });
+
+  // Accept both GET and POST for browser convenience
+  const isGet  = req.method === 'GET';
+  const isPost = req.method === 'POST';
+  if (!isGet && !isPost)
+    return res.status(405).json({ error: 'Use GET or POST' });
 
   if (!SHOPIFY.domain || !SHOPIFY.token) {
     return res.status(500).json({
