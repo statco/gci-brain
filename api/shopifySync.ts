@@ -50,6 +50,49 @@ const SYNC_TAG   = 'ct-sync';
 const BATCH_SIZE = 5;
 const BATCH_MS   = 300;
 
+// ─── PRICING CONFIG ───────────────────────────────────────────────────────────
+// Net cost = MSRP × NET_MULTIPLIER
+// Shipping buffer varies by tire type (from performanceCategory)
+// Floor price = net cost + shipping buffer (minimum viable selling price)
+
+const NET_MULTIPLIER = 0.50;
+
+const SHIPPING_BUFFERS: Record<string, number> = {
+  passenger:   35,
+  light_truck: 40,
+  heavy_truck: 50,
+};
+
+/**
+ * Classify tire type from Canada Tire performanceCategory field.
+ * Used to determine shipping buffer for floor price calculation.
+ */
+function classifyTireType(performanceCategory: string, size: string): string {
+  const cat = (performanceCategory || '').toLowerCase();
+  const s   = (size || '').toString();
+
+  // Heavy truck
+  if (cat.includes('commercial') || cat.includes('heavy') ||
+      cat.includes('medium truck') || cat.includes('steer') ||
+      cat.includes('drive') || cat.includes('trailer')) {
+    return 'heavy_truck';
+  }
+
+  // Light truck / SUV
+  if (cat.includes('light truck') || cat.includes('suv') ||
+      cat.includes('crossover') || cat.includes('all-terrain') ||
+      cat.includes('all terrain') || cat.includes('mud') ||
+      s.startsWith('LT')) {
+    return 'light_truck';
+  }
+
+  return 'passenger';
+}
+
+function getShippingBuffer(cat: string, size: string): number {
+  return SHIPPING_BUFFERS[classifyTireType(cat, size)] ?? 35;
+}
+
 // ─── CT OAUTH ─────────────────────────────────────────────────────────────────
 
 function pct(s: string): string {
@@ -206,11 +249,6 @@ async function setInventory(inventoryItemId: number, qty: number): Promise<void>
 
 // ─── IMAGE ATTACHMENT ─────────────────────────────────────────────────────────
 
-/**
- * Attach a tire image to a Shopify product via the Admin REST API.
- * Uses the static IMAGE_MAP — zero extra network calls for the lookup itself.
- * Only called for newly created products (updates skip to avoid duplicates).
- */
 async function attachProductImage(productId: number, ct: CTTire): Promise<boolean> {
   const lookupKey = `${ct.brand} ${ct.model}`;
   const imageUrl  = getTireImageUrl(lookupKey);
@@ -233,14 +271,9 @@ async function attachProductImage(productId: number, ct: CTTire): Promise<boolea
   }
 }
 
-/**
- * Backfill: attach images to existing products that have none.
- * Run once manually via POST ?action=backfill-images
- */
 async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: number; skipped: number; missing: number; errors: number; total: number; nextOffset: number; done: boolean }> {
   const stats = { attached: 0, skipped: 0, missing: 0, errors: 0, total: 0, nextOffset: 0, done: false };
 
-  // Fetch all CT-synced products with their current images
   let sinceId = 0;
   const allProducts: Array<{ id: number; title: string; images: any[] }> = [];
 
@@ -261,15 +294,12 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
   console.log(`🔍 Backfill: chunk ${offset}–${offset + chunk.length} of ${allProducts.length} products...`);
 
   await processBatches(chunk, async (p) => {
-    // Skip if already has an image
     if (p.images && p.images.length > 0) {
       stats.skipped++;
       return;
     }
 
-    // title format: "Brand Model Size" — strip trailing size to get brand+model
     const titleParts = p.title.trim().split(' ');
-    // Try full title first, then drop last token (size) iteratively
     let imageUrl: string | undefined;
     let matchedKey = '';
     for (let drop = 0; drop < 3; drop++) {
@@ -300,12 +330,28 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
   return stats;
 }
 
+// ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
+// UPDATED: Now sets compare_at_price = MSRP, price = MSRP, cost = net cost
+// The bulkPriceUpdate.ts endpoint adjusts price to competitive levels later.
+
 function buildPayload(ct: CTTire) {
   const size    = parseTireSize(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
-  const tags    = [SYNC_TAG, `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`, season.toLowerCase(), ct.isRunFlat?'run-flat':null].filter(Boolean).join(', ');
+  const msrp    = parseFloat(ct.msrp) || 0;
+  const netCost = msrp * NET_MULTIPLIER;
+  const tireType      = classifyTireType(ct.performanceCategory, ct.size);
+  const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
+  const floorPrice    = netCost + shippingBuffer;
+
+  const tags = [
+    SYNC_TAG,
+    `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
+    season.toLowerCase(),
+    `tire-type-${tireType}`,
+    ct.isRunFlat ? 'run-flat' : null,
+  ].filter(Boolean).join(', ');
 
   return {
     product: {
@@ -315,18 +361,27 @@ function buildPayload(ct: CTTire) {
       product_type: 'Tire',
       tags,
       variants: [{
-        sku: ct.partNumber,
-        price: (parseFloat(ct.msrp)||0).toFixed(2),
+        sku:                  ct.partNumber,
+        price:                msrp.toFixed(2),                // Selling price (bulk updater adjusts later)
+        compare_at_price:     msrp.toFixed(2),                // MSRP strikethrough
+        cost:                 netCost.toFixed(2),              // Net cost = MSRP × 0.50
         inventory_management: 'shopify',
-        inventory_policy: 'deny',
-        requires_shipping: true, taxable: true,
-        weight: 25, weight_unit: 'lb',
-        option1: size,
+        inventory_policy:     'deny',
+        requires_shipping:    true,
+        taxable:              true,
+        weight:               25,
+        weight_unit:          'lb',
+        option1:              size,
       }],
       options: [{ name: 'Size' }],
       metafields: [
-        { namespace:'canada_tire', key:'cost',        value:(parseFloat(ct.cost)||0).toFixed(2), type:'number_decimal' },
-        { namespace:'canada_tire', key:'part_number', value:ct.partNumber, type:'single_line_text_field' },
+        { namespace:'canada_tire', key:'cost',             value:(parseFloat(ct.cost)||0).toFixed(2), type:'number_decimal' },
+        { namespace:'canada_tire', key:'part_number',      value:ct.partNumber,                       type:'single_line_text_field' },
+        { namespace:'gci',         key:'net_cost',          value:netCost.toFixed(2),                  type:'number_decimal' },
+        { namespace:'gci',         key:'floor_price',       value:floorPrice.toFixed(2),               type:'number_decimal' },
+        { namespace:'gci',         key:'shipping_buffer',   value:shippingBuffer.toFixed(2),           type:'number_decimal' },
+        { namespace:'gci',         key:'tire_type',         value:tireType,                            type:'single_line_text_field' },
+        { namespace:'gci',         key:'performance_category', value:ct.performanceCategory || 'Standard', type:'single_line_text_field' },
       ],
     },
   };
@@ -343,46 +398,72 @@ async function processBatches<T>(items: T[], fn: (item: T) => Promise<void>): Pr
 
 // ─── MAIN SYNC ────────────────────────────────────────────────────────────────
 
-interface SyncStats { created:number; updated:number; skipped:number; errors:number; errorList:string[]; duration:string; timestamp:string; totalCT?:number; offset?:number; chunkSize?:number; done?:boolean; }
+interface SyncStats {
+  created:number; updated:number; skipped:number; errors:number;
+  skippedNoStock:number;                // NEW: count of zero-stock products filtered out
+  errorList:string[]; duration:string; timestamp:string;
+  totalCT?:number; inStock?:number;     // NEW: total vs in-stock counts
+  offset?:number; chunkSize?:number; done?:boolean;
+}
 
 async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: number = 50): Promise<SyncStats> {
   const t0 = Date.now();
-  const stats: SyncStats = { created:0, updated:0, skipped:0, errors:0, errorList:[], duration:'', timestamp:new Date().toISOString() };
+  const stats: SyncStats = {
+    created:0, updated:0, skipped:0, errors:0,
+    skippedNoStock:0,
+    errorList:[], duration:'', timestamp:new Date().toISOString(),
+  };
 
   console.log(`🚀 ${mode} sync — offset:${offset} chunkSize:${chunkSize}`);
   const [ctTires, existingMap] = await Promise.all([fetchAllCTTires(), fetchExistingProducts()]);
   console.log(`📦 CT:${ctTires.length} Shopify:${existingMap.size}`);
 
-  stats.totalCT  = ctTires.length;
-  stats.offset   = offset;
-  stats.chunkSize = chunkSize;
+  // ── NEW: Filter out zero-stock products for creation ──
+  // Products already in Shopify still get inventory updates (could go to 0)
+  // but NEW products are only created if they have positive stock.
+  const inStockTires = ctTires.filter(p => getTotalQty(p) > 0);
+  stats.totalCT       = ctTires.length;
+  stats.inStock       = inStockTires.length;
+  stats.skippedNoStock = ctTires.length - inStockTires.length;
+  stats.offset         = offset;
+  stats.chunkSize      = chunkSize;
 
-  // Slice the chunk for this call
-  const chunk = ctTires.slice(offset, offset + chunkSize);
-  stats.done  = offset + chunkSize >= ctTires.length;
+  console.log(`📊 In stock: ${inStockTires.length}/${ctTires.length} (${stats.skippedNoStock} filtered out)`);
 
-  const toCreate = chunk.filter(p => !existingMap.has(p.partNumber));
-  const toUpdate = chunk.filter(p =>  existingMap.has(p.partNumber));
+  // For CREATE: only use in-stock tires, sliced by chunk
+  const createPool = inStockTires.filter(p => !existingMap.has(p.partNumber));
+  const createChunk = createPool.slice(offset, offset + chunkSize);
 
-  // Create new products
-  await processBatches(toCreate, async (ct) => {
+  // For UPDATE: all existing products get updated (price + inventory), including zero-stock
+  const toUpdate = ctTires.filter(p => existingMap.has(p.partNumber));
+
+  stats.done = offset + chunkSize >= createPool.length;
+
+  console.log(`🆕 New to create: ${createChunk.length} (of ${createPool.length} total new)`);
+  console.log(`🔄 Existing to update: ${toUpdate.length}`);
+
+  // Create new products (only positive stock)
+  await processBatches(createChunk, async (ct) => {
     try {
       const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(buildPayload(ct)) });
       const productId = data.product?.id;
       const invId     = data.product?.variants?.[0]?.inventory_item_id;
       if (invId)     await setInventory(invId, getTotalQty(ct));
-      if (productId) await attachProductImage(productId, ct);  // 🖼️ attach from static map
+      if (productId) await attachProductImage(productId, ct);
       stats.created++;
     } catch (e: any) { stats.errors++; stats.errorList.push(`CREATE ${ct.partNumber}: ${e.message}`); }
   });
 
-  // Update existing products
+  // Update existing products (price, inventory, cost)
   await processBatches(toUpdate, async (ct) => {
     const ex = existingMap.get(ct.partNumber)!;
-    const newPrice = (parseFloat(ct.msrp)||0).toFixed(2);
+    const msrp     = parseFloat(ct.msrp) || 0;
+    const netCost  = msrp * NET_MULTIPLIER;
+    const newPrice = msrp.toFixed(2);
     const priceChanged = newPrice !== ex.price;
 
     if (!priceChanged && mode === 'daily') {
+      // Price unchanged — just update inventory
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       stats.skipped++;
       return;
@@ -390,7 +471,17 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
     try {
       if (priceChanged) {
-        await shopifyFetch(`/variants/${ex.variantId}.json`, { method:'PUT', body:JSON.stringify({ variant:{ id:ex.variantId, price:newPrice } }) });
+        await shopifyFetch(`/variants/${ex.variantId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            variant: {
+              id:               ex.variantId,
+              price:            newPrice,                // MSRP (bulk updater adjusts later)
+              compare_at_price: newPrice,                // MSRP strikethrough
+              cost:             netCost.toFixed(2),      // Net cost
+            },
+          }),
+        });
       }
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       stats.updated++;
@@ -398,7 +489,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   });
 
   stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
-  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} errors:${stats.errors} done:${stats.done}`);
+  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} errors:${stats.errors} done:${stats.done}`);
   return stats;
 }
 
@@ -428,7 +519,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     switch (action) {
       case 'status': {
         const existing = await fetchExistingProducts();
-        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily' });
+        return res.status(200).json({
+          success:true,
+          shopifyProductCount: existing.size,
+          domain:              SHOPIFY.domain,
+          ctEnvironment:       CT.useSandbox ? 'SANDBOX' : 'PRODUCTION',
+          nextCron:            '3:00 AM ET daily',
+          pricingConfig: {
+            netMultiplier:  NET_MULTIPLIER,
+            shippingBuffers: SHIPPING_BUFFERS,
+            note: 'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing',
+          },
+        });
       }
       case 'full-import': {
         const offset    = parseInt((req.body as any)?.offset    || '0', 10);
@@ -437,7 +539,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
       case 'missing-images': {
-        // Returns all unique titles that have NO image — to identify map gaps
         let sinceId = 0;
         const noImageTitles = new Set<string>();
         const withImageTitles = new Set<string>();
@@ -447,7 +548,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const data: any = await shopifyFetch<any>(`/products.json?${q}`);
           const products = data.products || [];
           for (const p of products) {
-            // Strip size suffix from title (last token e.g. "235/65R18" or "2356518/R")
             const tokens = p.title.trim().split(' ');
             const modelKey = tokens.slice(0, -1).join(' ').toUpperCase();
             if (!p.images || p.images.length === 0) {
@@ -460,7 +560,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sinceId = products[products.length - 1].id;
         }
 
-        // Only report models that NEVER have an image (not just some variants missing)
         const trulyMissing = [...noImageTitles].filter(t => !withImageTitles.has(t)).sort();
         return res.status(200).json({
           success: true, mode: 'missing-images',
@@ -469,8 +568,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'debug-images': {
-        // Returns first 5 products with their image state for diagnosis
-        let sinceId = 0;
         const q = `tag=${SYNC_TAG}&limit=5&fields=id,title,images`;
         const data: any = await shopifyFetch<any>(`/products.json?${q}`);
         const sample = (data.products || []).map((p: any) => ({
@@ -488,12 +585,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
       }
       case 'dedup': {
-        // Finds duplicate ct-sync products (same title) and deletes all but the best copy.
-        // "Best" = most images; tiebreak = lowest product ID (oldest).
-        // Default is DRY RUN — pass { confirm: true } in body to actually delete.
         const dryRun = !(req.body as any)?.confirm;
-        // Collect ALL ct-sync products using cursor-based pagination (Link header).
-        // since_id is unreliable with tag filters — cursor pagination is the correct method.
         const allById = new Map<number, { id: number; title: string; imageCount: number }>();
         let nextUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
@@ -510,13 +602,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           for (const p of (data.products || [])) {
             allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
           }
-          // Parse Link header for next cursor
           const link = res.headers.get('link') || '';
           const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
           nextUrl = nextMatch ? nextMatch[1] : null;
         }
 
-        // Group deduplicated products by title
         const byTitle = new Map<string, Array<{ id: number; title: string; imageCount: number }>>();
         for (const p of allById.values()) {
           const key = p.title.trim().toUpperCase();
@@ -524,15 +614,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           byTitle.get(key)!.push(p);
         }
 
-        // Identify duplicates
         const duplicateGroups: Array<{ title: string; keep: number; delete: number[] }> = [];
         for (const [title, group] of byTitle.entries()) {
-          // Deduplicate by product ID first (since_id pagination can yield same product twice)
           const seen = new Map<number, { id: number; title: string; imageCount: number }>();
           for (const p of group) seen.set(p.id, p);
           const unique = [...seen.values()];
           if (unique.length < 2) continue;
-          // Sort: most images first, then lowest ID (oldest) as tiebreak
           unique.sort((a, b) => b.imageCount - a.imageCount || a.id - b.id);
           const keepId = unique[0].id;
           const deleteIds = [...new Set(unique.slice(1).map(p => p.id))].filter(id => id !== keepId);
@@ -552,7 +639,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               console.error(`[dedup] Failed to delete product ${id}:`, err);
               failed++;
             }
-            await new Promise(r => setTimeout(r, 250)); // rate-limit: 4 req/s
+            await new Promise(r => setTimeout(r, 250));
           }
           return res.status(200).json({
             success: true, mode: 'dedup', dryRun: false,
@@ -562,7 +649,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
-        // Dry run — just report what would be deleted
         return res.status(200).json({
           success: true, mode: 'dedup', dryRun: true,
           duplicateGroups: duplicateGroups.length,
