@@ -59,7 +59,7 @@ export async function getTireRecommendations(
 
   try {
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
     });
 
