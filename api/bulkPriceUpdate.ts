@@ -40,8 +40,7 @@ const SHOPIFY = {
 
 const PRICING = {
   netMultiplier: 0.50,
-  undercutAmount: 2.00,  // Undercut lowest competitor by this amount
-  minMargin: 5.00,       // Minimum profit margin above floor price
+  fixedProfit: 30,        // $30 fixed profit per tire — non-negotiable
 
   shippingBuffers: {
     passenger:   35,
@@ -238,9 +237,9 @@ async function createSheetsClient(): Promise<SheetsClient | null> {
                 method: 'PUT',
                 body: JSON.stringify({
                   values: [[
-                    'Timestamp', 'SKU', 'Brand', 'Size',
+                    'Timestamp', 'SKU', 'Title', 'Size',
                     'Old Price', 'New Price', 'MSRP', 'Net Cost',
-                    'Floor Price', 'Lowest Competitor', 'Margin ($)',
+                    'Profit', 'Shipping', 'Customer Savings',
                     'Change ($)', 'Change (%)', 'Reason',
                   ]],
                 }),
@@ -465,7 +464,9 @@ async function getShopifyProductsForPricing(): Promise<ShopifyProductForPricing[
   return products;
 }
 
-// ─── CALCULATE OPTIMAL PRICE ──────────────────────────────────────────────────
+// ─── CALCULATE PRICE — FIXED MARGIN MODEL ────────────────────────────────────
+// Formula: selling_price = net_cost + fixed_profit + shipping_buffer
+// Every tire guarantees $30 profit. Period.
 
 interface PriceRecommendation {
   sku: string;
@@ -476,71 +477,55 @@ interface PriceRecommendation {
   msrp: number;
   netCost: number;
   shippingBuffer: number;
-  floorPrice: number;
-  lowestCompetitor: number | null;
-  suggestedPrice: number;
-  margin: number;
+  fixedProfit: number;
+  sellingPrice: number;
+  savings: number;       // MSRP - sellingPrice (what customer saves)
+  savingsPct: number;
   changeAmount: number;
   changePct: number;
   reason: string;
-  action: 'lower' | 'raise' | 'no-change' | 'no-competitor-data';
+  action: 'lower' | 'raise' | 'no-change';
 }
 
 function calculatePrice(
   product: ShopifyProductForPricing,
-  competitorPrice: number | null,
   manualOverride?: number
 ): PriceRecommendation {
   const msrp = product.compareAtPrice || product.currentPrice;
-  const { netCost, shippingBuffer, floorPrice } = product;
+  const { netCost, shippingBuffer } = product;
+  const profit = PRICING.fixedProfit;
 
-  let suggestedPrice: number;
+  let sellingPrice: number;
   let reason: string;
-  let action: PriceRecommendation['action'];
 
   if (manualOverride && manualOverride > 0) {
-    // Manual override: use specified price but enforce floor
-    suggestedPrice = Math.max(manualOverride, floorPrice);
-    reason = manualOverride >= floorPrice
-      ? `Manual override to $${manualOverride.toFixed(2)}`
-      : `Manual override $${manualOverride.toFixed(2)} raised to floor $${floorPrice.toFixed(2)}`;
-    action = suggestedPrice !== product.currentPrice ? 'lower' : 'no-change';
-
-  } else if (competitorPrice && competitorPrice > 0) {
-    // Competitive pricing: undercut by $2, but never below floor
-    const idealPrice = competitorPrice - PRICING.undercutAmount;
-
-    if (idealPrice >= floorPrice + PRICING.minMargin) {
-      // Plenty of room: undercut and enjoy margin
-      suggestedPrice = Math.round(idealPrice * 100) / 100;
-      reason = `Undercut competitor ($${competitorPrice.toFixed(2)}) by $${PRICING.undercutAmount}`;
-      action = suggestedPrice < product.currentPrice ? 'lower' : suggestedPrice > product.currentPrice ? 'raise' : 'no-change';
-
-    } else if (idealPrice >= floorPrice) {
-      // Tight but doable: price at ideal, thin margin
-      suggestedPrice = Math.round(idealPrice * 100) / 100;
-      reason = `Tight margin: competitor at $${competitorPrice.toFixed(2)}, floor at $${floorPrice.toFixed(2)}`;
-      action = suggestedPrice < product.currentPrice ? 'lower' : suggestedPrice > product.currentPrice ? 'raise' : 'no-change';
-
-    } else {
-      // Below floor: can't compete on price alone
-      suggestedPrice = floorPrice;
-      reason = `❌ Can't undercut: competitor $${competitorPrice.toFixed(2)} below floor $${floorPrice.toFixed(2)}`;
-      action = suggestedPrice < product.currentPrice ? 'lower' : suggestedPrice > product.currentPrice ? 'raise' : 'no-change';
-    }
-
+    sellingPrice = manualOverride;
+    reason = `Manual override → $${manualOverride.toFixed(2)}`;
   } else {
-    // No competitor data: keep current price or set to MSRP
-    suggestedPrice = product.currentPrice > 0 ? product.currentPrice : msrp;
-    reason = 'No competitor data — price unchanged';
-    action = 'no-competitor-data';
+    // Fixed margin: net cost + $30 profit + shipping
+    sellingPrice = netCost + profit + shippingBuffer;
+    reason = `$${netCost.toFixed(0)} cost + $${profit} profit + $${shippingBuffer} ship`;
   }
 
-  const margin = suggestedPrice - netCost - shippingBuffer;
-  const changeAmount = suggestedPrice - product.currentPrice;
-  const changePct = product.currentPrice > 0
-    ? ((changeAmount / product.currentPrice) * 100)
-    : 0;
+  // Round to .99 for cleaner retail look
+  sellingPrice = Math.floor(sellingPrice) + 0.99;
+
+  // Safety: never sell below cost + shipping (even with manual override)
+  const absolute_floor = netCost + shippingBuffer;
+  if (sellingPrice < absolute_floor) {
+    sellingPrice = Math.ceil(absolute_floor) + 0.99;
+    reason += ` (raised to cover cost+ship)`;
+  }
+
+  const savings     = msrp - sellingPrice;
+  const savingsPct  = msrp > 0 ? (savings / msrp) * 100 : 0;
+  const changeAmount = sellingPrice - product.currentPrice;
+  const changePct   = product.currentPrice > 0 ? (changeAmount / product.currentPrice) * 100 : 0;
+
+  let action: PriceRecommendation['action'] = 'no-change';
+  if (Math.abs(changeAmount) >= 0.02) {
+    action = changeAmount < 0 ? 'lower' : 'raise';
+  }
 
   return {
     sku: product.sku,
@@ -551,12 +536,12 @@ function calculatePrice(
     msrp,
     netCost,
     shippingBuffer,
-    floorPrice,
-    lowestCompetitor: competitorPrice,
-    suggestedPrice: Math.round(suggestedPrice * 100) / 100,
-    margin: Math.round(margin * 100) / 100,
+    fixedProfit: profit,
+    sellingPrice: Math.round(sellingPrice * 100) / 100,
+    savings:     Math.round(savings * 100) / 100,
+    savingsPct:  Math.round(savingsPct * 10) / 10,
     changeAmount: Math.round(changeAmount * 100) / 100,
-    changePct: Math.round(changePct * 10) / 10,
+    changePct:   Math.round(changePct * 10) / 10,
     reason,
     action,
   };
@@ -596,14 +581,14 @@ async function logChangesToSheet(
     timestamp,
     c.sku,
     c.title.substring(0, 50),
-    '', // Size (could extract from title)
+    '',
     `$${c.currentPrice.toFixed(2)}`,
-    `$${c.suggestedPrice.toFixed(2)}`,
+    `$${c.sellingPrice.toFixed(2)}`,
     `$${c.msrp.toFixed(2)}`,
     `$${c.netCost.toFixed(2)}`,
-    `$${c.floorPrice.toFixed(2)}`,
-    c.lowestCompetitor ? `$${c.lowestCompetitor.toFixed(2)}` : 'N/A',
-    `$${c.margin.toFixed(2)}`,
+    `$${c.fixedProfit.toFixed(2)}`,
+    `$${c.shippingBuffer.toFixed(2)}`,
+    `$${c.savings.toFixed(2)} (${c.savingsPct.toFixed(0)}% off)`,
     `${c.changeAmount >= 0 ? '+' : ''}$${c.changeAmount.toFixed(2)}`,
     `${c.changePct >= 0 ? '+' : ''}${c.changePct.toFixed(1)}%`,
     c.reason,
@@ -649,53 +634,34 @@ async function runPriceUpdate(
   const shopifyProducts = await getShopifyProductsForPricing();
   result.totalProducts = shopifyProducts.length;
 
-  // 2. Get competitor prices from Google Sheets (dual-lookup: SKU + brand/model/size)
-  const sheetsClient = await createSheetsClient();
-  let compData: CompetitorData = { bySku: new Map(), byBrandModelSize: new Map() };
-
-  if (sheetsClient) {
-    compData = await readCompetitorPrices(sheetsClient);
-  }
-
-  // 3. Merge manual price overrides (into the SKU map)
-  if (manualPrices) {
-    for (const [sku, price] of Object.entries(manualPrices)) {
-      compData.bySku.set(sku.trim().toUpperCase(), price);
-    }
-  }
-
-  // 4. Calculate recommendations for each product
+  // 2. Calculate fixed-margin price for each product
   for (const product of shopifyProducts) {
-    // Try all matching methods: SKU, then brand+model+size from title
-    const compPrice = findCompetitorPrice(product, compData);
     const manualPrice = manualPrices?.[product.sku] ?? manualPrices?.[product.sku.toLowerCase()];
-
-    if (compPrice) result.withCompetitorData++;
-
-    const rec = calculatePrice(product, compPrice, manualPrice);
+    const rec = calculatePrice(product, manualPrice);
     result.recommendations.push(rec);
 
-    if (Math.abs(rec.changeAmount) < 0.01) {
+    if (Math.abs(rec.changeAmount) < 0.02) {
       result.unchanged++;
     } else {
       result.priceChanges++;
     }
   }
 
-  // 5. Apply changes (if not dry run)
+  // 3. Apply changes (if not dry run)
   if (!dryRun) {
-    const toUpdate = result.recommendations.filter(r => Math.abs(r.changeAmount) >= 0.01);
+    const sheetsClient = await createSheetsClient();
+    const toUpdate = result.recommendations.filter(r => Math.abs(r.changeAmount) >= 0.02);
     console.log(`🔄 Updating ${toUpdate.length} prices in Shopify...`);
 
     for (const rec of toUpdate) {
       try {
         await updateVariantPrice(
           rec.variantId,
-          rec.suggestedPrice,
+          rec.sellingPrice,
           rec.msrp  // compare_at_price = MSRP (strikethrough)
         );
         result.updated++;
-        console.log(`  ✅ ${rec.sku}: $${rec.currentPrice} → $${rec.suggestedPrice} (${rec.reason})`);
+        console.log(`  ✅ ${rec.sku}: $${rec.currentPrice} → $${rec.sellingPrice} (save ${rec.savingsPct}%)`);
         await sleep(600);  // Rate limit
       } catch (err: any) {
         result.failed++;
@@ -704,7 +670,7 @@ async function runPriceUpdate(
       }
     }
 
-    // 6. Log all changes to Google Sheets
+    // 4. Log all changes to Google Sheets
     await logChangesToSheet(sheetsClient, toUpdate);
   }
 
@@ -757,15 +723,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Sort: biggest savings first
         const sorted = [...result.recommendations]
-          .filter(r => r.action !== 'no-change' && r.action !== 'no-competitor-data')
+          .filter(r => r.action !== 'no-change')
           .sort((a, b) => a.changeAmount - b.changeAmount);
 
         return res.status(200).json({
           success: true,
           dryRun: true,
+          pricingModel: `Net cost (MSRP×${PRICING.netMultiplier}) + $${PRICING.fixedProfit} profit + shipping`,
           summary: {
             totalProducts: result.totalProducts,
-            withCompetitorData: result.withCompetitorData,
             priceChanges: result.priceChanges,
             unchanged: result.unchanged,
           },
@@ -783,9 +749,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           dryRun: false,
+          pricingModel: `Net cost (MSRP×${PRICING.netMultiplier}) + $${PRICING.fixedProfit} profit + shipping`,
           summary: {
             totalProducts: result.totalProducts,
-            withCompetitorData: result.withCompetitorData,
             priceChanges: result.priceChanges,
             updated: result.updated,
             failed: result.failed,
