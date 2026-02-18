@@ -617,9 +617,11 @@ interface PriceUpdateResult {
 
 async function runPriceUpdate(
   dryRun: boolean,
-  manualPrices?: Record<string, number>  // SKU → price overrides
-): Promise<PriceUpdateResult> {
-  const result: PriceUpdateResult = {
+  manualPrices?: Record<string, number>,
+  offset: number = 0,
+  chunkSize: number = 200    // ~200 updates in under 5 min at 600ms each
+): Promise<PriceUpdateResult & { offset: number; chunkSize: number; done: boolean }> {
+  const result: PriceUpdateResult & { offset: number; chunkSize: number; done: boolean } = {
     totalProducts: 0,
     withCompetitorData: 0,
     priceChanges: 0,
@@ -628,6 +630,9 @@ async function runPriceUpdate(
     failed: 0,
     errors: [],
     recommendations: [],
+    offset,
+    chunkSize,
+    done: false,
   };
 
   // 1. Get all Shopify products
@@ -635,34 +640,38 @@ async function runPriceUpdate(
   result.totalProducts = shopifyProducts.length;
 
   // 2. Calculate fixed-margin price for each product
+  const allRecs: PriceRecommendation[] = [];
   for (const product of shopifyProducts) {
     const manualPrice = manualPrices?.[product.sku] ?? manualPrices?.[product.sku.toLowerCase()];
-    const rec = calculatePrice(product, manualPrice);
-    result.recommendations.push(rec);
-
-    if (Math.abs(rec.changeAmount) < 0.02) {
-      result.unchanged++;
-    } else {
-      result.priceChanges++;
-    }
+    allRecs.push(calculatePrice(product, manualPrice));
   }
 
-  // 3. Apply changes (if not dry run)
+  // 3. Filter to only products that need a change
+  const needsUpdate = allRecs.filter(r => Math.abs(r.changeAmount) >= 0.02);
+  result.priceChanges = needsUpdate.length;
+  result.unchanged = allRecs.length - needsUpdate.length;
+
+  // 4. Slice the chunk for this call
+  const chunk = needsUpdate.slice(offset, offset + chunkSize);
+  result.done = offset + chunkSize >= needsUpdate.length;
+  result.recommendations = chunk;
+
+  console.log(`📦 Total: ${allRecs.length} | Needs update: ${needsUpdate.length} | This chunk: ${chunk.length} (offset ${offset}) | Done after this: ${result.done}`);
+
+  // 5. Apply changes (if not dry run)
   if (!dryRun) {
     const sheetsClient = await createSheetsClient();
-    const toUpdate = result.recommendations.filter(r => Math.abs(r.changeAmount) >= 0.02);
-    console.log(`🔄 Updating ${toUpdate.length} prices in Shopify...`);
+    console.log(`🔄 Updating ${chunk.length} prices in Shopify...`);
 
-    for (const rec of toUpdate) {
+    for (const rec of chunk) {
       try {
         await updateVariantPrice(
           rec.variantId,
           rec.sellingPrice,
-          rec.msrp  // compare_at_price = MSRP (strikethrough)
+          rec.msrp
         );
         result.updated++;
-        console.log(`  ✅ ${rec.sku}: $${rec.currentPrice} → $${rec.sellingPrice} (save ${rec.savingsPct}%)`);
-        await sleep(600);  // Rate limit
+        await sleep(600);
       } catch (err: any) {
         result.failed++;
         result.errors.push({ sku: rec.sku, error: err.message });
@@ -670,8 +679,11 @@ async function runPriceUpdate(
       }
     }
 
-    // 4. Log all changes to Google Sheets
-    await logChangesToSheet(sheetsClient, toUpdate);
+    console.log(`✅ Chunk done: ${result.updated} updated, ${result.failed} failed`);
+
+    // 6. Log changes to Google Sheets
+    const updated = chunk.filter((_, i) => i < result.updated);
+    await logChangesToSheet(sheetsClient, updated);
   }
 
   return result;
@@ -740,11 +752,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // ── Execute price updates ─────────────────────────────────────────
+      // ── Execute price updates (chunked — use offset param for batches) ──
       case 'price-execute': {
-        console.log('🚀 Executing price updates...');
+        const offset    = parseInt(req.query.offset as string || '0', 10);
+        const chunkSize = parseInt(req.query.chunk  as string || '200', 10);
+        console.log(`🚀 Executing price updates — offset:${offset} chunk:${chunkSize}`);
         const manualPrices = req.body?.manualPrices || undefined;
-        const result = await runPriceUpdate(false, manualPrices);
+        const result = await runPriceUpdate(false, manualPrices, offset, chunkSize);
 
         return res.status(200).json({
           success: true,
@@ -757,8 +771,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             failed: result.failed,
             unchanged: result.unchanged,
           },
+          chunk: {
+            offset: result.offset,
+            chunkSize: result.chunkSize,
+            done: result.done,
+            nextUrl: result.done ? null : `?action=price-execute&offset=${offset + chunkSize}`,
+          },
           errors: result.errors,
-          recommendations: result.recommendations,
         });
       }
 
