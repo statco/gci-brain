@@ -29,14 +29,14 @@ const SHOPIFY = {
 // ─── CANADA TIRE API ─────────────────────────────────────────────────────────
 
 const CT = {
-  consumerKey:    process.env.CT_CONSUMER_KEY    || '',
-  consumerSecret: process.env.CT_CONSUMER_SECRET || '',
-  tokenId:        process.env.CT_TOKEN_ID        || '',
-  tokenSecret:    process.env.CT_TOKEN_SECRET    || '',
-  realm:          process.env.CT_REALM           || '8031691',
-  customerId:     process.env.CT_CUSTOMER_ID     || '',
-  customerToken:  process.env.CT_CUSTOMER_TOKEN  || '',
-  useSandbox:     process.env.CT_USE_SANDBOX === 'true',
+  consumerKey:    process.env.CT_CONSUMER_KEY       || '',
+  consumerSecret: process.env.CT_CONSUMER_SECRET    || '',
+  tokenId:        process.env.CT_TOKEN_ID           || '',
+  tokenSecret:    process.env.CT_TOKEN_SECRET       || '',
+  realm:          process.env.CT_REALM              || '8031691',
+  customerId:     process.env.CT_CUSTOMER_NUMBER    || '19997',
+  customerToken:  process.env.CT_CUSTOMER_API_TOKEN || '',
+  useSandbox:     process.env.CT_USE_SANDBOX !== 'false',
   get baseUrl() {
     return this.useSandbox
       ? 'https://8031691-sb1.restlets.api.netsuite.com/app/site/hosting/restlet.nl'
