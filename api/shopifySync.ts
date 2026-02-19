@@ -532,6 +532,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
         });
       }
+      case 'cost-analysis': {
+        // Pull real CT costs and compare to MSRP — helps calibrate pricing formula
+        const ctTires = await fetchAllCTTires();
+        const inStock = ctTires.filter(p => getTotalQty(p) > 0);
+
+        // Sample across price ranges
+        const sorted = [...inStock].sort((a, b) => parseFloat(a.msrp) - parseFloat(b.msrp));
+        const sampleSize = 30;
+        const step = Math.max(1, Math.floor(sorted.length / sampleSize));
+        const sample = sorted.filter((_, i) => i % step === 0).slice(0, sampleSize);
+
+        const analysis = sample.map(t => {
+          const msrp = parseFloat(t.msrp) || 0;
+          const realCost = parseFloat(t.cost) || 0;
+          const estimated50 = msrp * 0.50;
+          const costPct = msrp > 0 ? ((realCost / msrp) * 100) : 0;
+          const tireType = classifyTireType(t.performanceCategory, t.size);
+          const ship = SHIPPING_BUFFERS[tireType] || 35;
+          const sellingReal = realCost + 30 + ship;
+          const sellingEst  = estimated50 + 30 + ship;
+
+          return {
+            sku: t.partNumber,
+            brand: t.brand,
+            model: t.model,
+            size: parseTireSize(t.size),
+            tireType,
+            msrp: `$${msrp.toFixed(2)}`,
+            realCost: `$${realCost.toFixed(2)}`,
+            estimated50pct: `$${estimated50.toFixed(2)}`,
+            costAsPctOfMSRP: `${costPct.toFixed(1)}%`,
+            difference: `$${(estimated50 - realCost).toFixed(2)}`,
+            sellingWithRealCost: `$${sellingReal.toFixed(2)}`,
+            sellingWithEstimate: `$${sellingEst.toFixed(2)}`,
+            customerSavesMore: `$${(sellingEst - sellingReal).toFixed(2)}`,
+          };
+        });
+
+        // Summary stats
+        const allCosts = inStock.map(t => {
+          const msrp = parseFloat(t.msrp) || 1;
+          const cost = parseFloat(t.cost) || 0;
+          return (cost / msrp) * 100;
+        }).filter(p => p > 0 && p < 100);
+
+        const avgPct = allCosts.reduce((s, v) => s + v, 0) / allCosts.length;
+        const minPct = Math.min(...allCosts);
+        const maxPct = Math.max(...allCosts);
+
+        return res.status(200).json({
+          success: true,
+          mode: 'cost-analysis',
+          totalInStock: inStock.length,
+          costSummary: {
+            avgCostAsPctOfMSRP: `${avgPct.toFixed(1)}%`,
+            minCostPct: `${minPct.toFixed(1)}%`,
+            maxCostPct: `${maxPct.toFixed(1)}%`,
+            note: 'If avg is well below 50%, you can lower prices by using real CT cost instead of MSRP×0.50',
+          },
+          sample: analysis,
+        });
+      }
       case 'full-import': {
         const offset    = parseInt((req.body as any)?.offset    || '0', 10);
         const chunkSize = parseInt((req.body as any)?.chunkSize || '50', 10);
