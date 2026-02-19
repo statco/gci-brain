@@ -94,9 +94,10 @@ async function fetchCTCostMap(): Promise<Map<string, CTCostEntry>> {
           isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1 },
       }),
     });
-    if (!res.ok) throw new Error(`CT API ${res.status}`);
-    const data: any = await res.json();
-    if (!data.success) throw new Error('CT API error');
+    const text = await res.text();
+    if (!res.ok) throw new Error(`CT API HTTP ${res.status}: ${text.slice(0, 300)}`);
+    const data: any = JSON.parse(text);
+    if (!data.success) throw new Error(`CT API returned success=false: ${text.slice(0, 300)}`);
     for (const t of (data.data || [])) {
       const cost = parseFloat(t.cost) || 0;
       const msrp = parseFloat(t.msrp) || 0;
@@ -828,6 +829,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     switch (action) {
+
+      // ── Debug: show CT costs vs Shopify prices ────────────────────────
+      case 'price-debug': {
+        const ctCosts = await fetchCTCostMap();
+        const products = await getShopifyProductsForPricing(ctCosts);
+
+        // Show 10 sample products with full breakdown
+        const sample = products.slice(0, 10).map(p => {
+          const ctEntry = ctCosts.get(p.sku);
+          const rec = calculatePrice(p);
+          return {
+            sku: p.sku,
+            title: p.title,
+            currentPrice: p.currentPrice,
+            msrp: p.compareAtPrice,
+            netCost: p.netCost,
+            costSource: ctEntry ? 'CT_API_REAL' : 'FALLBACK_50PCT',
+            ctApiCost: ctEntry?.cost || null,
+            shippingBuffer: p.shippingBuffer,
+            tireType: p.tireType,
+            calculatedPrice: rec.sellingPrice,
+            changeAmount: rec.changeAmount,
+            reason: rec.reason,
+          };
+        });
+
+        return res.status(200).json({
+          success: true,
+          ctCostMapSize: ctCosts.size,
+          totalProducts: products.length,
+          ctApiWorking: ctCosts.size > 0,
+          envCheck: {
+            hasConsumerKey: !!CT.consumerKey,
+            hasCustomerToken: !!CT.customerToken,
+            customerId: CT.customerId,
+            sandbox: CT.useSandbox,
+            baseUrl: CT.baseUrl,
+          },
+          sample,
+        });
+      }
 
       // ── Preview price changes (dry run) ───────────────────────────────
       case 'price-preview': {
