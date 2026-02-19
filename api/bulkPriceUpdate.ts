@@ -1,27 +1,15 @@
 // api/bulkPriceUpdate.ts
 // ============================================================
-// Shopify Bulk Price Updater
+// Shopify Bulk Price Updater — Fixed Margin Model
 //
-// Reads competitor pricing data, calculates optimal prices using
-// the floor price formula, updates Shopify, and logs every change
-// to Google Sheets.
-//
-// Pricing formula:
-//   net_cost      = MSRP × 0.50
-//   floor_price   = net_cost + shipping_buffer ($35 / $40 / $50)
-//   suggested     = lowest_competitor - $2 (never below floor)
+// Fetches REAL dealer costs from Canada Tire API, then applies:
+//   selling_price = real_ct_cost + $30 profit + shipping_buffer
 //   compare_at    = MSRP (strikethrough price)
 //
 // Actions:
-//   POST /api/bulkPriceUpdate?action=price-preview   — Show proposed changes (dry run)
-//   POST /api/bulkPriceUpdate?action=price-execute    — Update Shopify + log to Sheet
-//   POST /api/bulkPriceUpdate?action=price-history    — View recent price change log
-//
-// Env vars required:
-//   SHOPIFY_STORE                — e.g. "gcitires.myshopify.com"
-//   SHOPIFY_ACCESS_TOKEN         — Admin API token (write_products)
-//   GOOGLE_SHEETS_CREDENTIALS    — Service account JSON (same as price monitor)
-//   PRICE_MONITOR_SHEET_NAME     — Default: "GCI Tires - Price Monitor"
+//   GET /api/bulkPriceUpdate?action=price-preview   — Show proposed changes (dry run)
+//   GET /api/bulkPriceUpdate?action=price-execute    — Update Shopify + log to Sheet
+//   GET /api/bulkPriceUpdate?action=price-history    — View recent price change log
 // ============================================================
 
 import crypto from 'crypto';
@@ -37,6 +25,91 @@ const SHOPIFY = {
     return `https://${this.domain}/admin/api/${this.apiVersion}`;
   },
 };
+
+// ─── CANADA TIRE API ─────────────────────────────────────────────────────────
+
+const CT = {
+  consumerKey:    process.env.CT_CONSUMER_KEY    || '',
+  consumerSecret: process.env.CT_CONSUMER_SECRET || '',
+  tokenId:        process.env.CT_TOKEN_ID        || '',
+  tokenSecret:    process.env.CT_TOKEN_SECRET    || '',
+  realm:          process.env.CT_REALM           || '8031691',
+  customerId:     process.env.CT_CUSTOMER_ID     || '',
+  customerToken:  process.env.CT_CUSTOMER_TOKEN  || '',
+  useSandbox:     process.env.CT_USE_SANDBOX === 'true',
+  get baseUrl() {
+    return this.useSandbox
+      ? 'https://8031691-sb1.restlets.api.netsuite.com/app/site/hosting/restlet.nl'
+      : 'https://8031691.restlets.api.netsuite.com/app/site/hosting/restlet.nl';
+  },
+};
+
+const CT_SCRIPT  = 'customscript_item_search_rl';
+const CT_DEPLOY  = 'customdeploy_item_search_rl';
+
+function pct(s: string): string {
+  return encodeURIComponent(s)
+    .replace(/!/g,'%21').replace(/'/g,'%27')
+    .replace(/\(/g,'%28').replace(/\)/g,'%29').replace(/\*/g,'%2A');
+}
+
+function buildAuthHeader(): string {
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const nc = crypto.randomBytes(16).toString('hex');
+  const sigParams: Record<string,string> = {
+    deploy: CT_DEPLOY, oauth_consumer_key: CT.consumerKey,
+    oauth_nonce: nc, oauth_signature_method: 'HMAC-SHA256',
+    oauth_timestamp: ts, oauth_token: CT.tokenId, oauth_version: '1.0',
+    script: CT_SCRIPT,
+  };
+  const paramStr   = Object.keys(sigParams).sort().map(k => `${pct(k)}=${pct(sigParams[k])}`).join('&');
+  const base       = ['POST', pct(CT.baseUrl), pct(paramStr)].join('&');
+  const signingKey = `${pct(CT.consumerSecret)}&${pct(CT.tokenSecret)}`;
+  const sig        = crypto.createHmac('sha256', signingKey).update(base).digest('base64');
+  return [
+    `OAuth realm="${CT.realm}"`, `oauth_consumer_key="${CT.consumerKey}"`,
+    `oauth_token="${CT.tokenId}"`, `oauth_signature_method="HMAC-SHA256"`,
+    `oauth_timestamp="${ts}"`, `oauth_nonce="${nc}"`, `oauth_version="1.0"`,
+    `oauth_signature="${pct(sig)}"`,
+  ].join(', ');
+}
+
+interface CTCostEntry { cost: number; msrp: number; performanceCategory: string; size: string; }
+
+async function fetchCTCostMap(): Promise<Map<string, CTCostEntry>> {
+  const map = new Map<string, CTCostEntry>();
+  try {
+    const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+    const res = await fetch(fullUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': buildAuthHeader(),
+        'Content-Type':  'application/json',
+        'Accept':        'application/json',
+      },
+      body: JSON.stringify({
+        customerId: CT.customerId, customerToken: CT.customerToken,
+        filters: { width:'', rimSize:'', aspectRatio:'', size:'',
+          partNumber:[], brand:'', searchKey:'',
+          isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1 },
+      }),
+    });
+    if (!res.ok) throw new Error(`CT API ${res.status}`);
+    const data: any = await res.json();
+    if (!data.success) throw new Error('CT API error');
+    for (const t of (data.data || [])) {
+      const cost = parseFloat(t.cost) || 0;
+      const msrp = parseFloat(t.msrp) || 0;
+      if (cost > 0 && msrp > 0 && cost < msrp * 0.90) {
+        map.set(t.partNumber.trim().toUpperCase(), { cost, msrp, performanceCategory: t.performanceCategory || '', size: t.size || '' });
+      }
+    }
+    console.log(`📦 CT cost map loaded: ${map.size} SKUs with valid costs`);
+  } catch (err: any) {
+    console.error(`⚠️ CT API unavailable, falling back to Shopify stored costs: ${err.message}`);
+  }
+  return map;
+}
 
 const PRICING = {
   netMultiplier: 0.50,
@@ -403,7 +476,7 @@ interface ShopifyProductForPricing {
   shippingBuffer: number;
 }
 
-async function getShopifyProductsForPricing(): Promise<ShopifyProductForPricing[]> {
+async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): Promise<ShopifyProductForPricing[]> {
   const products: ShopifyProductForPricing[] = [];
   let hasMore = true;
   let url = '/products.json?tag=ct-sync&limit=250';
@@ -416,21 +489,43 @@ async function getShopifyProductsForPricing(): Promise<ShopifyProductForPricing[
       for (const v of p.variants || []) {
         if (!v.sku) continue;
 
-        const msrp = parseFloat(v.compare_at_price) || parseFloat(v.price) || 0;
-        const rawCost = parseFloat(v.cost) || 0;
+        const sku = v.sku.trim().toUpperCase();
+        const shopifyMsrp = parseFloat(v.compare_at_price) || parseFloat(v.price) || 0;
 
-        // Safety: if cost is 0, missing, or looks wrong (>90% of MSRP = data error),
-        // fall back to MSRP × netMultiplier estimate
-        const costLooksValid = rawCost > 0 && msrp > 0 && rawCost < msrp * 0.90;
-        const netCost = costLooksValid ? rawCost : msrp * PRICING.netMultiplier;
+        // PRIMARY: use real CT cost from API
+        const ctEntry = ctCosts.get(sku);
+        let netCost: number;
+        let msrp: number;
 
-        // Determine tire type from tags (shopifySync adds tire-type-{type} tag)
+        if (ctEntry) {
+          netCost = ctEntry.cost;
+          msrp = ctEntry.msrp || shopifyMsrp;
+        } else {
+          // Fallback: estimate from MSRP
+          msrp = shopifyMsrp;
+          netCost = msrp * PRICING.netMultiplier;
+        }
+
+        // Determine tire type — prefer CT data, fall back to Shopify tags
         let tireType = 'passenger';
-        const tags = (p.tags || '').toLowerCase();
-        if (tags.includes('tire-type-heavy_truck') || tags.includes('tire-type-heavy-truck')) {
-          tireType = 'heavy_truck';
-        } else if (tags.includes('tire-type-light_truck') || tags.includes('tire-type-light-truck')) {
-          tireType = 'light_truck';
+        if (ctEntry) {
+          const cat = (ctEntry.performanceCategory || '').toLowerCase();
+          const sz  = (ctEntry.size || '').toString();
+          if (cat.includes('commercial') || cat.includes('heavy') || cat.includes('medium truck') ||
+              cat.includes('steer') || cat.includes('drive') || cat.includes('trailer')) {
+            tireType = 'heavy_truck';
+          } else if (cat.includes('light truck') || cat.includes('suv') || cat.includes('crossover') ||
+                     cat.includes('all-terrain') || cat.includes('all terrain') || cat.includes('mud') ||
+                     sz.startsWith('LT')) {
+            tireType = 'light_truck';
+          }
+        } else {
+          const tags = (p.tags || '').toLowerCase();
+          if (tags.includes('tire-type-heavy_truck') || tags.includes('tire-type-heavy-truck')) {
+            tireType = 'heavy_truck';
+          } else if (tags.includes('tire-type-light_truck') || tags.includes('tire-type-light-truck')) {
+            tireType = 'light_truck';
+          }
         }
 
         const shippingBuffer = PRICING.shippingBuffers[tireType] ?? 35;
@@ -639,8 +734,11 @@ async function runPriceUpdate(
     done: false,
   };
 
-  // 1. Get all Shopify products
-  const shopifyProducts = await getShopifyProductsForPricing();
+  // 1. Fetch real costs from Canada Tire API
+  const ctCosts = await fetchCTCostMap();
+
+  // 2. Get all Shopify products (enriched with CT costs)
+  const shopifyProducts = await getShopifyProductsForPricing(ctCosts);
   result.totalProducts = shopifyProducts.length;
 
   // 2. Calculate fixed-margin price for each product
