@@ -417,8 +417,12 @@ async function getShopifyProductsForPricing(): Promise<ShopifyProductForPricing[
         if (!v.sku) continue;
 
         const msrp = parseFloat(v.compare_at_price) || parseFloat(v.price) || 0;
-        const cost = parseFloat(v.cost) || msrp * PRICING.netMultiplier;
-        const netCost = cost > 0 ? cost : msrp * PRICING.netMultiplier;
+        const rawCost = parseFloat(v.cost) || 0;
+
+        // Safety: if cost is 0, missing, or looks wrong (>90% of MSRP = data error),
+        // fall back to MSRP × netMultiplier estimate
+        const costLooksValid = rawCost > 0 && msrp > 0 && rawCost < msrp * 0.90;
+        const netCost = costLooksValid ? rawCost : msrp * PRICING.netMultiplier;
 
         // Determine tire type from tags (shopifySync adds tire-type-{type} tag)
         let tireType = 'passenger';
@@ -741,7 +745,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           dryRun: true,
-          pricingModel: `Net cost (MSRP×${PRICING.netMultiplier}) + $${PRICING.fixedProfit} profit + shipping`,
+          pricingModel: `Real CT cost + $${PRICING.fixedProfit} profit + shipping`,
           summary: {
             totalProducts: result.totalProducts,
             priceChanges: result.priceChanges,
@@ -763,7 +767,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           dryRun: false,
-          pricingModel: `Net cost (MSRP×${PRICING.netMultiplier}) + $${PRICING.fixedProfit} profit + shipping`,
+          pricingModel: `Real CT cost + $${PRICING.fixedProfit} profit + shipping`,
           summary: {
             totalProducts: result.totalProducts,
             priceChanges: result.priceChanges,
