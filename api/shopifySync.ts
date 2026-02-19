@@ -331,8 +331,8 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
 }
 
 // ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
-// UPDATED: Now sets compare_at_price = MSRP, price = MSRP, cost = net cost
-// The bulkPriceUpdate.ts endpoint adjusts price to competitive levels later.
+// Uses REAL CT dealer cost (ct.cost field) instead of MSRP estimate.
+// Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
 
 function buildPayload(ct: CTTire) {
   const size    = parseTireSize(ct.size);
@@ -340,10 +340,15 @@ function buildPayload(ct: CTTire) {
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
   const msrp    = parseFloat(ct.msrp) || 0;
-  const netCost = msrp * NET_MULTIPLIER;
-  const tireType      = classifyTireType(ct.performanceCategory, ct.size);
+  const rawCost = parseFloat(ct.cost) || 0;
+
+  // Use real cost, but fall back to estimate if data looks bad
+  const costLooksValid = rawCost > 0 && rawCost < msrp * 0.90;
+  const netCost = costLooksValid ? rawCost : msrp * NET_MULTIPLIER;
+
+  const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const floorPrice    = netCost + shippingBuffer;
+  const floorPrice     = netCost + shippingBuffer;
 
   const tags = [
     SYNC_TAG,
@@ -458,7 +463,9 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   await processBatches(toUpdate, async (ct) => {
     const ex = existingMap.get(ct.partNumber)!;
     const msrp     = parseFloat(ct.msrp) || 0;
-    const netCost  = msrp * NET_MULTIPLIER;
+    const rawCost  = parseFloat(ct.cost) || 0;
+    const costOk   = rawCost > 0 && rawCost < msrp * 0.90;
+    const netCost  = costOk ? rawCost : msrp * NET_MULTIPLIER;
     const newPrice = msrp.toFixed(2);
     const priceChanged = newPrice !== ex.price;
 
@@ -470,19 +477,17 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     }
 
     try {
-      if (priceChanged) {
-        await shopifyFetch(`/variants/${ex.variantId}.json`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            variant: {
-              id:               ex.variantId,
-              price:            newPrice,                // MSRP (bulk updater adjusts later)
-              compare_at_price: newPrice,                // MSRP strikethrough
-              cost:             netCost.toFixed(2),      // Net cost
-            },
-          }),
-        });
-      }
+      // Always update variant: cost (real CT cost) + price if changed
+      await shopifyFetch(`/variants/${ex.variantId}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          variant: {
+            id:               ex.variantId,
+            ...(priceChanged ? { price: newPrice, compare_at_price: newPrice } : {}),
+            cost:             netCost.toFixed(2),      // Always write real CT cost
+          },
+        }),
+      });
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       stats.updated++;
     } catch (e: any) { stats.errors++; stats.errorList.push(`UPDATE ${ct.partNumber}: ${e.message}`); }
