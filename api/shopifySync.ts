@@ -411,9 +411,9 @@ interface SyncStats {
   offset?:number; chunkSize?:number; done?:boolean;
 }
 
-async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: number = 50): Promise<SyncStats> {
+async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: number = 50, updateOffset: number = 0, updateChunkSize: number = 200): Promise<SyncStats & { updateDone?: boolean; nextUpdateOffset?: number }> {
   const t0 = Date.now();
-  const stats: SyncStats = {
+  const stats: SyncStats & { updateDone?: boolean; nextUpdateOffset?: number } = {
     created:0, updated:0, skipped:0, errors:0,
     skippedNoStock:0,
     errorList:[], duration:'', timestamp:new Date().toISOString(),
@@ -439,13 +439,16 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   const createPool = inStockTires.filter(p => !existingMap.has(p.partNumber));
   const createChunk = createPool.slice(offset, offset + chunkSize);
 
-  // For UPDATE: all existing products get updated (price + inventory), including zero-stock
+  // For UPDATE: chunk existing products (price + inventory + cost), including zero-stock
   const toUpdate = ctTires.filter(p => existingMap.has(p.partNumber));
+  const updateChunk = toUpdate.slice(updateOffset, updateOffset + updateChunkSize);
+  stats.updateDone = updateOffset + updateChunkSize >= toUpdate.length;
+  stats.nextUpdateOffset = stats.updateDone ? 0 : updateOffset + updateChunkSize;
 
-  stats.done = offset + chunkSize >= createPool.length;
+  stats.done = (offset + chunkSize >= createPool.length) && stats.updateDone;
 
   console.log(`🆕 New to create: ${createChunk.length} (of ${createPool.length} total new)`);
-  console.log(`🔄 Existing to update: ${toUpdate.length}`);
+  console.log(`🔄 Existing to update: ${updateChunk.length} of ${toUpdate.length} (offset ${updateOffset})`);
 
   // Create new products (only positive stock)
   await processBatches(createChunk, async (ct) => {
@@ -459,8 +462,8 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     } catch (e: any) { stats.errors++; stats.errorList.push(`CREATE ${ct.partNumber}: ${e.message}`); }
   });
 
-  // Update existing products (price, inventory, cost)
-  await processBatches(toUpdate, async (ct) => {
+  // Update existing products (price, inventory, cost) — chunked
+  await processBatches(updateChunk, async (ct) => {
     const ex = existingMap.get(ct.partNumber)!;
     const msrp     = parseFloat(ct.msrp) || 0;
     const rawCost  = parseFloat(ct.cost) || 0;
@@ -470,9 +473,17 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const priceChanged = newPrice !== ex.price;
 
     if (!priceChanged && mode === 'daily') {
-      // Price unchanged — just update inventory
-      await setInventory(ex.inventoryItemId, getTotalQty(ct));
-      stats.skipped++;
+      // Price unchanged — still write real cost + update inventory
+      try {
+        await shopifyFetch(`/variants/${ex.variantId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            variant: { id: ex.variantId, cost: netCost.toFixed(2) },
+          }),
+        });
+        await setInventory(ex.inventoryItemId, getTotalQty(ct));
+        stats.updated++;
+      } catch (e: any) { stats.errors++; stats.errorList.push(`COST ${ct.partNumber}: ${e.message}`); }
       return;
     }
 
@@ -600,9 +611,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'full-import': {
-        const offset    = parseInt((req.body as any)?.offset    || '0', 10);
-        const chunkSize = parseInt((req.body as any)?.chunkSize || '50', 10);
-        const stats = await runSync('full', offset, chunkSize);
+        const offset         = parseInt((req.body as any)?.offset    || req.query.offset    as string || '0', 10);
+        const chunkSize      = parseInt((req.body as any)?.chunkSize || req.query.chunkSize as string || '50', 10);
+        const updateOffset   = parseInt(req.query.updateOffset as string || '0', 10);
+        const updateChunkSz  = parseInt(req.query.updateChunk  as string || '200', 10);
+        const stats = await runSync('full', offset, chunkSize, updateOffset, updateChunkSz);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
       case 'missing-images': {
@@ -725,8 +738,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       case 'daily-sync':
       default: {
-        const stats = await runSync('daily', 0, 9999);
-        return res.status(200).json({ success:true, mode:'daily-sync', ...stats });
+        const updateOffset    = parseInt(req.query.updateOffset as string || '0', 10);
+        const updateChunkSize = parseInt(req.query.updateChunk  as string || '200', 10);
+        const stats = await runSync('daily', 0, 9999, updateOffset, updateChunkSize);
+        return res.status(200).json({
+          success: true,
+          mode: 'daily-sync',
+          ...stats,
+          nextUrl: stats.updateDone ? null : `?action=daily-sync&updateOffset=${stats.nextUpdateOffset}`,
+        });
       }
     }
   } catch (e: any) {
