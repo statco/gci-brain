@@ -726,9 +726,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'fix-all-images': {
-        // Batch fix: find all products with missing images, derive tiresandco.ca URL, attach
+        // Batch fix: find all products with missing images, use curated image map
         const dryRun = (req.query.dryRun ?? 'true') !== 'false';
-        const TACO_BASE = 'https://www.tiresandco.ca/produit/pneu-auto/120/';
+
+        // Curated image URLs from SimpleTire CDN (confirmed downloadable by Shopify)
+        const ST = 'https://images.simpletire.com/images/q_auto/f_auto,q_auto,fl_lossy,h_3840/line-images';
+        const IMAGE_MAP: Record<string, string> = {
+          // Cooper models — SimpleTire CDN
+          'COOPER CS5 GRAND TOURING':    `${ST}/9406/9406-sidetread/cooper-cs5-grand-touring.png`,
+          'COOPER CS5 ULTRA TOURING':    `${ST}/9407/9407-sidetread/cooper-cs5-ultra-touring.png`,
+          'COOPER DISCOVERER SNOW CLAW': `${ST}/17674/17674-sidetread/cooper-discoverer-snow-claw.png`,
+          'COOPER EVOLUTION HT':         `${ST}/14285/14285-sidetread/cooper-evolution-h-t.png`,
+          'COOPER DISCOVERER SRX-LE':    `${ST}/9402/9402-sidetread/cooper-discoverer-srx.png`,
+          'COOPER DISCOVERER ROAD TRAIL AT ALL WEATHER': `${ST}/24261/24261-sidetread/cooper-discoverer-road-trail-at.png`,
+          // Vredestein models — Vredestein / Les Schwab CDN
+          'VREDESTEIN QUATRAC PRO PLUS': 'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dwc2e8e85f/images/Products/Tires/Vredestein_Quatrac-Pro-Plus_BW_LeftAngle.png',
+          'VREDESTEIN QUATRAC':          'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dw7e3c8127/images/Products/Tires/Vredestein_Quatrac_BW_LeftAngle.png',
+          'VREDESTEIN WINTRAC':          'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dw252d4b59/images/Products/Tires/Vredestein_Wintrac_BW_LeftAngle.png',
+          // Nexen
+          'NEXEN EURO-WIN':              `${ST}/17025/17025-sidetread/nexen-euro-win.png`,
+        };
 
         // 1. Find all products missing images
         let sinceId = 0;
@@ -740,7 +757,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const data: any = await shopifyFetch<any>(`/products.json?${q}`);
           const products = data.products || [];
           for (const p of products) {
-            // Extract model name (title minus last token which is the size)
             const tokens = p.title.trim().split(' ');
             const modelKey = tokens.slice(0, -1).join(' ').toUpperCase();
             if (!p.images || p.images.length === 0) {
@@ -753,44 +769,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sinceId = products[products.length - 1].id;
         }
 
-        // Filter to only truly missing (no other size of same model has image)
         const trulyMissing = noImageProducts.filter(p => !withImageModels.has(p.modelKey));
 
-        // 2. Build unique model → URL map
-        const modelUrls = new Map<string, string>();
+        // 2. Group by model and match to IMAGE_MAP
+        const modelGroups = new Map<string, typeof trulyMissing>();
         for (const p of trulyMissing) {
-          if (!modelUrls.has(p.modelKey)) {
-            // Convert "COOPER DISCOVERER ROAD TRAIL AT ALL WEATHER" → "COOPER_DISCOVERER_ROAD_TRAIL_AT_ALL_WEATHER.jpg"
-            const slug = p.modelKey
-              .replace(/[^A-Z0-9\s\-]/g, '')   // Keep letters, numbers, spaces, hyphens
-              .replace(/\s+/g, '_')              // Spaces → underscores
-              .replace(/-/g, '-');               // Keep hyphens as-is
-            modelUrls.set(p.modelKey, `${TACO_BASE}${slug}.jpg`);
-          }
+          if (!modelGroups.has(p.modelKey)) modelGroups.set(p.modelKey, []);
+          modelGroups.get(p.modelKey)!.push(p);
         }
 
         if (dryRun) {
+          const plan = [...modelGroups.entries()].map(([model, products]) => ({
+            model,
+            imageUrl: IMAGE_MAP[model] || '⚠️ NO SOURCE — use attach-image manually',
+            productCount: products.length,
+            hasSource: !!IMAGE_MAP[model],
+          }));
           return res.status(200).json({
-            success: true,
-            mode: 'fix-all-images',
-            dryRun: true,
+            success: true, mode: 'fix-all-images', dryRun: true,
             totalMissing: trulyMissing.length,
-            uniqueModels: modelUrls.size,
-            plan: [...modelUrls.entries()].map(([model, url]) => ({
-              model,
-              imageUrl: url,
-              productCount: trulyMissing.filter(p => p.modelKey === model).length,
-            })),
+            uniqueModels: modelGroups.size,
+            withSource: plan.filter(p => p.hasSource).length,
+            withoutSource: plan.filter(p => !p.hasSource).length,
+            plan,
           });
         }
 
-        // 3. Execute: attach images
+        // 3. Execute
         let attached = 0;
         let errors = 0;
+        let skippedNoSource = 0;
         const results: Array<{ title: string; status: string; url?: string; error?: string }> = [];
 
         for (const p of trulyMissing) {
-          const imageUrl = modelUrls.get(p.modelKey)!;
+          const imageUrl = IMAGE_MAP[p.modelKey];
+          if (!imageUrl) {
+            skippedNoSource++;
+            results.push({ title: p.title, status: '⏭️ no source URL' });
+            continue;
+          }
           try {
             await shopifyFetch(`/products/${p.id}/images.json`, {
               method: 'POST',
@@ -801,17 +818,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             await delay(500);
           } catch (e: any) {
             errors++;
-            results.push({ title: p.title, status: '❌ failed', url: imageUrl, error: e.message });
+            results.push({ title: p.title, status: '❌ failed', url: imageUrl, error: e.message?.slice(0, 150) });
           }
         }
 
         return res.status(200).json({
-          success: true,
-          mode: 'fix-all-images',
-          dryRun: false,
+          success: true, mode: 'fix-all-images', dryRun: false,
           totalMissing: trulyMissing.length,
-          attached,
-          errors,
+          attached, errors, skippedNoSource,
           results,
         });
       }
