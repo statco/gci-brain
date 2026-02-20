@@ -619,19 +619,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
       }
       case 'missing-images': {
+        const checkAll = req.query.all === 'true';
         let sinceId = 0;
         const noImageTitles = new Set<string>();
         const withImageTitles = new Set<string>();
+        const noImageProducts: Array<{ id: number; title: string }> = [];
+        let totalScanned = 0;
 
         while (true) {
-          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+          const tagFilter = checkAll ? '' : `tag=${SYNC_TAG}&`;
+          const q = `${tagFilter}limit=250&fields=id,title,images,tags${sinceId ? `&since_id=${sinceId}` : ''}`;
           const data: any = await shopifyFetch<any>(`/products.json?${q}`);
           const products = data.products || [];
+          totalScanned += products.length;
           for (const p of products) {
             const tokens = p.title.trim().split(' ');
             const modelKey = tokens.slice(0, -1).join(' ').toUpperCase();
             if (!p.images || p.images.length === 0) {
               noImageTitles.add(modelKey);
+              noImageProducts.push({ id: p.id, title: p.title });
             } else {
               withImageTitles.add(modelKey);
             }
@@ -641,10 +647,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const trulyMissing = [...noImageTitles].filter(t => !withImageTitles.has(t)).sort();
+        const missingDetails = noImageProducts
+          .filter(p => {
+            const mk = p.title.trim().split(' ').slice(0, -1).join(' ').toUpperCase();
+            return trulyMissing.includes(mk);
+          })
+          .map(p => p.title);
+
         return res.status(200).json({
           success: true, mode: 'missing-images',
+          scope: checkAll ? 'ALL products' : 'ct-sync only',
+          totalScanned,
           missingCount: trulyMissing.length,
           missing: trulyMissing,
+          ...(checkAll ? { missingProducts: missingDetails } : {}),
         });
       }
       case 'debug-images': {
