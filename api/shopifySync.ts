@@ -725,6 +725,96 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           products: matched.map(m => `${m.title} ${m.hadImage ? '(had image)' : '✅ attached'}`),
         });
       }
+      case 'fix-all-images': {
+        // Batch fix: find all products with missing images, derive tiresandco.ca URL, attach
+        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
+        const TACO_BASE = 'https://www.tiresandco.ca/produit/pneu-auto/120/';
+
+        // 1. Find all products missing images
+        let sinceId = 0;
+        const noImageProducts: Array<{ id: number; title: string; modelKey: string }> = [];
+        const withImageModels = new Set<string>();
+
+        while (true) {
+          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+          const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+          const products = data.products || [];
+          for (const p of products) {
+            // Extract model name (title minus last token which is the size)
+            const tokens = p.title.trim().split(' ');
+            const modelKey = tokens.slice(0, -1).join(' ').toUpperCase();
+            if (!p.images || p.images.length === 0) {
+              noImageProducts.push({ id: p.id, title: p.title, modelKey });
+            } else {
+              withImageModels.add(modelKey);
+            }
+          }
+          if (products.length < 250) break;
+          sinceId = products[products.length - 1].id;
+        }
+
+        // Filter to only truly missing (no other size of same model has image)
+        const trulyMissing = noImageProducts.filter(p => !withImageModels.has(p.modelKey));
+
+        // 2. Build unique model → URL map
+        const modelUrls = new Map<string, string>();
+        for (const p of trulyMissing) {
+          if (!modelUrls.has(p.modelKey)) {
+            // Convert "COOPER DISCOVERER ROAD TRAIL AT ALL WEATHER" → "COOPER_DISCOVERER_ROAD_TRAIL_AT_ALL_WEATHER.jpg"
+            const slug = p.modelKey
+              .replace(/[^A-Z0-9\s\-]/g, '')   // Keep letters, numbers, spaces, hyphens
+              .replace(/\s+/g, '_')              // Spaces → underscores
+              .replace(/-/g, '-');               // Keep hyphens as-is
+            modelUrls.set(p.modelKey, `${TACO_BASE}${slug}.jpg`);
+          }
+        }
+
+        if (dryRun) {
+          return res.status(200).json({
+            success: true,
+            mode: 'fix-all-images',
+            dryRun: true,
+            totalMissing: trulyMissing.length,
+            uniqueModels: modelUrls.size,
+            plan: [...modelUrls.entries()].map(([model, url]) => ({
+              model,
+              imageUrl: url,
+              productCount: trulyMissing.filter(p => p.modelKey === model).length,
+            })),
+          });
+        }
+
+        // 3. Execute: attach images
+        let attached = 0;
+        let errors = 0;
+        const results: Array<{ title: string; status: string; url?: string; error?: string }> = [];
+
+        for (const p of trulyMissing) {
+          const imageUrl = modelUrls.get(p.modelKey)!;
+          try {
+            await shopifyFetch(`/products/${p.id}/images.json`, {
+              method: 'POST',
+              body: JSON.stringify({ image: { src: imageUrl, alt: p.title } }),
+            });
+            attached++;
+            results.push({ title: p.title, status: '✅ attached', url: imageUrl });
+            await delay(500);
+          } catch (e: any) {
+            errors++;
+            results.push({ title: p.title, status: '❌ failed', url: imageUrl, error: e.message });
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'fix-all-images',
+          dryRun: false,
+          totalMissing: trulyMissing.length,
+          attached,
+          errors,
+          results,
+        });
+      }
       case 'dedup': {
         const dryRun = !(req.body as any)?.confirm;
         const allById = new Map<number, { id: number; title: string; imageCount: number }>();
