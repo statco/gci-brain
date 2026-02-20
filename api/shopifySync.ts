@@ -664,6 +664,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const bfStats  = await runImageBackfill(bfOffset, bfLimit);
         return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
       }
+      case 'attach-image': {
+        // Attach an image to all products matching a title search
+        // Usage: ?action=attach-image&search=COOPER+PROCONTROL&imageUrl=https://...
+        const search   = (req.query.search as string || '').trim();
+        const imageUrl = (req.query.imageUrl as string || '').trim();
+
+        if (!search || !imageUrl) {
+          return res.status(400).json({ error: 'Required params: search (title match) and imageUrl' });
+        }
+
+        let sinceId = 0;
+        const matched: Array<{ id: number; title: string; hadImage: boolean }> = [];
+        let attached = 0;
+        let skipped = 0;
+        let errors = 0;
+
+        // Find all matching products
+        while (true) {
+          const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+          const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+          const products = data.products || [];
+
+          for (const p of products) {
+            if (p.title.toUpperCase().includes(search.toUpperCase())) {
+              const hasImage = p.images && p.images.length > 0;
+              matched.push({ id: p.id, title: p.title, hadImage: hasImage });
+
+              if (!hasImage) {
+                try {
+                  await shopifyFetch(`/products/${p.id}/images.json`, {
+                    method: 'POST',
+                    body: JSON.stringify({ image: { src: imageUrl, alt: p.title } }),
+                  });
+                  attached++;
+                  await delay(500);
+                } catch (e: any) {
+                  errors++;
+                  console.error(`❌ Image attach failed for ${p.title}: ${e.message}`);
+                }
+              } else {
+                skipped++;
+              }
+            }
+          }
+
+          if (products.length < 250) break;
+          sinceId = products[products.length - 1].id;
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'attach-image',
+          search,
+          imageUrl,
+          totalMatched: matched.length,
+          attached,
+          skippedHadImage: skipped,
+          errors,
+          products: matched.map(m => `${m.title} ${m.hadImage ? '(had image)' : '✅ attached'}`),
+        });
+      }
       case 'dedup': {
         const dryRun = !(req.body as any)?.confirm;
         const allById = new Map<number, { id: number; title: string; imageCount: number }>();
