@@ -147,7 +147,7 @@ async function checkRobotsTxt(domain: string): Promise<RobotsResult> {
         else                             ua = null;
       } else if (lower.startsWith('disallow:') && ua) {
         const path = lower.replace('disallow:', '').trim();
-        if (path === '/' || path === '') {
+        if (path === '/') {
           if (ua === 'googlebot-image') result.blocksGooglebotImage = true;
           if (ua === 'googlebot')       result.blocksGooglebot = true;
           if (ua === 'all')             result.blocksAll = true;

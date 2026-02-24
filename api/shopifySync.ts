@@ -208,18 +208,19 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; }
+interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; hasImages:boolean; }
 
 async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
   const map = new Map<string,ExistingProduct>();
   let sinceId = 0;
   while (true) {
-    const q = `tag=${SYNC_TAG}&limit=250&fields=id,variants${sinceId?`&since_id=${sinceId}`:''}`;
+    const q = `tag=${SYNC_TAG}&limit=250&fields=id,variants,images${sinceId?`&since_id=${sinceId}`:''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products = data.products || [];
     for (const p of products) {
+      const hasImages = Array.isArray(p.images) && p.images.length > 0;
       for (const v of p.variants) {
-        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price });
+        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages });
       }
     }
     if (products.length < 250) break;
@@ -473,7 +474,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const priceChanged = newPrice !== ex.price;
 
     if (!priceChanged && mode === 'daily') {
-      // Price unchanged — still write real cost + update inventory
+      // Price unchanged — still write real cost + update inventory + backfill image
       try {
         await shopifyFetch(`/variants/${ex.variantId}.json`, {
           method: 'PUT',
@@ -482,6 +483,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           }),
         });
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
+        if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
       } catch (e: any) { stats.errors++; stats.errorList.push(`COST ${ct.partNumber}: ${e.message}`); }
       return;
@@ -500,6 +502,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
         }),
       });
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
+      if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
     } catch (e: any) { stats.errors++; stats.errorList.push(`UPDATE ${ct.partNumber}: ${e.message}`); }
   });
@@ -745,24 +748,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Batch fix: find all products with missing images, use curated image map
         const dryRun = (req.query.dryRun ?? 'true') !== 'false';
 
-        // Curated image URLs from SimpleTire CDN (confirmed downloadable by Shopify)
-        const ST = 'https://images.simpletire.com/images/q_auto/f_auto,q_auto,fl_lossy,h_3840/line-images';
-        const IMAGE_MAP: Record<string, string> = {
-          // Cooper models — SimpleTire CDN
-          'COOPER CS5 GRAND TOURING':    `${ST}/9406/9406-sidetread/cooper-cs5-grand-touring.png`,
-          'COOPER CS5 ULTRA TOURING':    `${ST}/9407/9407-sidetread/cooper-cs5-ultra-touring.png`,
-          'COOPER DISCOVERER SNOW CLAW': `${ST}/17674/17674-sidetread/cooper-discoverer-snow-claw.png`,
-          'COOPER EVOLUTION HT':         `${ST}/14285/14285-sidetread/cooper-evolution-h-t.png`,
-          'COOPER DISCOVERER SRX-LE':    `${ST}/9402/9402-sidetread/cooper-discoverer-srx.png`,
-          'COOPER DISCOVERER ROAD TRAIL AT ALL WEATHER': `${ST}/24261/24261-sidetread/cooper-discoverer-road-trail-at.png`,
-          // Vredestein models — Vredestein / Les Schwab CDN
-          'VREDESTEIN QUATRAC PRO PLUS': 'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dwc2e8e85f/images/Products/Tires/Vredestein_Quatrac-Pro-Plus_BW_LeftAngle.png',
-          'VREDESTEIN QUATRAC':          'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dw7e3c8127/images/Products/Tires/Vredestein_Quatrac_BW_LeftAngle.png',
-          'VREDESTEIN WINTRAC':          'https://www.lesschwab.com/dw/image/v2/BCDC_PRD/on/demandware.static/-/Sites-les-master-catalog/default/dw252d4b59/images/Products/Tires/Vredestein_Wintrac_BW_LeftAngle.png',
-          // Nexen
-          'NEXEN EURO-WIN':              `${ST}/17025/17025-sidetread/nexen-euro-win.png`,
-        };
-
         // 1. Find all products missing images
         let sinceId = 0;
         const noImageProducts: Array<{ id: number; title: string; modelKey: string }> = [];
@@ -795,12 +780,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (dryRun) {
-          const plan = [...modelGroups.entries()].map(([model, products]) => ({
-            model,
-            imageUrl: IMAGE_MAP[model] || '⚠️ NO SOURCE — use attach-image manually',
-            productCount: products.length,
-            hasSource: !!IMAGE_MAP[model],
-          }));
+          const plan = [...modelGroups.entries()].map(([model, products]) => {
+            const imageUrl = getTireImageUrl(products[0].title);
+            return {
+              model,
+              imageUrl: imageUrl || '⚠️ NO SOURCE — use attach-image manually',
+              productCount: products.length,
+              hasSource: !!imageUrl,
+            };
+          });
           return res.status(200).json({
             success: true, mode: 'fix-all-images', dryRun: true,
             totalMissing: trulyMissing.length,
@@ -818,7 +806,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const results: Array<{ title: string; status: string; url?: string; error?: string }> = [];
 
         for (const p of trulyMissing) {
-          const imageUrl = IMAGE_MAP[p.modelKey];
+          const imageUrl = getTireImageUrl(p.title);
           if (!imageUrl) {
             skippedNoSource++;
             results.push({ title: p.title, status: '⏭️ no source URL' });
