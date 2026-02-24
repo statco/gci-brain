@@ -85,7 +85,7 @@ class IntegrationService {
     vehicle: VehicleData
   ): Promise<TireRecommendation[]> {
     try {
-      const model = geminiClient.getGenerativeModel({ model: 'gemini-pro' });
+      const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const prompt = `
 You are a tire expert helping a customer find the perfect tires.
@@ -350,7 +350,7 @@ Respond ONLY with valid JSON, no additional text.
    */
   async quickSearch(query: string): Promise<TireRecommendation[]> {
     try {
-      const model = geminiClient.getGenerativeModel({ model: 'gemini-pro' });
+      const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const prompt = `
 Extract vehicle information from this query: "${query}"
