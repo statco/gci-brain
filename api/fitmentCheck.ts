@@ -15,24 +15,47 @@ function toSlug(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '-');
 }
 
+/** Coerce a tire value to a size string, handling both string and object forms. */
+function tireToString(tire: unknown): string {
+  if (typeof tire === 'string') return tire.trim();
+  // v2 may return tire as an object; try known field names
+  if (tire && typeof tire === 'object') {
+    const t = tire as Record<string, unknown>;
+    for (const key of ['designation', 'name', 'size', 'tire']) {
+      if (typeof t[key] === 'string' && (t[key] as string).trim()) {
+        return (t[key] as string).trim();
+      }
+    }
+  }
+  return '';
+}
+
 /** Extract every unique tire size string from a /search/by_model/ response body. */
 function extractTireSizes(data: unknown): string[] {
   const sizes = new Set<string>();
 
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) {
+    console.log('[fitmentCheck] extractTireSizes: data is not an array, type:', typeof data);
+    return [];
+  }
 
-  for (const item of data as Record<string, unknown>[]) {
+  console.log(`[fitmentCheck] extractTireSizes: ${data.length} item(s) in data`);
+
+  for (let i = 0; i < data.length; i++) {
+    const item = data[i] as Record<string, unknown>;
     const wheels = item['wheels'];
-    if (!Array.isArray(wheels)) continue;
+
+    if (!Array.isArray(wheels)) {
+      console.log(`[fitmentCheck] item[${i}] has no wheels array; keys:`, Object.keys(item));
+      continue;
+    }
 
     for (const pair of wheels as Record<string, unknown>[]) {
       for (const side of ['front', 'rear'] as const) {
         const wheel = pair[side] as Record<string, unknown> | undefined;
         if (!wheel) continue;
-        const tire = wheel['tire'];
-        if (typeof tire === 'string' && tire.trim()) {
-          sizes.add(tire.trim());
-        }
+        const sizeStr = tireToString(wheel['tire']);
+        if (sizeStr) sizes.add(sizeStr);
       }
     }
   }
@@ -88,6 +111,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const json = await upstream.json() as { data?: unknown };
+
+    // Log truncated raw response so we can inspect the real shape
+    const rawSnippet = JSON.stringify(json).slice(0, 2000);
+    console.log('[fitmentCheck] raw response (first 2000 chars):', rawSnippet);
 
     // The v2 API wraps results in a "data" array
     const data = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
