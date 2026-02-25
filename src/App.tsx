@@ -11,7 +11,8 @@ import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
 import FavoritesModal from './components/FavoritesModal';
 import { getTireRecommendations } from './services/geminiService';
-import type { ProcessingLog, TireProduct, Language } from './types';
+import { verifyFitmentForProducts } from './services/wheelSizeService';
+import type { ProcessingLog, TireProduct, Language, VehicleInput } from './types';
 import { translations } from './utils/translations';
 import { AppStates, ProcessingStages } from './utils/appStates';
 
@@ -63,7 +64,7 @@ function TireMatchApp() {
 
   const t = translations[lang];
 
-  const startProcessing = async (request: string) => {
+  const startProcessing = async (request: string, vehicle?: VehicleInput) => {
     setAppState(AppStates.PROCESSING);
     setLogs([
       { stage: ProcessingStages.ANALYZING, message: lang === 'en' ? "Consulting expert databases..." : "Consultation des bases d'experts...", status: 'active' },
@@ -73,7 +74,8 @@ function TireMatchApp() {
 
     try {
       const products = await getTireRecommendations(request, lang);
-      setRecommendations(products);
+      const verifiedProducts = await verifyFitmentForProducts(vehicle, products, request);
+      setRecommendations(verifiedProducts);
       setAppState(AppStates.RESULTS);
     } catch (error) { setAppState(AppStates.ERROR); }
   };
@@ -101,7 +103,7 @@ function TireMatchApp() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-6 flex-grow w-full">
-        {appState === AppStates.IDLE && <InputForm onSubmit={startProcessing} isLoading={false} lang={lang} setLang={setLang} />}
+        {appState === AppStates.IDLE && <InputForm onSubmit={(req, veh) => startProcessing(req, veh)} isLoading={false} lang={lang} setLang={setLang} />}
         {appState === AppStates.PROCESSING && <ProcessingOverlay logs={logs} />}
         {appState === AppStates.RESULTS && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-10">
