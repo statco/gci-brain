@@ -58,7 +58,7 @@ export async function getTireRecommendations(
   // If no API key, return fallback immediately
   if (!genAI) {
     console.log('⚠️ No API key, using fallback');
-    return getFallbackRecommendations(userRequest, availableProducts);
+    return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
   }
 
   try {
@@ -127,7 +127,7 @@ Rules:
     // If no matches, return fallback
     if (recommendations.length === 0) {
       console.log('⚠️ No matching products, using fallback');
-      return getFallbackRecommendations(userRequest, availableProducts);
+      return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
     }
 
     return recommendations;
@@ -135,21 +135,38 @@ Rules:
   } catch (error) {
     console.error('❌ Error getting Gemini recommendations:', error);
     console.log('⚠️ Using fallback recommendations');
-    return getFallbackRecommendations(userRequest, availableProducts);
+    return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
   }
 }
 
 /**
- * Fallback recommendations when AI fails
- * ✅ Now works with dynamic product list
+ * Fallback recommendations when AI fails or returns empty.
+ * Respects oemSizes when provided: filters candidates to exact-size matches first.
+ * If no size-matched products exist, returns top 3 from the full list as a last resort.
  */
-function getFallbackRecommendations(userRequest: string, products: TireProduct[]): TireProduct[] {
+function getFallbackRecommendations(
+  userRequest: string,
+  products: TireProduct[],
+  oemSizes?: string[]
+): TireProduct[] {
   console.log('🔄 Generating fallback recommendations...');
-  
+
   const requestLower = userRequest.toLowerCase();
-  
-  // Simple keyword matching
-  let filtered = [...products];
+
+  // Narrow to OEM-size-matched products first when sizes are known
+  let sizePool: TireProduct[];
+  if (oemSizes && oemSizes.length > 0) {
+    const oemSet = new Set(oemSizes);
+    sizePool = products.filter(p => oemSet.has(p.size));
+    console.log(`🔄 [fallback] OEM-size-matched pool: ${sizePool.length} of ${products.length} products`);
+  } else {
+    sizePool = products;
+  }
+
+  const exactFitmentAvailable = sizePool.length > 0;
+
+  // Apply season / brand filters within the size pool
+  let filtered = [...(exactFitmentAvailable ? sizePool : products)];
 
   // Filter by season
   if (requestLower.includes('winter') || requestLower.includes('snow') || requestLower.includes('ice') || requestLower.includes('hiver')) {
@@ -166,10 +183,13 @@ function getFallbackRecommendations(userRequest: string, products: TireProduct[]
     filtered = filtered.filter(p => p.brand.toLowerCase().includes(brandMatch[0]));
   }
 
-  // If too many filtered out, return all
+  // If season/brand filters wiped out the pool, fall back to size pool (or all products)
   if (filtered.length === 0) {
-    console.log('⚠️ No matches found, returning all products');
-    filtered = products;
+    filtered = exactFitmentAvailable ? sizePool : products;
+  }
+
+  if (!exactFitmentAvailable && oemSizes && oemSizes.length > 0) {
+    console.warn('⚠️ [fallback] No products matched OEM sizes — returning top 3 without exact fitment');
   }
 
   // Return top 3
