@@ -333,8 +333,10 @@ function extractBrandFromTitle(title: string): string {
  * Helper: Extract tire size from title (e.g., "245/40R18")
  */
 function extractSizeFromTitle(title: string): string {
-  const sizeMatch = title.match(/\d{3}\/\d{2}R?\d{2}/i);
-  return sizeMatch ? sizeMatch[0] : '225/65R17';
+  const slashMatch   = title.match(/(\d{3})\/(\d{2})R?(\d{2})/i);
+  const compactMatch = title.match(/(\d{3})(\d{2})R?(\d{2})/i);
+  const m = slashMatch ?? compactMatch;
+  return m ? `${m[1]}/${m[2]}R${m[3]}` : '225/65R17';
 }
 
 /**

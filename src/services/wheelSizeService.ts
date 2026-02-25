@@ -90,16 +90,26 @@ export async function verifyFitmentForProducts(
 
     const fitmentSizes = await getVehicleFitmentSizes(resolvedVehicle);
 
+    // DEBUG: full OEM size list
+    console.log('[fitment] OEM sizes from API:', fitmentSizes);
+    console.log('[fitment] OEM sizes normalised:', fitmentSizes.map(normalizeTireSize));
+
     if (fitmentSizes.length === 0) {
       return products.map(p => ({ ...p, fitmentVerified: false }));
     }
 
-    return products.map(p => ({
-      ...p,
-      fitmentVerified: fitmentSizes.some(
-        s => normalizeTireSize(s) === normalizeTireSize(p.size)
-      ),
-    }));
+    return products.map(p => {
+      const normProduct = normalizeTireSize(p.size);
+      const matched = fitmentSizes.some(s => {
+        const normOem = normalizeTireSize(s);
+        const hit = normOem === normProduct;
+        // DEBUG: per-product comparison
+        console.log(`[fitment] compare OEM "${s}" → "${normOem}"  vs  product "${p.size}" → "${normProduct}"  match=${hit}`);
+        return hit;
+      });
+      console.log(`[fitment] product "${p.title}" size="${p.size}" normalised="${normProduct}" fitmentVerified=${matched}`);
+      return { ...p, fitmentVerified: matched };
+    });
   } catch {
     return products.map(p => ({ ...p, fitmentVerified: false }));
   }
