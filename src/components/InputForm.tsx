@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Language } from '../types';
+import { Language, VehicleInput } from '../types';
 import { translations } from '../utils/translations';
 
 interface InputFormProps {
-  onSubmit: (request: string) => void;
+  onSubmit: (request: string, vehicle?: VehicleInput) => void;
   isLoading: boolean;
   lang: Language;
   setLang: (lang: Language) => void;
@@ -68,7 +68,11 @@ const InputForm: React.FC<InputFormProps> = ({ onSubmit, isLoading, lang, setLan
     const combinedRequest = parts.join(' | ');
 
     if (combinedRequest) {
-      onSubmit(combinedRequest);
+      const vehicle: VehicleInput | undefined =
+        year && make && model
+          ? { year, make, model, ...(trim ? { trim } : {}) }
+          : undefined;
+      onSubmit(combinedRequest, vehicle);
     }
   };
 

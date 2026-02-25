@@ -45,6 +45,15 @@ export interface TireProduct {
   shopifyHandle?: string;
   shopifyProductId?: string;
   visualizationUrl?: string;
+  fitmentVerified?: boolean;
+}
+
+// Structured vehicle input from the form
+export interface VehicleInput {
+  year: string;
+  make: string;
+  model: string;
+  trim?: string;
 }
 
 // Vehicle information
