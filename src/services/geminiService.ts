@@ -37,10 +37,14 @@ async function getAvailableProducts(): Promise<TireProduct[]> {
  */
 export async function getTireRecommendations(
   userRequest: string,
-  language: Language = 'en'
+  language: Language = 'en',
+  oemSizes?: string[]
 ): Promise<TireProduct[]> {
   console.log('🤖 Requesting Gemini AI recommendations...');
   console.log('   User request:', userRequest);
+  if (oemSizes && oemSizes.length > 0) {
+    console.log('   OEM sizes constraint:', oemSizes);
+  }
 
   // ✅ Fetch products from Shopify
   const availableProducts = await getAvailableProducts();
@@ -63,13 +67,17 @@ export async function getTireRecommendations(
       systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
     });
 
-   const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
+    const oemConstraint = (oemSizes && oemSizes.length > 0)
+      ? `\nIMPORTANT: This vehicle requires one of these OEM tire sizes: ${oemSizes.join(', ')}. Only recommend products from the catalog that match one of these exact sizes.\n`
+      : '';
+
+    const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
 Language: ${language === 'fr' ? 'French' : 'English'}
-
+${oemConstraint}
 Available Tire Products:
-${availableProducts.map((p, i) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
+${availableProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
 
 Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
 

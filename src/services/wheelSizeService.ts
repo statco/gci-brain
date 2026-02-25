@@ -66,29 +66,37 @@ async function getVehicleFitmentSizes(vehicle: VehicleInput): Promise<string[]> 
 }
 
 /**
+ * Resolve a vehicle and return its normalised OEM tire sizes.
+ * Exported so App.tsx can prefetch sizes before calling getTireRecommendations.
+ */
+export async function fetchFitmentSizes(
+  vehicle: VehicleInput | undefined,
+  request: string
+): Promise<string[]> {
+  try {
+    const resolved = vehicle ?? (await extractVehicleFromRequest(request)) ?? undefined;
+    if (!resolved) return [];
+    return getVehicleFitmentSizes(resolved);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Verify fitment for a list of tire products.
  *
- * - Uses structured vehicle from the form if provided.
- * - Falls back to Gemini NLP extraction from the raw request string.
+ * - Accepts pre-fetched oemSizes to avoid a second /api/fitmentCheck round-trip.
+ * - Falls back to fetching them from the vehicle / request if not supplied.
  * - Silently sets fitmentVerified: false on any failure.
  */
 export async function verifyFitmentForProducts(
   vehicle: VehicleInput | undefined,
   products: TireProduct[],
-  request: string
+  request: string,
+  oemSizes?: string[]
 ): Promise<TireProduct[]> {
   try {
-    let resolvedVehicle = vehicle;
-
-    if (!resolvedVehicle) {
-      resolvedVehicle = (await extractVehicleFromRequest(request)) ?? undefined;
-    }
-
-    if (!resolvedVehicle) {
-      return products.map(p => ({ ...p, fitmentVerified: false }));
-    }
-
-    const fitmentSizes = await getVehicleFitmentSizes(resolvedVehicle);
+    const fitmentSizes = oemSizes ?? await fetchFitmentSizes(vehicle, request);
 
     // DEBUG: full OEM size list
     console.log('[fitment] OEM sizes from API:', fitmentSizes);
