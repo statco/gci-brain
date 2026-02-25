@@ -72,11 +72,11 @@ export async function getTireRecommendations(
       : '';
 
     // DEBUG: log every product's id/title/size before the prompt is assembled
-    console.log('[gemini] product catalog sent to Gemini:');
+    console.warn('[catalog] total products:', availableProducts.length);
     availableProducts.forEach(p =>
-      console.log(`  id=${p.id}  size="${p.size}"  title="${p.title}"`)
+      console.warn('[catalog]', p.id, p.size, p.title)
     );
-    console.log('[gemini] oemConstraint injected:', oemConstraint || '(none)');
+    console.warn('[gemini] oemConstraint injected:', oemConstraint || '(none)');
 
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
