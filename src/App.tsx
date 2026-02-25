@@ -11,7 +11,7 @@ import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
 import FavoritesModal from './components/FavoritesModal';
 import { getTireRecommendations } from './services/geminiService';
-import { verifyFitmentForProducts } from './services/wheelSizeService';
+import { verifyFitmentForProducts, fetchFitmentSizes } from './services/wheelSizeService';
 import type { ProcessingLog, TireProduct, Language, VehicleInput } from './types';
 import { translations } from './utils/translations';
 import { AppStates, ProcessingStages } from './utils/appStates';
@@ -73,8 +73,9 @@ function TireMatchApp() {
     ]);
 
     try {
-      const products = await getTireRecommendations(request, lang);
-      const verifiedProducts = await verifyFitmentForProducts(vehicle, products, request);
+      const oemSizes = await fetchFitmentSizes(vehicle, request);
+      const products = await getTireRecommendations(request, lang, oemSizes);
+      const verifiedProducts = await verifyFitmentForProducts(vehicle, products, request, oemSizes);
       setRecommendations(verifiedProducts);
       setAppState(AppStates.RESULTS);
     } catch (error) { setAppState(AppStates.ERROR); }
