@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import InstallerApplicationForm from './components/InstallerApplicationForm';
+import CommandCenter from './CommandCenter';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -143,6 +144,7 @@ function App() {
       <Routes>
         <Route path="/" element={<TireMatchApp />} />
         <Route path="/installer-application" element={<InstallerApplicationForm />} />
+        <Route path="/ops/*" element={<CommandCenter />} />
       </Routes>
     </BrowserRouter>
   );

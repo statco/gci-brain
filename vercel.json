@@ -26,5 +26,8 @@
         }
       ]
     }
+  ],
+  "domains": [
+    "ops.gcitires.com"
   ]
 }
