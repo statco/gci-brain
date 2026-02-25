@@ -93,6 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       make: toSlug(make),
       model: toSlug(model),
       year: String(parseInt(year, 10)), // ensure integer, no extra whitespace
+      region: 'usdm',                  // required by v2 API; US domestic market
       user_key: WHEEL_SIZE_API_KEY,
     });
 
