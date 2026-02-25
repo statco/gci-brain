@@ -121,10 +121,12 @@ const TireCard: React.FC<TireCardProps> = ({
         )}
 
         {/* Verified Fitment Badge */}
-        <div className="absolute top-4 right-14 bg-white/95 backdrop-blur-sm text-green-700 border border-green-200 px-2.5 py-1 rounded-full shadow-md z-10 flex items-center gap-1.5 transform transition-transform hover:scale-105 cursor-help" title="Verified Fitment">
-            <svg className="w-3.5 h-3.5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            <span className="text-[10px] font-black uppercase tracking-wide leading-none py-0.5">{t.verifiedFitment}</span>
-        </div>
+        {tire.fitmentVerified === true && (
+          <div className="absolute top-4 right-14 bg-white/95 backdrop-blur-sm text-green-700 border border-green-200 px-2.5 py-1 rounded-full shadow-md z-10 flex items-center gap-1.5 transform transition-transform hover:scale-105 cursor-help" title="Verified Fitment">
+              <svg className="w-3.5 h-3.5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <span className="text-[10px] font-black uppercase tracking-wide leading-none py-0.5">{t.verifiedFitment}</span>
+          </div>
+        )}
 
         {/* Actions Top Right */}
         <div className="absolute top-4 right-4 flex flex-col gap-2">
