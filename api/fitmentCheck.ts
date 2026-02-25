@@ -63,6 +63,23 @@ function extractTireSizes(data: unknown): string[] {
   return [...sizes];
 }
 
+/** Fetch all available region slugs from the v2 API and log them. Call once to discover valid values. */
+async function logAvailableRegions(): Promise<void> {
+  if (!WHEEL_SIZE_API_KEY) return;
+  try {
+    const url = `${WHEEL_SIZE_BASE}/regions/?user_key=${WHEEL_SIZE_API_KEY}`;
+    console.log('[fitmentCheck] fetching regions:', url.replace(WHEEL_SIZE_API_KEY, '***'));
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await r.text();
+    console.log(`[fitmentCheck] /regions/ status=${r.status} body:`, body);
+  } catch (err) {
+    console.error('[fitmentCheck] /regions/ fetch failed:', err);
+  }
+}
+
+// Log valid region slugs on first cold-start so we can identify the correct Canada slug.
+logAvailableRegions();
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Allow browser clients from the same origin (and Vercel preview URLs)
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -93,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       make: toSlug(make),
       model: toSlug(model),
       year: String(parseInt(year, 10)), // ensure integer, no extra whitespace
-      region: 'canada',                 // required by v2 API; Canada market
+      region: 'usdm',                   // TODO: replace with correct Canada slug once /regions/ log is reviewed
       user_key: WHEEL_SIZE_API_KEY,
     });
 
