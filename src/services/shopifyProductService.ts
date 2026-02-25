@@ -153,14 +153,18 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
 }
 
 /**
- * ✅ OPTION 2: Fetch products by tag
+ * ✅ OPTION 2: Fetch products by tag (paginated, up to Shopify's 250/page max)
  */
 export async function fetchProductsByTag(tag: string = 'ai-match') {
   console.log(`🔍 Fetching products with tag: ${tag}`);
 
   const query = `
-    query getProducts($query: String!) {
-      products(first: 50, query: $query) {
+    query getProducts($query: String!, $after: String) {
+      products(first: 250, query: $query, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         edges {
           node {
             id
@@ -193,22 +197,43 @@ export async function fetchProductsByTag(tag: string = 'ai-match') {
   `;
 
   try {
-    const response = await fetch(STOREFRONT_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { query: `tag:${tag}` }
-      }),
-    });
+    let allEdges: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+    let page = 0;
 
-    const result = await response.json();
-    const products = result.data?.products?.edges || [];
-    
-    return transformShopifyProducts(products);
+    while (hasNextPage) {
+      page++;
+      const response = await fetch(STOREFRONT_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
+        },
+        body: JSON.stringify({
+          query,
+          variables: { query: `tag:${tag}`, after: cursor }
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.errors) {
+        console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
+        break;
+      }
+
+      const pageData = result.data?.products;
+      const edges = pageData?.edges || [];
+      allEdges = allEdges.concat(edges);
+
+      hasNextPage = pageData?.pageInfo?.hasNextPage ?? false;
+      cursor = pageData?.pageInfo?.endCursor ?? null;
+      console.log(`🔍 [fetchProductsByTag] page ${page}: ${edges.length} products (hasNextPage=${hasNextPage})`);
+    }
+
+    console.warn(`[catalog] total ai-match products fetched: ${allEdges.length} (across ${page} page(s))`);
+    return transformShopifyProducts(allEdges);
 
   } catch (error) {
     console.error('❌ Error fetching products by tag:', error);
