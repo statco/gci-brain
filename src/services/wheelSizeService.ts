@@ -50,13 +50,11 @@ Example output: {"year": "2020", "make": "Toyota", "model": "Camry"}`;
  */
 async function getVehicleFitmentSizes(vehicle: VehicleInput): Promise<string[]> {
   try {
-    const params = new URLSearchParams({
-      make: vehicle.make,
-      model: vehicle.model,
-      year: vehicle.year,
+    const res = await fetch('/api/fitmentCheck', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ make: vehicle.make, model: vehicle.model, year: vehicle.year }),
     });
-
-    const res = await fetch(`/api/fitmentCheck?${params.toString()}`);
     if (!res.ok) return [];
 
     const json = await res.json() as { sizes?: string[] };

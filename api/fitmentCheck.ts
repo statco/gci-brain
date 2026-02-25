@@ -2,7 +2,7 @@
 // Server-side proxy for the Wheel-Size API v2.
 // Keeps the API key out of the browser bundle and avoids CORS issues.
 //
-// GET /api/fitmentCheck?make=buick&model=encore-gx&year=2021
+// POST /api/fitmentCheck  body: { make, model, year }
 // Returns: { sizes: ["225/60R18", "235/55R18", ...] }
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -43,18 +43,18 @@ function extractTireSizes(data: unknown): string[] {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Allow browser clients from the same origin (and Vercel preview URLs)
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { make, model, year } = req.query as Record<string, string>;
+  const { make, model, year } = (req.body ?? {}) as Record<string, string>;
 
   if (!make || !model || !year) {
     return res.status(400).json({ error: 'make, model, and year are required' });
