@@ -173,7 +173,7 @@ const TireCard: React.FC<TireCardProps> = ({
                 <p className="text-red-600 font-bold">{tire.model}</p>
             </div>
             {/* Reviews */}
-            {tire.rating && tire.reviews && (
+            {tire.rating > 0 && tire.reviews > 0 && (
               <div 
                   className="flex flex-col items-end cursor-pointer group/reviews"
                   onClick={() => onShowReviews(tire)}

@@ -71,13 +71,6 @@ export async function getTireRecommendations(
       ? `\nCRITICAL REQUIREMENT: You MUST only recommend products whose size EXACTLY matches one of these OEM sizes: ${oemSizes.join(', ')}. Do NOT recommend any product with a different size. If you cannot find products matching these exact sizes in the catalog, return an empty array rather than recommending wrong sizes.\n`
       : '';
 
-    // DEBUG: log every product's id/title/size before the prompt is assembled
-    console.warn('[catalog] total products:', availableProducts.length);
-    availableProducts.forEach(p =>
-      console.warn('[catalog]', p.id, p.size, p.title)
-    );
-    console.warn('[gemini] oemConstraint injected:', oemConstraint || '(none)');
-
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
@@ -158,7 +151,7 @@ function getFallbackRecommendations(
   if (oemSizes && oemSizes.length > 0) {
     const oemSet = new Set(oemSizes);
     sizePool = products.filter(p => oemSet.has(p.size));
-    console.log(`🔄 [fallback] OEM-size-matched pool: ${sizePool.length} of ${products.length} products`);
+    console.log('[fallback] OEM-filtered pool size:', sizePool.length);
   } else {
     sizePool = products;
   }
