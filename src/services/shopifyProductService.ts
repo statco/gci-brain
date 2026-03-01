@@ -115,6 +115,8 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
         return field?.value || '';
       };
 
+      const stock = parseStockFromText(product.description ?? product.title);
+
       return {
         id: product.id.split('/').pop(), // Extract numeric ID
         title: product.title,
@@ -128,7 +130,8 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
         imageUrl,
         description: product.description || '',
         features: extractFeaturesFromDescription(product.description),
-        inStock: variant?.availableForSale || false,
+        stock,
+        inStock: stock !== 0,
         warranty: '6-year limited', // Default, can be metafield
         speedRating: getMetafield('speed_rating') || 'H',
         loadIndex: getMetafield('load_index') || '94',
@@ -305,6 +308,15 @@ export async function fetchProductsByType(productType: string = 'Tires') {
 }
 
 /**
+ * Parse stock count from product title or description text.
+ * Returns -1 if no stock info found (treat as in-stock so we don't hide unverified products).
+ */
+function parseStockFromText(text: string): number {
+  const match = text.match(/Stock:\s*(\d+)\s*units/i);
+  return match ? parseInt(match[1], 10) : -1; // -1 = unknown, treat as in stock
+}
+
+/**
  * Transform Shopify products to TireProduct format
  */
 function transformShopifyProducts(edges: any[]) {
@@ -313,6 +325,7 @@ function transformShopifyProducts(edges: any[]) {
     const variant = product.variants.edges[0]?.node;
     const shopifyImage = product.images.edges[0]?.node.url || '';
     const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
+    const stock = parseStockFromText(product.description ?? product.title);
 
     return {
       id: product.id.split('/').pop(),
@@ -327,7 +340,8 @@ function transformShopifyProducts(edges: any[]) {
       imageUrl,
       description: product.description || '',
       features: extractFeaturesFromDescription(product.description),
-      inStock: variant?.availableForSale || false,
+      stock,
+      inStock: stock !== 0,
       warranty: '6-year limited',
       speedRating: 'H',
       loadIndex: '94',
