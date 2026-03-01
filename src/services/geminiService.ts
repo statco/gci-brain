@@ -55,14 +55,20 @@ export async function getTireRecommendations(
     return [];
   }
 
+  // Build catalog: only in-stock products visible to Gemini
+  const catalogProducts = availableProducts.filter(p => p.inStock);
+  console.log('[debug] in-stock catalog size:', catalogProducts.length);
+  const oemMatches = catalogProducts.filter(p => p.size === '235/55R18');
+  console.log('[debug] in-stock 235/55R18 count:', oemMatches.length, oemMatches.map(p => p.title));
+
   // If no API key, return fallback immediately
   if (!genAI) {
     console.log('⚠️ No API key, using fallback');
-    return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
+    return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
   }
 
   try {
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
       systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
     });
@@ -77,7 +83,7 @@ Customer Request: "${userRequest}"
 Language: ${language === 'fr' ? 'French' : 'English'}
 ${oemConstraint}
 Available Tire Products:
-${availableProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
+${catalogProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
 
 Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
 
@@ -111,7 +117,7 @@ Rules:
     }
 
     // Filter products based on recommendations
-    const recommendations = availableProducts.filter(p => 
+    const recommendations = catalogProducts.filter(p =>
       recommendedIds.includes(p.id)
     );
 
@@ -120,7 +126,7 @@ Rules:
     // If no matches, return fallback
     if (recommendations.length === 0) {
       console.log('⚠️ No matching products, using fallback');
-      return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
+      return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
     }
 
     return recommendations;
@@ -128,7 +134,7 @@ Rules:
   } catch (error) {
     console.error('❌ Error getting Gemini recommendations:', error);
     console.log('⚠️ Using fallback recommendations');
-    return getFallbackRecommendations(userRequest, availableProducts, oemSizes);
+    return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
   }
 }
 
