@@ -85,7 +85,7 @@ ${oemConstraint}
 Available Tire Products:
 ${catalogProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
 
-Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
+Based on the customer's request, recommend the 4-6 most suitable tires from the list above.
 
 Return ONLY a valid JSON array with the tire IDs from the list, no other text:
 ["9187654321", "9187654322"]
@@ -93,7 +93,7 @@ Return ONLY a valid JSON array with the tire IDs from the list, no other text:
 Rules:
 - Return only IDs shown in the "ID: XXX" format above
 - Match the customer's needs (size, season, performance, budget)
-- Return 2-4 recommendations
+- Return 4-6 recommendations
 - Consider Canadian climate if winter/all-season is mentioned
 - NO explanations, ONLY the JSON array`;
 
@@ -191,8 +191,8 @@ function getFallbackRecommendations(
     console.warn('⚠️ [fallback] No products matched OEM sizes — returning top 3 without exact fitment');
   }
 
-  // Return top 3
-  const result = filtered.slice(0, 3);
+  // Return top 6
+  const result = filtered.slice(0, 6);
   console.log('✅ Fallback recommendations:', result.length);
   
   return result;
