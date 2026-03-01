@@ -62,7 +62,7 @@ export async function getTireRecommendations(
   }
 
   try {
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
       systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
     });
@@ -71,13 +71,16 @@ export async function getTireRecommendations(
       ? `\nCRITICAL REQUIREMENT: You MUST only recommend products whose size EXACTLY matches one of these OEM sizes: ${oemSizes.join(', ')}. Do NOT recommend any product with a different size. If you cannot find products matching these exact sizes in the catalog, return an empty array rather than recommending wrong sizes.\n`
       : '';
 
+    // Only show in-stock products to Gemini
+    const catalogProducts = availableProducts.filter(p => p.inStock && (p.stock ?? 1) > 0);
+
     const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
 Language: ${language === 'fr' ? 'French' : 'English'}
 ${oemConstraint}
 Available Tire Products:
-${availableProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit}`).join('\n')}
+${catalogProducts.map((p) => `ID: ${p.id} - ${p.brand} ${p.model} - ${p.size} (${p.season}) - $${p.pricePerUnit} - Stock: ${p.stock ?? 0} units`).join('\n')}
 
 Based on the customer's request, recommend the 2-4 most suitable tires from the list above.
 
@@ -110,8 +113,8 @@ Rules:
       throw new Error('Response is not an array');
     }
 
-    // Filter products based on recommendations
-    const recommendations = availableProducts.filter(p => 
+    // Filter products based on recommendations (search within in-stock catalog only)
+    const recommendations = catalogProducts.filter(p =>
       recommendedIds.includes(p.id)
     );
 
@@ -146,20 +149,23 @@ function getFallbackRecommendations(
 
   const requestLower = userRequest.toLowerCase();
 
+  // Strip out-of-stock products before any fallback logic
+  const inStockProducts = products.filter(p => p.inStock && (p.stock ?? 1) > 0);
+
   // Narrow to OEM-size-matched products first when sizes are known
   let sizePool: TireProduct[];
   if (oemSizes && oemSizes.length > 0) {
     const oemSet = new Set(oemSizes);
-    sizePool = products.filter(p => oemSet.has(p.size));
+    sizePool = inStockProducts.filter(p => oemSet.has(p.size));
     console.log('[fallback] OEM-filtered pool size:', sizePool.length);
   } else {
-    sizePool = products;
+    sizePool = inStockProducts;
   }
 
   const exactFitmentAvailable = sizePool.length > 0;
 
   // Apply season / brand filters within the size pool
-  let filtered = [...(exactFitmentAvailable ? sizePool : products)];
+  let filtered = [...(exactFitmentAvailable ? sizePool : inStockProducts)];
 
   // Filter by season
   if (requestLower.includes('winter') || requestLower.includes('snow') || requestLower.includes('ice') || requestLower.includes('hiver')) {
@@ -176,9 +182,9 @@ function getFallbackRecommendations(
     filtered = filtered.filter(p => p.brand.toLowerCase().includes(brandMatch[0]));
   }
 
-  // If season/brand filters wiped out the pool, fall back to size pool (or all products)
+  // If season/brand filters wiped out the pool, fall back to size pool (or all in-stock products)
   if (filtered.length === 0) {
-    filtered = exactFitmentAvailable ? sizePool : products;
+    filtered = exactFitmentAvailable ? sizePool : inStockProducts;
   }
 
   if (!exactFitmentAvailable && oemSizes && oemSizes.length > 0) {

@@ -38,6 +38,7 @@ export interface TireProduct {
   description?: string;
   features?: string[];
   inStock: boolean;
+  stock?: number;
   warranty?: string;
   speedRating?: string;
   loadIndex?: string;

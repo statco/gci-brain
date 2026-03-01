@@ -57,6 +57,7 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
                       currencyCode
                     }
                     availableForSale
+                    quantityAvailable
                   }
                 }
               }
@@ -129,6 +130,7 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
         description: product.description || '',
         features: extractFeaturesFromDescription(product.description),
         inStock: variant?.availableForSale || false,
+        stock: variant?.quantityAvailable ?? 0,
         warranty: '6-year limited', // Default, can be metafield
         speedRating: getMetafield('speed_rating') || 'H',
         loadIndex: getMetafield('load_index') || '94',
@@ -187,6 +189,7 @@ export async function fetchProductsByTag(tag: string = 'ai-match') {
                     amount
                   }
                   availableForSale
+                  quantityAvailable
                 }
               }
             }
@@ -271,6 +274,7 @@ export async function fetchProductsByType(productType: string = 'Tires') {
                     amount
                   }
                   availableForSale
+                  quantityAvailable
                 }
               }
             }
@@ -328,6 +332,7 @@ function transformShopifyProducts(edges: any[]) {
       description: product.description || '',
       features: extractFeaturesFromDescription(product.description),
       inStock: variant?.availableForSale || false,
+      stock: variant?.quantityAvailable ?? 0,
       warranty: '6-year limited',
       speedRating: 'H',
       loadIndex: '94',
