@@ -331,6 +331,22 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
   return stats;
 }
 
+// ─── TITLE CASE ───────────────────────────────────────────────────────────────
+// Mirrors the logic in api/fixTitles.ts — keep both in sync if updating.
+
+function convertToken(token: string): string {
+  if (/^[A-Z]*[0-9]+[A-Z0-9]*$/.test(token)) return token;
+  if (/^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB)$/.test(token)) return token;
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+}
+
+function toTitleCase(original: string): string {
+  return original.split(' ').map(word => {
+    if (word.includes('-')) return word.split('-').map(convertToken).join('-');
+    return convertToken(word);
+  }).join(' ').replace(/\/r\b/g, '/R');
+}
+
 // ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
 // Uses REAL CT dealer cost (ct.cost field) instead of MSRP estimate.
 // Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
@@ -361,7 +377,7 @@ function buildPayload(ct: CTTire) {
 
   return {
     product: {
-      title:        `${ct.brand} ${ct.model} ${size}`.trim(),
+      title:        toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()),
       body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li></ul>`,
       vendor:       ct.brand,
       product_type: 'Tire',
