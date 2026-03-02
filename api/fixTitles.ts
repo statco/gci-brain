@@ -50,16 +50,19 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-// Preserve model codes (tokens containing digits, e.g. WS90, P225, 4X4)
-// and known short acronyms. Plain all-caps words like COOPER/COBRA won't
-// match and will be title-cased normally.
-const PRESERVE_TOKEN =
-  /^[A-Z]*[0-9]+[A-Z0-9]*$|^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB)$/;
+function convertToken(token: string): string {
+  if (/^[A-Z]*[0-9]+[A-Z0-9]*$/.test(token)) return token;
+  if (/^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB)$/.test(token)) return token;
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+}
 
 function toTitleCase(original: string): string {
   return original.split(' ').map(word => {
-    if (PRESERVE_TOKEN.test(word)) return word;
-    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    // Handle hyphenated words like SRX-LE
+    if (word.includes('-')) {
+      return word.split('-').map(part => convertToken(part)).join('-');
+    }
+    return convertToken(word);
   }).join(' ')
     .replace(/\/r\b/g, '/R'); // Restore /R in tire sizes (e.g. 225/60R17)
 }
