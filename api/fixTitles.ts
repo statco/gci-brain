@@ -8,6 +8,7 @@
 // GET /api/fixTitles                            — First batch (chunkSize=200)
 // GET /api/fixTitles?dry=true                   — Preview changes (no saves)
 // GET /api/fixTitles?offset=200&chunkSize=200   — Next batch
+// GET /api/fixTitles?force=true                 — Re-process all (skip equality check)
 // GET /api/fixTitles?limit=10                   — Legacy: first N products
 //
 // Pagination: pass offset/chunkSize to process in batches without
@@ -88,7 +89,8 @@ async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
-  const dryRun    = req.query.dry === 'true';
+  const dryRun    = req.query.dry   === 'true';
+  const force     = req.query.force === 'true';
   const limit     = req.query.limit     ? parseInt(req.query.limit     as string, 10) : null;
   const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
   const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 200;
@@ -97,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
-  console.log(`🔤 fixTitles — dry=${dryRun} offset=${offset} chunkSize=${chunkSize} limit=${limit ?? 'all'}`);
+  console.log(`🔤 fixTitles — dry=${dryRun} force=${force} offset=${offset} chunkSize=${chunkSize} limit=${limit ?? 'all'}`);
 
   let allProducts: ShopifyProduct[];
   try {
@@ -118,7 +120,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const product of products) {
     const newTitle = toTitleCase(product.title);
 
-    if (newTitle === product.title) {
+    if (!force && newTitle === product.title) {
       skipped++;
       continue;
     }
@@ -144,6 +146,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const summary = {
     dryRun,
+    force,
     total: pool.length,
     offset,
     chunkSize,
