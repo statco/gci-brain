@@ -44,12 +44,15 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
+const PRESERVE_TOKEN = /^[A-Z]*[0-9]+[A-Z0-9]*$|^(XL|SUV|ATX|4X4|WS|HP|UHP|HT|LT|ST|M\+S|3PMSF|OWL|BSW|VSB)$/;
+
 function toTitleCase(original: string): string {
   return original.split(' ').map(word => {
-    // Preserve fully-uppercase short tokens (model codes, acronyms e.g. WS90, ATX, SUV, XL, 4X4)
-    if (/^[A-Z0-9]{2,6}$/.test(word)) return word;
+    // Preserve model codes (contain digits) and known short acronyms — but not plain words like COOPER
+    if (PRESERVE_TOKEN.test(word)) return word;
     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-  }).join(' ');
+  }).join(' ')
+    .replace(/\/r\b/g, '/R'); // Restore /R size suffix (e.g. 225/60R17 not 225/60r17)
 }
 
 // ─── FETCH ALL TAGGED PRODUCTS (paginated) ────────────────────────────────────
