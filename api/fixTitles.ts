@@ -44,8 +44,12 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-function toTitleCase(str: string): string {
-  return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+function toTitleCase(original: string): string {
+  return original.split(' ').map(word => {
+    // Preserve fully-uppercase short tokens (model codes, acronyms e.g. WS90, ATX, SUV, XL, 4X4)
+    if (/^[A-Z0-9]{2,6}$/.test(word)) return word;
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(' ');
 }
 
 // ─── FETCH ALL TAGGED PRODUCTS (paginated) ────────────────────────────────────
@@ -96,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let updated = 0;
   let skipped = 0;
   const errors: string[] = [];
+  const changes: Array<{ id: number; old: string; new: string }> = [];
 
   for (const product of products) {
     const newTitle = toTitleCase(product.title);
@@ -106,6 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     console.log(`  ${product.title} → ${newTitle}`);
+    changes.push({ id: product.id, old: product.title, new: newTitle });
 
     if (!dryRun) {
       try {
@@ -130,6 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     updated,
     skipped,
     errors,
+    changes,
   };
 
   console.log(`✅ Done — updated:${updated} skipped:${skipped} errors:${errors.length}`);
