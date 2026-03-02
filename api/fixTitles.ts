@@ -5,9 +5,14 @@
 // Fetches all products tagged `ct-sync` and converts their
 // titles to Title Case.
 //
-// GET /api/fixTitles             — Run and apply all changes
-// GET /api/fixTitles?dry=true    — Preview changes (no saves)
-// GET /api/fixTitles?limit=10    — Process only first N products
+// GET /api/fixTitles                            — First batch (chunkSize=200)
+// GET /api/fixTitles?dry=true                   — Preview changes (no saves)
+// GET /api/fixTitles?offset=200&chunkSize=200   — Next batch
+// GET /api/fixTitles?limit=10                   — Legacy: first N products
+//
+// Pagination: pass offset/chunkSize to process in batches without
+// hitting the Vercel timeout. The response includes nextOffset
+// (null when all products have been processed).
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -44,15 +49,18 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-const PRESERVE_TOKEN = /^[A-Z]*[0-9]+[A-Z0-9]*$|^(XL|SUV|ATX|4X4|WS|HP|UHP|HT|LT|ST|M\+S|3PMSF|OWL|BSW|VSB)$/;
+// Preserve model codes (tokens containing digits, e.g. WS90, P225, 4X4)
+// and known short acronyms. Plain all-caps words like COOPER/COBRA won't
+// match and will be title-cased normally.
+const PRESERVE_TOKEN =
+  /^[A-Z]*[0-9]+[A-Z0-9]*$|^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB)$/;
 
 function toTitleCase(original: string): string {
   return original.split(' ').map(word => {
-    // Preserve model codes (contain digits) and known short acronyms — but not plain words like COOPER
     if (PRESERVE_TOKEN.test(word)) return word;
     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
   }).join(' ')
-    .replace(/\/r\b/g, '/R'); // Restore /R size suffix (e.g. 225/60R17 not 225/60r17)
+    .replace(/\/r\b/g, '/R'); // Restore /R in tire sizes (e.g. 225/60R17)
 }
 
 // ─── FETCH ALL TAGGED PRODUCTS (paginated) ────────────────────────────────────
@@ -80,30 +88,32 @@ async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
-  const dryRun = req.query.dry === 'true';
-  const limit  = req.query.limit ? parseInt(req.query.limit as string, 10) : null;
+  const dryRun    = req.query.dry === 'true';
+  const limit     = req.query.limit     ? parseInt(req.query.limit     as string, 10) : null;
+  const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
+  const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 200;
 
   if (!SHOPIFY.domain || !SHOPIFY.token) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
-  console.log(`🔤 fixTitles — dry=${dryRun} limit=${limit ?? 'all'}`);
+  console.log(`🔤 fixTitles — dry=${dryRun} offset=${offset} chunkSize=${chunkSize} limit=${limit ?? 'all'}`);
 
-  let products: ShopifyProduct[];
+  let allProducts: ShopifyProduct[];
   try {
-    products = await fetchAllTaggedProducts();
+    allProducts = await fetchAllTaggedProducts();
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
 
-  if (limit !== null && !isNaN(limit)) {
-    products = products.slice(0, limit);
-  }
+  // Apply legacy ?limit first, then window the pool by offset/chunkSize
+  const pool     = (limit !== null && !isNaN(limit)) ? allProducts.slice(0, limit) : allProducts;
+  const products = pool.slice(offset, offset + chunkSize);
+  const nextOffset = (offset + chunkSize) < pool.length ? offset + chunkSize : null;
 
   let updated = 0;
   let skipped = 0;
   const errors: string[] = [];
-  const changes: Array<{ id: number; old: string; new: string }> = [];
 
   for (const product of products) {
     const newTitle = toTitleCase(product.title);
@@ -114,7 +124,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     console.log(`  ${product.title} → ${newTitle}`);
-    changes.push({ id: product.id, old: product.title, new: newTitle });
 
     if (!dryRun) {
       try {
@@ -135,13 +144,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const summary = {
     dryRun,
+    total: pool.length,
+    offset,
+    chunkSize,
+    nextOffset,
     totalScanned: products.length,
     updated,
     skipped,
     errors,
-    changes,
   };
 
-  console.log(`✅ Done — updated:${updated} skipped:${skipped} errors:${errors.length}`);
+  console.log(`✅ Done — offset:${offset} scanned:${products.length} updated:${updated} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
   return res.status(200).json(summary);
 }
