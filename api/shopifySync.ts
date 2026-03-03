@@ -342,8 +342,13 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
 // Mirrors the logic in api/fixTitles.ts — keep both in sync if updating.
 
 function convertToken(token: string): string {
+  // Fix tire size format: 235/65r17 → 235/65R17
+  if (/^\d+\/\d+[rR]\d+$/.test(token)) {
+    return token.replace(/[rR](\d)/, 'R$1');
+  }
   if (/^[A-Z]*[0-9]+[A-Z0-9]*$/.test(token)) return token;
-  if (/^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB)$/.test(token)) return token;
+  const upper = token.toUpperCase();
+  if (/^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB|STT|MTX|GTX|HL|AU|RU|RH|HI|CP)$/.test(upper)) return upper;
   return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
 }
 
@@ -351,7 +356,7 @@ function toTitleCase(original: string): string {
   return original.split(' ').map(word => {
     if (word.includes('-')) return word.split('-').map(convertToken).join('-');
     return convertToken(word);
-  }).join(' ').replace(/\/r\b/g, '/R');
+  }).join(' ').replace(/\/r(\d)/gi, '/R$1');
 }
 
 // ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
