@@ -124,6 +124,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const newTitle      = (compactCode ? product.title.replace(compactCode, formattedSize!) : product.title)
                             .replace(/\/r(\d)/gi, '/R$1');
 
+    // Diagnostic: log raw bytes from Shopify and replace result for suspected titles
+    if (/235\/65r/i.test(product.title)) {
+      console.log(`[DIAG ${product.id}] raw title bytes: ${Buffer.from(product.title).toString('hex')}`);
+      console.log(`[DIAG ${product.id}] raw title: ${JSON.stringify(product.title)}`);
+      console.log(`[DIAG ${product.id}] newTitle:  ${JSON.stringify(newTitle)}`);
+      console.log(`[DIAG ${product.id}] equal: ${newTitle === product.title}`);
+    }
+
     // Check whether the size tag is already present
     const existingTags  = product.tags ? product.tags.split(',').map(t => t.trim()) : [];
     const sizeTagNeeded = formattedSize && !existingTags.includes(formattedSize);
