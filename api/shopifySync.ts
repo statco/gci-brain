@@ -189,6 +189,13 @@ function parseTireSize(raw: string): string {
   return `${w}/${a}R${r}`;
 }
 
+// Handles compact 8-digit CT codes like "2256016/R" → "225/60R16"
+function formatTireSize(rawCode: string): string {
+  const match = rawCode.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
+  if (!match) return parseTireSize(rawCode);
+  return `${match[1]}/${match[2]}R${match[3]}`;
+}
+
 // ─── SHOPIFY HELPERS ──────────────────────────────────────────────────────────
 
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
@@ -352,7 +359,7 @@ function toTitleCase(original: string): string {
 // Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
 
 function buildPayload(ct: CTTire) {
-  const size    = parseTireSize(ct.size);
+  const size    = formatTireSize(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
@@ -372,6 +379,7 @@ function buildPayload(ct: CTTire) {
     `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
     season.toLowerCase(),
     `tire-type-${tireType}`,
+    size,
     ct.isRunFlat ? 'run-flat' : null,
   ].filter(Boolean).join(', ');
 
