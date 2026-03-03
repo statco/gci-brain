@@ -51,6 +51,10 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
 }
 
 function convertToken(token: string): string {
+  // Fix tire size format: 235/65r17 → 235/65R17
+  if (/^\d+\/\d+[rR]\d+$/.test(token)) {
+    return token.replace(/[rR](\d)/, 'R$1');
+  }
   if (/^[A-Z]*[0-9]+[A-Z0-9]*$/.test(token)) return token;
   const upper = token.toUpperCase();
   if (/^(XL|XLT|SUV|ATX|4X4|4WD|AWD|AW|WS|HP|UHP|HT|LT|ST|GT|GTS|LE|SE|EV|SRX|OE|OEM|M\+S|3PMSF|OWL|BSW|VSB|STT|MTX|GTX|HL|AU|RU|RH|HI|CP)$/.test(upper)) return upper;
