@@ -116,16 +116,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const product of products) {
     const compactMatch = product.title.match(COMPACT_SIZE_RE);
 
-    if (!compactMatch && !force) {
-      // No compact code in title — nothing to fix
-      skipped++;
-      continue;
-    }
-
     const compactCode   = compactMatch?.[0] ?? null;
     const formattedSize = compactCode ? formatTireSize(compactCode) : null;
-    // Replace compact code if found, then fix any remaining /r followed by a digit
-    // (e.g. 305/65r17 → 305/65R17) — case-insensitive so previous partial runs are healed.
+    // Always apply the /r(\d) → /R$1 pass so titles that were previously
+    // converted but left with a lowercase r (e.g. 235/55r18 → 235/55R18)
+    // are corrected even when no compact code is present.
     const newTitle      = (compactCode ? product.title.replace(compactCode, formattedSize!) : product.title)
                             .replace(/\/r(\d)/gi, '/R$1');
 
