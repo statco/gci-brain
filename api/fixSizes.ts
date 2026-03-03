@@ -50,12 +50,13 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-// Matches compact CT size codes: 7 digits followed by /R  (e.g. 2256016/R)
-const COMPACT_SIZE_RE = /\d{7}\/R/;
+// Matches compact CT size codes: exactly 7 digits followed by /R or /r (e.g. 2256016/R)
+// Non-standard LT codes like 3713/R or 310/R have fewer digits and won't match.
+const COMPACT_SIZE_RE = /\d{7}\/[Rr]/;
 
-// "2256016/R" → "225/60R16"
+// "2256016/R" → "225/60R16"  (normalises to uppercase before matching)
 function formatTireSize(code: string): string {
-  const match = code.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
+  const match = code.toUpperCase().match(/^(\d{3})(\d{2})(\d{2})\/R$/);
   if (!match) return code; // already formatted or unrecognised — leave alone
   return `${match[1]}/${match[2]}R${match[3]}`;
 }
@@ -123,7 +124,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const compactCode   = compactMatch?.[0] ?? null;
     const formattedSize = compactCode ? formatTireSize(compactCode) : null;
-    const newTitle      = compactCode ? product.title.replace(compactCode, formattedSize!) : product.title;
+    // Replace compact code if found, then fix any remaining /r followed by a digit
+    // (e.g. 305/65r17 → 305/65R17) — case-insensitive so previous partial runs are healed.
+    const newTitle      = (compactCode ? product.title.replace(compactCode, formattedSize!) : product.title)
+                            .replace(/\/r(\d)/gi, '/R$1');
 
     // Check whether the size tag is already present
     const existingTags  = product.tags ? product.tags.split(',').map(t => t.trim()) : [];
