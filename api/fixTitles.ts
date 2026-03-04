@@ -36,8 +36,8 @@ const SYNC_TAG = 'ct-sync';
 
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${SHOPIFY.baseUrl}${path}`, {
+async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -45,8 +45,13 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
       ...(options.headers || {}),
     },
   });
-  if (res.status === 429) { await delay(2000); return shopifyFetch<T>(path, options); }
-  if (!res.ok) throw new Error(`Shopify ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
+  if (res.status === 429) { await delay(2000); return shopifyFetchRaw(url, options); }
+  if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
+  return res;
+}
+
+async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await shopifyFetchRaw(`${SHOPIFY.baseUrl}${path}`, options);
   if (res.status === 204 || res.headers.get('content-length') === '0') return {} as T;
   return res.json() as Promise<T>;
 }
@@ -79,17 +84,23 @@ interface ShopifyProduct { id: number; title: string; }
 
 async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
   const all: ShopifyProduct[] = [];
-  let sinceId = 0;
+  let url: string = `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title`;
+  let page = 0;
 
-  while (true) {
-    const q = `tag=${SYNC_TAG}&limit=250&fields=id,title${sinceId ? `&since_id=${sinceId}` : ''}`;
-    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+  while (url) {
+    page++;
+    const response = await shopifyFetchRaw(url);
+    const data: any = await response.json();
     const products: ShopifyProduct[] = data.products || [];
     all.push(...products);
-    if (products.length < 250) break;
-    sinceId = products[products.length - 1].id;
+    console.log(`  [fetchAllTaggedProducts] page ${page}: fetched ${products.length} products (running total: ${all.length})`);
+
+    const link = response.headers.get('Link') || '';
+    const next = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : '';
   }
 
+  console.log(`  [fetchAllTaggedProducts] done — ${page} page(s), ${all.length} total products`);
   return all;
 }
 
