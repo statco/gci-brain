@@ -10,6 +10,7 @@
 // GET /api/fixTitles?offset=200&chunkSize=200   — Next batch
 // GET /api/fixTitles?force=true                 — Re-process all (skip equality check)
 // GET /api/fixTitles?limit=10                   — Legacy: first N products
+// GET /api/fixTitles?productId=123456789        — Fix a single product by ID (bypasses pagination)
 //
 // Pagination: pass offset/chunkSize to process in batches without
 // hitting the Vercel timeout. The response includes nextOffset
@@ -99,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const dryRun    = req.query.dry   === 'true';
   const force     = req.query.force === 'true';
+  const productId = req.query.productId ? String(req.query.productId) : null;
   const limit     = req.query.limit     ? parseInt(req.query.limit     as string, 10) : null;
   const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
   const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 200;
@@ -107,6 +109,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
+  // ── Single-product mode ────────────────────────────────────────────────────
+  if (productId) {
+    console.log(`🔤 fixTitles — single product mode productId=${productId} dry=${dryRun} force=${force}`);
+
+    let product: ShopifyProduct;
+    try {
+      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title`);
+      product = data.product as ShopifyProduct;
+      if (!product) throw new Error('Product not found');
+    } catch (err) {
+      return res.status(404).json({ error: `Failed to fetch product ${productId}: ${String(err)}` });
+    }
+
+    const newTitle = toTitleCase(product.title);
+    const changed  = newTitle !== product.title;
+
+    console.log(`  ${product.title} → ${newTitle}`);
+
+    if (changed && !dryRun) {
+      try {
+        await shopifyFetch(`/products/${product.id}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ product: { id: product.id, title: newTitle } }),
+        });
+      } catch (err) {
+        return res.status(500).json({ error: `Failed to update product ${productId}: ${String(err)}` });
+      }
+    }
+
+    return res.status(200).json({
+      dryRun,
+      force,
+      productId: product.id,
+      originalTitle: product.title,
+      newTitle,
+      updated: (!force && !changed) ? 0 : (dryRun ? 0 : 1),
+      skipped: (!force && !changed) ? 1 : 0,
+      errors: [],
+    });
+  }
+
+  // ── Batch mode (original behaviour) ───────────────────────────────────────
   console.log(`🔤 fixTitles — dry=${dryRun} force=${force} offset=${offset} chunkSize=${chunkSize} limit=${limit ?? 'all'}`);
 
   let allProducts: ShopifyProduct[];
