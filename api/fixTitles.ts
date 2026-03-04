@@ -81,15 +81,19 @@ async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
   const all: ShopifyProduct[] = [];
   let sinceId = 0;
 
+  let page = 0;
   while (true) {
+    page++;
     const q = `tag=${SYNC_TAG}&limit=250&fields=id,title${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products: ShopifyProduct[] = data.products || [];
     all.push(...products);
+    console.log(`  [fetchAllTaggedProducts] page ${page}: fetched ${products.length} products (running total: ${all.length})`);
     if (products.length < 250) break;
     sinceId = products[products.length - 1].id;
   }
 
+  console.log(`  [fetchAllTaggedProducts] done — ${page} page(s), ${all.length} total products`);
   return all;
 }
 
