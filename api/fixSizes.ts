@@ -10,6 +10,7 @@
 // GET /api/fixSizes?dry=true                   — Preview changes (no saves)
 // GET /api/fixSizes?offset=200&chunkSize=200   — Next batch
 // GET /api/fixSizes?force=true                 — Re-process all (skip equality check)
+// GET /api/fixSizes?productId=123456789        — Fix a single product by ID (bypasses pagination)
 //
 // Response shape matches fixTitles.ts:
 //   { dryRun, force, total, offset, chunkSize, nextOffset,
@@ -86,8 +87,9 @@ async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
-  const dryRun    = req.query.dry   === 'true';
-  const force     = req.query.force === 'true';
+  const dryRun    = req.query.dry       === 'true';
+  const force     = req.query.force     === 'true';
+  const productId = req.query.productId ? String(req.query.productId) : null;
   const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
   const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 200;
 
@@ -95,6 +97,69 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
+  // ── Single-product mode ────────────────────────────────────────────────────
+  if (productId) {
+    console.log(`📐 fixSizes — single product mode productId=${productId} dry=${dryRun} force=${force}`);
+
+    let product: ShopifyProduct;
+    try {
+      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags`);
+      product = data.product as ShopifyProduct;
+      if (!product) throw new Error('Product not found');
+    } catch (err) {
+      return res.status(404).json({ error: `Failed to fetch product ${productId}: ${String(err)}` });
+    }
+
+    const compactMatch  = product.title.match(COMPACT_SIZE_RE);
+    const compactCode   = compactMatch?.[0] ?? null;
+    const formattedSize = compactCode ? formatTireSize(compactCode) : null;
+    const newTitle      = (compactCode ? product.title.replace(compactCode, formattedSize!) : product.title)
+                            .replace(/\/r(\d)/gi, '/R$1');
+
+    const existingTags  = product.tags ? product.tags.split(',').map(t => t.trim()) : [];
+    const sizeTagNeeded = formattedSize && !existingTags.includes(formattedSize);
+    const newTags       = sizeTagNeeded
+      ? [...existingTags, formattedSize!].join(', ')
+      : product.tags;
+
+    const titleChanged = newTitle !== product.title;
+    const tagsChanged  = newTags  !== product.tags;
+    const anyChange    = titleChanged || tagsChanged;
+
+    console.log(`  [${product.id}] "${product.title}" → "${newTitle}"${sizeTagNeeded ? ` +tag:${formattedSize}` : ''}`);
+
+    const changes: Array<{ id: number; before: string; after: string; tagAdded: string | null }> = [];
+
+    if (force || anyChange) {
+      changes.push({ id: product.id, before: product.title, after: newTitle, tagAdded: sizeTagNeeded ? formattedSize! : null });
+
+      if (!dryRun) {
+        try {
+          const body: Record<string, any> = { id: product.id };
+          if (titleChanged) body.title = newTitle;
+          if (tagsChanged)  body.tags  = newTags;
+          await shopifyFetch(`/products/${product.id}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({ product: body }),
+          });
+        } catch (err) {
+          return res.status(500).json({ error: `Failed to update product ${productId}: ${String(err)}` });
+        }
+      }
+    }
+
+    return res.status(200).json({
+      dryRun,
+      force,
+      productId: product.id,
+      updated: (force || anyChange) ? (dryRun ? 0 : 1) : 0,
+      skipped: (!force && !anyChange) ? 1 : 0,
+      errors:  [],
+      changes,
+    });
+  }
+
+  // ── Batch mode (original behaviour) ───────────────────────────────────────
   console.log(`📐 fixSizes — dry=${dryRun} force=${force} offset=${offset} chunkSize=${chunkSize}`);
 
   let allProducts: ShopifyProduct[];
