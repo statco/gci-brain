@@ -201,7 +201,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const errors: string[] = [];
   const changes: Array<{ id: number; title: string; added: string[]; mergedTags: string }> = [];
 
+  const NON_TIRE_TITLES = ['installation', 'service', 'balancing', 'mounting'];
+
   for (const product of products) {
+    const titleLower = product.title.toLowerCase();
+    if (NON_TIRE_TITLES.some(kw => titleLower.includes(kw))) {
+      skipped++;
+      continue;
+    }
+
     const newTags = deriveTags(product.title);
     const { merged, added } = mergeTags(product.tags, newTags);
     const changed = added.length > 0;
