@@ -4,6 +4,7 @@
 //
 // GET /api/findDuplicates                    — all groups with 2+ products
 // GET /api/findDuplicates?minCount=3         — groups with 3+ products
+// GET /api/findDuplicates?activeOnly=true    — only active products; groups with <2 active excluded
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -74,13 +75,14 @@ function normalizeTitle(title: string): string {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
-  const minCount = req.query.minCount ? parseInt(req.query.minCount as string, 10) : 2;
+  const minCount  = req.query.minCount  ? parseInt(req.query.minCount as string, 10) : 2;
+  const activeOnly = req.query.activeOnly === 'true';
 
   if (!SHOPIFY.domain || !SHOPIFY.token) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
-  console.log(`🔍 findDuplicates — minCount=${minCount}`);
+  console.log(`🔍 findDuplicates — minCount=${minCount} activeOnly=${activeOnly}`);
 
   let allProducts: ShopifyProduct[];
   try {
@@ -103,9 +105,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Filter groups with count >= minCount, sort by count descending
   const groups = Array.from(grouped.entries())
-    .filter(([, products]) => products.length >= minCount)
-    .sort(([, a], [, b]) => b.length - a.length)
-    .map(([normalizedTitle, products]) => ({
+    .map(([normalizedTitle, products]) => {
+      const filtered = activeOnly ? products.filter(p => p.status === 'active') : products;
+      return { normalizedTitle, products: filtered };
+    })
+    .filter(({ products }) => products.length >= minCount)
+    .sort(({ products: a }, { products: b }) => b.length - a.length)
+    .map(({ normalizedTitle, products }) => ({
       normalizedTitle,
       count: products.length,
       products: products.map(p => ({ id: p.id, title: p.title, status: p.status })),
@@ -113,7 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const totalDuplicates = groups.reduce((sum, g) => sum + g.count, 0);
 
-  console.log(`✅ Done — totalProducts:${allProducts.length} totalGroups:${groups.length} totalDuplicates:${totalDuplicates}`);
+  console.log(`✅ Done — totalProducts:${allProducts.length} totalGroups:${groups.length} totalDuplicates:${totalDuplicates} activeOnly:${activeOnly}`);
 
   return res.status(200).json({
     totalProducts: allProducts.length,
