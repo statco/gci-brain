@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTireImageUrl } from './addTireImages.js';
+import { classifyTire } from '../lib/classifyTire.js';
 
 export const config = { maxDuration: 300 };
 
@@ -379,6 +380,9 @@ function buildPayload(ct: CTTire) {
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
   const floorPrice     = netCost + shippingBuffer;
 
+  const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
+  const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
+
   const tags = [
     SYNC_TAG,
     `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
@@ -386,11 +390,16 @@ function buildPayload(ct: CTTire) {
     `tire-type-${tireType}`,
     size,
     ct.isRunFlat ? 'run-flat' : null,
-  ].filter(Boolean).join(', ');
+    classifiedSeason,
+    vehicleType,
+    classifiedBrand,
+  ].filter((t): t is string => typeof t === 'string' && t.length > 0)
+    .filter((t, i, arr) => arr.indexOf(t) === i)   // deduplicate
+    .join(', ');
 
   return {
     product: {
-      title:        toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()),
+      title,
       body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li></ul>`,
       vendor:       ct.brand,
       product_type: 'Tire',
