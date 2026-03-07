@@ -360,6 +360,40 @@ function toTitleCase(original: string): string {
   }).join(' ').replace(/\/r(\d)/gi, '/R$1');
 }
 
+// ─── TITLE NORMALIZATION ──────────────────────────────────────────────────────
+
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// ─── FETCH ALL ACTIVE PRODUCT TITLES ─────────────────────────────────────────
+// Used once per sync run to build a dedup set before creating new products.
+
+async function fetchExistingProductTitles(): Promise<Set<string>> {
+  const titles = new Set<string>();
+  let nextUrl: string | null =
+    `${SHOPIFY.baseUrl}/products.json?status=active&fields=id,title,status&limit=250`;
+  while (nextUrl) {
+    const res = await fetch(nextUrl, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY.token,
+      },
+    });
+    if (res.status === 429) { await delay(2000); continue; }
+    if (!res.ok) throw new Error(`Shopify ${res.status} fetching product titles`);
+    const data: any = await res.json();
+    for (const p of (data.products || [])) {
+      titles.add(normalizeTitle(p.title));
+    }
+    const link = res.headers.get('link') || '';
+    const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+    nextUrl = nextMatch ? nextMatch[1] : null;
+  }
+  console.log(`🗂️  Loaded ${titles.size} existing active product titles for dedup`);
+  return titles;
+}
+
 // ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
 // Uses REAL CT dealer cost (ct.cost field) instead of MSRP estimate.
 // Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
@@ -444,9 +478,11 @@ async function processBatches<T>(items: T[], fn: (item: T) => Promise<void>): Pr
 
 interface SyncStats {
   created:number; updated:number; skipped:number; errors:number;
-  skippedNoStock:number;                // NEW: count of zero-stock products filtered out
+  skippedNoStock:number;                // count of zero-stock products filtered out
+  skippedDuplicate:number;             // count of products skipped due to duplicate title
+  skippedDuplicateTitles:string[];     // list of normalized titles that were skipped
   errorList:string[]; duration:string; timestamp:string;
-  totalCT?:number; inStock?:number;     // NEW: total vs in-stock counts
+  totalCT?:number; inStock?:number;     // total vs in-stock counts
   offset?:number; chunkSize?:number; done?:boolean;
 }
 
@@ -454,12 +490,16 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   const t0 = Date.now();
   const stats: SyncStats & { updateDone?: boolean; nextUpdateOffset?: number } = {
     created:0, updated:0, skipped:0, errors:0,
-    skippedNoStock:0,
+    skippedNoStock:0, skippedDuplicate:0, skippedDuplicateTitles:[],
     errorList:[], duration:'', timestamp:new Date().toISOString(),
   };
 
   console.log(`🚀 ${mode} sync — offset:${offset} chunkSize:${chunkSize}`);
-  const [ctTires, existingMap] = await Promise.all([fetchAllCTTires(), fetchExistingProducts()]);
+  const [ctTires, existingMap, existingTitles] = await Promise.all([
+    fetchAllCTTires(),
+    fetchExistingProducts(),
+    fetchExistingProductTitles(),
+  ]);
   console.log(`📦 CT:${ctTires.length} Shopify:${existingMap.size}`);
 
   // ── NEW: Filter out zero-stock products for creation ──
@@ -491,12 +531,25 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
   // Create new products (only positive stock)
   await processBatches(createChunk, async (ct) => {
+    const payload = buildPayload(ct);
+    const normTitle = normalizeTitle(payload.product.title);
+
+    // Skip if an active product with the same normalized title already exists
+    if (existingTitles.has(normTitle)) {
+      stats.skippedDuplicate++;
+      stats.skippedDuplicateTitles.push(normTitle);
+      console.log(`⏭️  Duplicate title skipped: "${normTitle}"`);
+      return;
+    }
+
     try {
-      const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(buildPayload(ct)) });
+      const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(payload) });
       const productId = data.product?.id;
       const invId     = data.product?.variants?.[0]?.inventory_item_id;
       if (invId)     await setInventory(invId, getTotalQty(ct));
       if (productId) await attachProductImage(productId, ct);
+      // Track newly created title to catch intra-run duplicates
+      existingTitles.add(normTitle);
       stats.created++;
     } catch (e: any) { stats.errors++; stats.errorList.push(`CREATE ${ct.partNumber}: ${e.message}`); }
   });
@@ -546,7 +599,10 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   });
 
   stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
-  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} errors:${stats.errors} done:${stats.done}`);
+  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} skippedDuplicate:${stats.skippedDuplicate} errors:${stats.errors} done:${stats.done}`);
+  if (stats.skippedDuplicateTitles.length > 0) {
+    console.log(`⏭️  Skipped duplicate titles (${stats.skippedDuplicateTitles.length}): ${stats.skippedDuplicateTitles.join(', ')}`);
+  }
   return stats;
 }
 
