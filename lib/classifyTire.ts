@@ -25,6 +25,7 @@ const SEASON_MAP: [string, string][] = [
   ['discoverer rugged trek aw', 'all-weather'],
   ['discoverer at3 xlt all-weather', 'all-weather'],
   ['discoverer at3 lt all-weather', 'all-weather'],
+  ['discoverer at3 xlt', 'all-terrain'],
   ['discoverer at3 4s', 'all-weather'],
   ['endeavor plus', 'all-weather'],
   // ── All-Terrain (no dedicated season) ────────────────────
@@ -103,7 +104,7 @@ const VEHICLE_MAP: [string, string][] = [
   ['endeavor', 'passenger'],             // base Endeavor = passenger/CUV
   ['evolution winter', 'passenger'],
   ['procontrol', 'passenger'],
-  ['discoverer true north', 'passenger'],
+  ['discoverer true north', 'suv'],
   ['wintrac', 'passenger'],
   ['quatrac', 'passenger'],
 ];
