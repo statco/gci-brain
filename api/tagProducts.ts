@@ -77,6 +77,20 @@ async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   return all;
 }
 
+// ─── TAG NORMALIZATION ────────────────────────────────────────────────────────
+
+const TAG_NORMALIZE: Record<string, string> = {
+  'Winter': 'winter',
+  'hiver': 'winter',
+  'Winter_Rated_3PMSF': 'winter',
+  'all-season-tire': 'all-season',
+  'Season_All-Season': 'all-season',
+  'VREDESTEIN': 'brand-vredestein',
+  'tire-type-passenger': 'passenger',
+  'Passenger': 'passenger',
+  'truck': 'light-truck',
+};
+
 // ─── DERIVE TAGS ──────────────────────────────────────────────────────────────
 
 function deriveTags(title: string): string[] {
@@ -85,10 +99,25 @@ function deriveTags(title: string): string[] {
 }
 
 function mergeTags(existing: string, newTags: string[]): { merged: string; added: string[] } {
-  const existingSet = new Set(
-    existing.split(',').map(t => t.trim()).filter(Boolean),
-  );
+  // Parse existing tags and normalize legacy/inconsistent ones
+  const rawTags = existing.split(',').map(t => t.trim()).filter(Boolean);
+  const normalizedTags = rawTags.map(t => TAG_NORMALIZE[t] ?? t);
+  const normalized = normalizedTags.join(', ');
+  const normalizationChanged = normalized !== rawTags.join(', ');
+
+  const existingSet = new Set(normalizedTags);
   const added: string[] = [];
+
+  // Track normalization changes as "added" for change detection
+  if (normalizationChanged) {
+    for (const orig of rawTags) {
+      const norm = TAG_NORMALIZE[orig];
+      if (norm && norm !== orig) {
+        added.push(`${orig}→${norm}`);
+      }
+    }
+  }
+
   for (const tag of newTags) {
     if (!existingSet.has(tag)) {
       existingSet.add(tag);
