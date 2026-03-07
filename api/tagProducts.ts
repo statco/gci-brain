@@ -93,15 +93,32 @@ const TAG_NORMALIZE: Record<string, string> = {
 
 // ─── DERIVE TAGS ──────────────────────────────────────────────────────────────
 
-function deriveTags(title: string): string[] {
-  const { season, vehicleType, brand } = classifyTire(title);
-  return [season, vehicleType, brand].filter((t): t is string => t !== null);
+const SEASON_TAGS = ['winter', 'all-weather', 'all-season', 'all-terrain', 'summer'];
+const VEHICLE_TAGS = ['passenger', 'suv', 'light-truck', 'tire-type-passenger', 'Passenger', 'truck'];
+
+interface Classified { season: string | null; vehicleType: string | null; brand: string | null; }
+
+function deriveTags(title: string): { tags: string[]; classified: Classified } {
+  const classified = classifyTire(title);
+  const tags = [classified.season, classified.vehicleType, classified.brand].filter((t): t is string => t !== null);
+  return { tags, classified };
 }
 
-function mergeTags(existing: string, newTags: string[]): { merged: string; added: string[] } {
+function mergeTags(existing: string, newTags: string[], classified: Classified): { merged: string; added: string[] } {
   // Parse existing tags and normalize legacy/inconsistent ones
   const rawTags = existing.split(',').map(t => t.trim()).filter(Boolean);
-  const normalizedTags = rawTags.map(t => TAG_NORMALIZE[t] ?? t);
+  let normalizedTags = rawTags.map(t => TAG_NORMALIZE[t] ?? t);
+
+  // If classifyTire gave us a definitive season, strip conflicting season tags
+  if (classified.season) {
+    normalizedTags = normalizedTags.filter(tag => !SEASON_TAGS.includes(tag) || tag === classified.season);
+  }
+
+  // If classifyTire gave us a definitive vehicleType, strip conflicting vehicle tags
+  if (classified.vehicleType) {
+    normalizedTags = normalizedTags.filter(tag => !VEHICLE_TAGS.includes(tag) || tag === classified.vehicleType);
+  }
+
   const normalized = normalizedTags.join(', ');
   const normalizationChanged = normalized !== rawTags.join(', ');
 
@@ -155,8 +172,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).json({ error: `Failed to fetch product ${productId}: ${String(err)}` });
     }
 
-    const newTags = deriveTags(product.title);
-    const { merged, added } = mergeTags(product.tags, newTags);
+    const { tags: newTags, classified } = deriveTags(product.title);
+    const { merged, added } = mergeTags(product.tags, newTags, classified);
     const changed = added.length > 0;
 
     if (changed && !dryRun) {
@@ -210,8 +227,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
-    const newTags = deriveTags(product.title);
-    const { merged, added } = mergeTags(product.tags, newTags);
+    const { tags: newTags, classified } = deriveTags(product.title);
+    const { merged, added } = mergeTags(product.tags, newTags, classified);
     const changed = added.length > 0;
 
     if (!force && !changed) {
