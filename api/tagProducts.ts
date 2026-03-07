@@ -6,11 +6,12 @@
 // its title using classifyTire(), then merges them with existing tags
 // (never removes existing tags, only adds new ones).
 //
-// GET /api/tagProducts                        — first chunk (chunkSize=25)
-// GET /api/tagProducts?dry=true               — preview (no saves)
-// GET /api/tagProducts?force=true             — re-tag even if tags already present
-// GET /api/tagProducts?offset=25&chunkSize=25 — next batch
-// GET /api/tagProducts?productId=123456789    — single product
+// GET /api/tagProducts                               — first chunk (chunkSize=25)
+// GET /api/tagProducts?dry=true                      — preview (no saves)
+// GET /api/tagProducts?force=true                    — re-tag even if tags already present
+// GET /api/tagProducts?offset=25&chunkSize=25        — next batch
+// GET /api/tagProducts?productId=123456789           — single product
+// GET /api/tagProducts?removeTags=tag1,tag2          — strip tags before merging
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -91,6 +92,24 @@ const TAG_NORMALIZE: Record<string, string> = {
   'truck': 'light-truck',
 };
 
+// ─── STRIP TAGS ───────────────────────────────────────────────────────────────
+
+function stripTags(existing: string, tagsToRemove: string[]): { stripped: string; removed: string[] } {
+  if (tagsToRemove.length === 0) return { stripped: existing, removed: [] };
+  const removeSet = new Set(tagsToRemove);
+  const parsed = existing.split(',').map(t => t.trim()).filter(Boolean);
+  const removed: string[] = [];
+  const kept: string[] = [];
+  for (const tag of parsed) {
+    if (removeSet.has(tag)) {
+      removed.push(tag);
+    } else {
+      kept.push(tag);
+    }
+  }
+  return { stripped: kept.join(', '), removed };
+}
+
 // ─── DERIVE TAGS ──────────────────────────────────────────────────────────────
 
 const SEASON_TAGS = ['winter', 'all-weather', 'all-season', 'all-terrain', 'summer'];
@@ -149,11 +168,14 @@ function mergeTags(existing: string, newTags: string[], classified: Classified):
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
-  const dryRun    = req.query.dry       === 'true';
-  const force     = req.query.force     === 'true';
-  const productId = req.query.productId ? String(req.query.productId) : null;
-  const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
-  const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 25;
+  const dryRun     = req.query.dry        === 'true';
+  const force      = req.query.force      === 'true';
+  const productId  = req.query.productId  ? String(req.query.productId) : null;
+  const offset     = req.query.offset     ? parseInt(req.query.offset    as string, 10) : 0;
+  const chunkSize  = req.query.chunkSize  ? parseInt(req.query.chunkSize as string, 10) : 25;
+  const removeTags = req.query.removeTags
+    ? String(req.query.removeTags).split(',').map(t => t.trim()).filter(Boolean)
+    : [];
 
   if (!SHOPIFY.domain || !SHOPIFY.token) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
@@ -172,9 +194,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).json({ error: `Failed to fetch product ${productId}: ${String(err)}` });
     }
 
+    const { stripped, removed } = stripTags(product.tags, removeTags);
     const { tags: newTags, classified } = deriveTags(product.title);
-    const { merged, added } = mergeTags(product.tags, newTags, classified);
-    const changed = added.length > 0;
+    const { merged, added } = mergeTags(stripped, newTags, classified);
+    const changed = removed.length > 0 || added.length > 0;
 
     if (changed && !dryRun) {
       try {
@@ -195,7 +218,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       skipped: !changed && !force ? 1 : 0,
       errors: [],
       changes: changed || force
-        ? [{ id: product.id, title: product.title, added, mergedTags: merged }]
+        ? [{ id: product.id, title: product.title, removed, added, mergedTags: merged }]
         : [],
     });
   }
@@ -216,7 +239,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let updated = 0;
   let skipped = 0;
   const errors: string[] = [];
-  const changes: Array<{ id: number; title: string; added: string[]; mergedTags: string }> = [];
+  const changes: Array<{ id: number; title: string; removed: string[]; added: string[]; mergedTags: string }> = [];
 
   const NON_TIRE_TITLES = ['installation', 'service', 'balancing', 'mounting'];
 
@@ -227,17 +250,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
+    const { stripped, removed } = stripTags(product.tags, removeTags);
     const { tags: newTags, classified } = deriveTags(product.title);
-    const { merged, added } = mergeTags(product.tags, newTags, classified);
-    const changed = added.length > 0;
+    const { merged, added } = mergeTags(stripped, newTags, classified);
+    const changed = removed.length > 0 || added.length > 0;
 
     if (!force && !changed) {
       skipped++;
       continue;
     }
 
-    console.log(`  ${product.title} — adding: [${added.join(', ')}]`);
-    changes.push({ id: product.id, title: product.title, added, mergedTags: merged });
+    console.log(`  ${product.title} — removed: [${removed.join(', ')}] adding: [${added.join(', ')}]`);
+    changes.push({ id: product.id, title: product.title, removed, added, mergedTags: merged });
 
     if (!dryRun) {
       try {
