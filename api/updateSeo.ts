@@ -75,6 +75,9 @@ function detectFromTags(tags: string): { season: string; vehicle: string } {
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  if (options.method === 'POST' || options.method === 'PUT') {
+    console.log('Writing metafield to Shopify:', url, JSON.stringify(options.body));
+  }
   const res = await fetch(url, {
     ...options,
     headers: {
@@ -83,6 +86,9 @@ async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<
       ...(options.headers || {}),
     },
   });
+  let _responseBody: unknown = null;
+  try { _responseBody = await res.clone().json(); } catch { /* 204 / empty body */ }
+  console.log('Shopify response:', res.status, JSON.stringify(_responseBody));
   if (res.status === 429) { await delay(2000); return shopifyFetchRaw(url, options); }
   if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
   return res;
@@ -258,6 +264,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
   const dryRun    = req.query.dry       === 'true';
+  console.log('dry mode:', dryRun);
   const productId = req.query.productId ? String(req.query.productId) : null;
   const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
   const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 10;
