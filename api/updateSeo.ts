@@ -18,8 +18,11 @@ const SHOPIFY = {
   apiVersion: '2024-01',
   get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
 };
+
 // ─── ANTHROPIC CONFIG ─────────────────────────────────────────────────────────
+
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+
 // ─── SEASON / VEHICLE LABEL MAPS (French) ────────────────────────────────────
 const SEASON_LABELS: Record<string, string> = {
   'winter':      'hiver',
@@ -36,30 +39,37 @@ const VEHICLE_LABELS: Record<string, string> = {
 const SEASON_TAGS  = Object.keys(SEASON_LABELS);
 const VEHICLE_TAGS = Object.keys(VEHICLE_LABELS);
 const NON_TIRE_TITLES = ['installation', 'service', 'balancing', 'mounting'];
+
 // ─── AI COPY GENERATION ───────────────────────────────────────────────────────
+
 async function generateAiCopy(
   productTitle: string,
   season: string,
   vehicle: string,
 ): Promise<{ description: string; metaDescription: string } | null> {
   if (!ANTHROPIC_API_KEY) return null;
+
   const s = SEASON_LABELS[season]  || 'toutes saisons';
   const v = VEHICLE_LABELS[vehicle] || 'voiture';
+
   const prompt = `Tu es un rédacteur e-commerce spécialisé en pneus. Génère du contenu en français pour ce produit.
+
 Produit : ${productTitle}
 Type : pneu ${s} pour ${v}
 Marché : Québec
+
 Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte supplémentaire :
 {
   "description": "<p>2 à 3 phrases HTML décrivant le pneu de façon convaincante. Mentionne la saison, le type de véhicule, et les conditions routières québécoises. Naturel, pas de superlatifs creux.</p>",
   "metaDescription": "Phrase d'accroche SEO max 155 caractères. Commence par Achetez le [titre]."
 }`;
+
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         ANTHROPIC_API_KEY,
+        'Content-Type':    'application/json',
+        'x-api-key':       ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -68,36 +78,46 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte supplémen
         messages:   [{ role: 'user', content: prompt }],
       }),
     });
+
     if (!res.ok) {
       console.error(`  ⚠️  Anthropic ${res.status} for "${productTitle}"`);
       return null;
     }
+
     const data: any = await res.json();
     const raw = data?.content?.[0]?.text?.trim() || '';
     const parsed = JSON.parse(raw);
+
     if (!parsed.description || !parsed.metaDescription) return null;
+
     // Hard-cap metaDescription at 155 chars
     if (parsed.metaDescription.length > 155) {
       parsed.metaDescription = parsed.metaDescription.slice(0, 152) + '…';
     }
+
     return parsed;
   } catch (err) {
     console.error(`  ⚠️  generateAiCopy failed for "${productTitle}": ${String(err)}`);
     return null;
   }
 }
+
 // ─── STATIC FALLBACKS ─────────────────────────────────────────────────────────
+
 function metaDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
   const s = SEASON_LABELS[season]  || 'toutes saisons';
   const v = VEHICLE_LABELS[vehicle] || 'voiture';
   return `Achetez le ${productTitle} chez GCI Tires. Pneu ${s} pour ${v}. Livraison rapide au Québec. Prix compétitifs.`;
 }
+
 function productDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
   const s = SEASON_LABELS[season]  || 'toutes saisons';
   const v = VEHICLE_LABELS[vehicle] || 'voiture';
   return `<p>Le ${productTitle} est un pneu ${s} conçu pour ${v}. Idéal pour les conditions ${s} au Québec. Disponible chez GCI Tires avec livraison rapide et prix compétitifs.</p>`;
 }
+
 // ─── REMAINING STATIC HELPERS ─────────────────────────────────────────────────
+
 function seoTitle(productTitle: string): string {
   return `${productTitle} | Pneus GCI`;
 }
@@ -216,16 +236,21 @@ async function processProduct(
   dryRun:  boolean,
 ): Promise<{ change: ChangeRecord; error: string | null }> {
   const { season, vehicle } = detectFromTags(product.tags);
+
   const newSeoTitle = seoTitle(product.title);
   const newAlt      = imageAlt(product.title, season, vehicle);
+
   // ── AI copy (with static fallback) ────────────────────────────────────────
   const aiCopy      = await generateAiCopy(product.title, season, vehicle);
   const newMetaDesc = aiCopy?.metaDescription ?? metaDescriptionFallback(product.title, season, vehicle);
   const newBodyHtml = aiCopy?.description     ?? productDescriptionFallback(product.title, season, vehicle);
   const aiGenerated = aiCopy !== null;
+
   console.log(`  ${aiGenerated ? '🤖 AI copy' : '📄 fallback copy'} for "${product.title}"`);
+
   let imageAltsUpdated   = 0;
   let descriptionUpdated = false;
+
   if (!dryRun) {
     // ── Metafields ────────────────────────────────────────────────────────────
     let metafields: ShopifyMetafield[];
@@ -339,6 +364,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
+
   const chunk      = allProducts.slice(offset, offset + chunkSize);
   const nextOffset = (offset + chunkSize) < allProducts.length ? offset + chunkSize : null;
   let updated = 0;
