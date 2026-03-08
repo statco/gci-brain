@@ -236,7 +236,6 @@ async function processProduct(
 
     // ── Image alt tags ────────────────────────────────────────────────────────
     for (const image of product.images) {
-      if (image.alt !== null && image.alt !== '') continue; // don't overwrite manual alts
       try {
         await shopifyFetch(`/products/${product.id}/images/${image.id}.json`, {
           method: 'PUT',
@@ -250,7 +249,7 @@ async function processProduct(
     }
   } else {
     // In dry-run mode, count images that would be updated
-    imageAltsUpdated = product.images.filter(img => img.alt === null || img.alt === '').length;
+    imageAltsUpdated = product.images.length;
   }
 
   return {
