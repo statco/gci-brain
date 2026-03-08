@@ -86,7 +86,8 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte supplémen
 
     const data: any = await res.json();
     const raw = data?.content?.[0]?.text?.trim() || '';
-    const parsed = JSON.parse(raw);
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+const parsed = JSON.parse(clean);
 
     if (!parsed.description || !parsed.metaDescription) return null;
 
