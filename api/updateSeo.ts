@@ -56,6 +56,12 @@ function metaDescription(productTitle: string, season: string, vehicle: string):
   return `Achetez le ${productTitle} chez GCI Tires. Pneu ${s} pour ${v}. Livraison rapide au Québec. Prix compétitifs.`;
 }
 
+function productDescription(productTitle: string, season: string, vehicle: string): string {
+  const s = SEASON_LABELS[season]  || 'toutes saisons';
+  const v = VEHICLE_LABELS[vehicle] || 'voiture';
+  return `Le ${productTitle} est un pneu ${s} conçu pour ${v}. Idéal pour les conditions ${s} au Québec. Disponible chez GCI Tires avec livraison rapide et prix compétitifs.`;
+}
+
 function imageAlt(productTitle: string, season: string, vehicle: string): string {
   const s = SEASON_LABELS[season]  || '';
   const v = VEHICLE_LABELS[vehicle] || '';
@@ -109,10 +115,11 @@ interface ShopifyImage {
 }
 
 interface ShopifyProduct {
-  id:     number;
-  title:  string;
-  tags:   string;
-  images: ShopifyImage[];
+  id:        number;
+  title:     string;
+  tags:      string;
+  images:    ShopifyImage[];
+  body_html: string;
 }
 
 interface ShopifyMetafield {
@@ -123,18 +130,19 @@ interface ShopifyMetafield {
 }
 
 interface ChangeRecord {
-  id:                number;
-  title:             string;
-  seoTitle:          string;
-  metaDescription:   string;
-  imageAltsUpdated:  number;
+  id:                  number;
+  title:               string;
+  seoTitle:            string;
+  metaDescription:     string;
+  imageAltsUpdated:    number;
+  descriptionUpdated:  boolean;
 }
 
 // ─── FETCH ALL PRODUCTS ───────────────────────────────────────────────────────
 
 async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const all: ShopifyProduct[] = [];
-  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,tags,images`;
+  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,tags,images,body_html`;
   let page = 0;
 
   while (url) {
@@ -195,11 +203,13 @@ async function processProduct(
 ): Promise<{ change: ChangeRecord; error: string | null }> {
   const { season, vehicle } = detectFromTags(product.tags);
 
-  const newSeoTitle = seoTitle(product.title);
-  const newMetaDesc = metaDescription(product.title, season, vehicle);
-  const newAlt      = imageAlt(product.title, season, vehicle);
+  const newSeoTitle   = seoTitle(product.title);
+  const newMetaDesc   = metaDescription(product.title, season, vehicle);
+  const newAlt        = imageAlt(product.title, season, vehicle);
+  const newBodyHtml   = productDescription(product.title, season, vehicle);
 
-  let imageAltsUpdated = 0;
+  let imageAltsUpdated    = 0;
+  let descriptionUpdated  = false;
 
   if (!dryRun) {
     // ── Metafields ────────────────────────────────────────────────────────────
@@ -208,7 +218,7 @@ async function processProduct(
       metafields = await getProductMetafields(product.id);
     } catch (err) {
       return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0 },
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false },
         error: `Product ${product.id}: failed to fetch metafields — ${String(err)}`,
       };
     }
@@ -220,7 +230,7 @@ async function processProduct(
       await upsertMetafield(product.id, existingTitle, 'title_tag', newSeoTitle);
     } catch (err) {
       return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0 },
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false },
         error: `Product ${product.id}: failed to upsert title_tag — ${String(err)}`,
       };
     }
@@ -229,8 +239,22 @@ async function processProduct(
       await upsertMetafield(product.id, existingDesc, 'description_tag', newMetaDesc);
     } catch (err) {
       return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0 },
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false },
         error: `Product ${product.id}: failed to upsert description_tag — ${String(err)}`,
+      };
+    }
+
+    // ── Product description (body_html) ───────────────────────────────────────
+    try {
+      await shopifyFetch(`/products/${product.id}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({ product: { id: product.id, body_html: newBodyHtml } }),
+      });
+      descriptionUpdated = true;
+    } catch (err) {
+      return {
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false },
+        error: `Product ${product.id}: failed to update body_html — ${String(err)}`,
       };
     }
 
@@ -249,11 +273,12 @@ async function processProduct(
     }
   } else {
     // In dry-run mode, count images that would be updated
-    imageAltsUpdated = product.images.length;
+    imageAltsUpdated   = product.images.length;
+    descriptionUpdated = true;
   }
 
   return {
-    change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated },
+    change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated, descriptionUpdated },
     error: null,
   };
 }
@@ -279,7 +304,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let product: ShopifyProduct;
     try {
-      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags,images`);
+      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags,images,body_html`);
       product = data.product as ShopifyProduct;
       if (!product) throw new Error('Product not found');
     } catch (err) {
