@@ -374,7 +374,7 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
   let nextUrl: string | null =
     `${SHOPIFY.baseUrl}/products.json?status=active&fields=id,title,status&limit=250`;
   while (nextUrl) {
-    const res = await fetch(nextUrl, {
+    const res: Response = await fetch(nextUrl, {
       headers: {
         'Content-Type': 'application/json',
         'X-Shopify-Access-Token': SHOPIFY.token,
@@ -386,8 +386,8 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
     for (const p of (data.products || [])) {
       titles.add(normalizeTitle(p.title));
     }
-    const link = res.headers.get('link') || '';
-    const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+    const link: string | null = res.headers.get('link');
+    const nextMatch: RegExpMatchArray | null = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
     nextUrl = nextMatch ? nextMatch[1] : null;
   }
   console.log(`🗂️  Loaded ${titles.size} existing active product titles for dedup`);
@@ -934,7 +934,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
         let safetyLimit = 20;
         while (nextUrl && safetyLimit-- > 0) {
-          const res = await fetch(nextUrl, {
+          const res: Response = await fetch(nextUrl, {
             headers: {
               'Content-Type': 'application/json',
               'X-Shopify-Access-Token': SHOPIFY.token,
@@ -945,8 +945,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           for (const p of (data.products || [])) {
             allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
           }
-          const link = res.headers.get('link') || '';
-          const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+          const link: string | null = res.headers.get('link');
+          const nextMatch: RegExpMatchArray | null = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
           nextUrl = nextMatch ? nextMatch[1] : null;
         }
 

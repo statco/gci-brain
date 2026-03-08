@@ -1,3 +1,4 @@
+console.log('updateSeo module loaded');
 // api/updateSeo.ts
 // ============================================================
 // Shopify SEO Updater — bulk-set SEO title, meta description,
