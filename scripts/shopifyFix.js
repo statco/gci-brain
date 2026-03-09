@@ -52,21 +52,25 @@ const OFFSET    = parseInt(args.find(a => a.startsWith('--offset='))?.split('=')
 const CHUNK_SIZE = parseInt(args.find(a => a.startsWith('--chunkSize='))?.split('=')[1] ?? '50', 10);
 
 // ─── TIRE SIZE REGEX ──────────────────────────────────────────────────────────
-// Malformed format: 7 consecutive digits followed by /R or /r
-//   e.g.  2057016/R  →  205/70R16
-//         1956515/R  →  195/65R15
-//         2757018/R  →  275/70R18
+// Malformed format: optional metric prefix + 7 consecutive digits + /R or /r
 //
-// Groups: (\d{3}) = width | (\d{2}) = aspect ratio | (\d{2}) = diameter
-// Negative look-around prevents matching inside longer digit sequences.
+//   Plain:    2057016/R   →  205/70R16
+//             1956515/R   →  195/65R15
+//   P-metric: P2057016/R  →  P205/70R16
+//   LT:       LT2657017/R →  LT265/70R17
+//   ST/C:     ST2057015/R →  ST205/70R15
+//
+// Prefix group: LT | ST | P | C  (case-insensitive, optional)
+// Digit groups: (\d{3}) width | (\d{2}) aspect ratio | (\d{2}) rim diameter
+// Negative look-arounds prevent matching inside longer alphanumeric tokens.
 
-const TIRE_SIZE_REPLACE_RE = /(?<!\d)(\d{3})(\d{2})(\d{2})\/[Rr](?!\d)/g;
-const TIRE_SIZE_TEST_RE    = /(?<!\d)\d{7}\/[Rr](?!\d)/;   // no 'g' flag for safe .test()
+const TIRE_SIZE_REPLACE_RE = /(?<![A-Za-z\d])((?:LT|ST|[PC])?)(\d{3})(\d{2})(\d{2})\/[Rr](?!\d)/gi;
+const TIRE_SIZE_TEST_RE    = /(?<![A-Za-z\d])(?:LT|ST|[PC])?\d{7}\/[Rr](?!\d)/i; // no 'g', safe for .test()
 
 /** Replace every malformed tire size in `text` with the standard notation. */
 function fixTireSize(text) {
   if (!text) return text;
-  return text.replace(TIRE_SIZE_REPLACE_RE, (_, w, r, d) => `${w}/${r}R${d}`);
+  return text.replace(TIRE_SIZE_REPLACE_RE, (_, prefix, w, r, d) => `${prefix}${w}/${r}R${d}`);
 }
 
 /** Return true if `text` contains at least one malformed tire size. */
@@ -126,14 +130,35 @@ function parseNextLink(linkHeader) {
   return m ? m[1] : null;
 }
 
+// ─── LANGUAGE DETECTION HEURISTIC ────────────────────────────────────────────
+// Cheap pre-filter before making an Anthropic API call.
+// If the text contains accented characters common in French/Spanish/other
+// Romance languages, OR matches a set of high-frequency French stopwords,
+// we assume it may be non-English and pass it to Claude.
+// Pure-ASCII English-looking text skips the API call entirely.
+
+const NON_ASCII_RE  = /[éèêëàâùûôîïçœæÉÈÊËÀÂÙÛÔÎÏÇŒÆñÑ]/;
+const FRENCH_WORDS_RE = /\b(?:pneu[sx]?|voiture|livraison|gratuit|toutes?|saisons?|été|hiver|neige|achat|boutique|qualité|qualite|prix|meilleur[es]?|disponible|garantie|de la|du |des |les |une |pour les?)\b/i;
+
+/** Return true if the text is likely non-English and worth translating. */
+function looksNonEnglish(text) {
+  return NON_ASCII_RE.test(text) || FRENCH_WORDS_RE.test(text);
+}
+
 // ─── ANTHROPIC TRANSLATION ────────────────────────────────────────────────────
 
 /**
  * Detect the language of `text`. If it is not English, return the English
- * translation. If it is already English, return null (no update needed).
+ * translation. If it is already English (or passes the heuristic), return null.
+ *
+ * A cheap local heuristic runs first so we skip the API call for text that
+ * is clearly already English.
  */
 async function translateToEnglish(text) {
   if (!ANTHROPIC_KEY || !text?.trim()) return null;
+
+  // Skip API call if the heuristic says it's already English
+  if (!looksNonEnglish(text)) return null;
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -144,7 +169,7 @@ async function translateToEnglish(text) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
+        model:      'claude-haiku-4-5-20251001', // Haiku 4.5 — fast & cost-effective
         max_tokens: 400,
         messages: [{
           role:    'user',
@@ -258,6 +283,8 @@ async function fixVariantSizes(product) {
 // ─── TASK 3 — ASSIGN PRODUCT IMAGE TO UNIMAGED VARIANTS ──────────────────────
 
 async function assignMissingVariantImages(product) {
+  // Guard: product.images may be undefined, null, or [] (no images uploaded).
+  // Optional chaining + falsy check handles all three cases safely.
   const firstImage = product.images?.[0];
   if (!firstImage) return 0;
 
@@ -343,6 +370,13 @@ async function main() {
   console.log('');
   if (DRY_RUN) {
     console.log('  ⚠️   DRY RUN MODE — no changes will be written\n');
+  }
+  if (OFFSET > 0) {
+    console.log(
+      `  ℹ️   --offset=${OFFSET}: Shopify cursor pagination has no native seek.\n` +
+      `      The script must stream through all ${OFFSET} preceding products\n` +
+      `      before it can start processing. This is expected behaviour.\n`,
+    );
   }
 
   // ── Summary counters ────────────────────────────────────────────────────────
