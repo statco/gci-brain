@@ -4,6 +4,8 @@ import ShopifyFixDashboard from './components/ShopifyFixDashboard';
 import UpdateCollectionSeo from './components/UpdateCollectionSeo';
 import FixFrenchContent from './components/FixFrenchContent';
 import FixProductDescriptions from './components/FixProductDescriptions';
+import FixAltTags from './components/FixAltTags';
+import FixThemeContent from './components/FixThemeContent';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -151,6 +153,8 @@ function App() {
         <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
         <Route path="/fix-french" element={<FixFrenchContent />} />
         <Route path="/fix-descriptions" element={<FixProductDescriptions />} />
+        <Route path="/fix-alt-tags" element={<FixAltTags />} />
+        <Route path="/fix-theme" element={<FixThemeContent />} />
       </Routes>
     </BrowserRouter>
   );
