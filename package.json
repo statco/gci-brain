@@ -7,12 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "shopify-fix": "node scripts/shopifyFix.js",
+    "shopify-fix:dry": "node scripts/shopifyFix.js --dry-run"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@react-google-maps/api": "^2.20.8",
     "axios": "^1.7.9",
+    "dotenv": "^16.4.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
