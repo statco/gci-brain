@@ -45,21 +45,25 @@ function StatCard({ label, value, accent }) {
 }
 
 function LogLine({ line, index }) {
-  const isError   = line.includes("❌");
-  const isHeader  = line.includes("🚀") || line.includes("📊");
-  const isFixed   = line.includes("[1]") || line.includes("[2]");
-  const isImage   = line.includes("[3]");
-  const isSeo     = line.includes("[4]");
-  const isResume  = line.includes("Next chunk");
-  const isSep     = line.includes("──────");
+  const isError     = line.includes("❌");
+  const isDone      = line.includes("✅ All done!");
+  const isCountdown = line.startsWith("⏱");
+  const isHeader    = line.includes("🚀") || line.includes("📊");
+  const isFixed     = line.includes("[1]") || line.includes("[2]");
+  const isImage     = line.includes("[3]");
+  const isSeo       = line.includes("[4]");
+  const isResume    = line.includes("Next chunk");
+  const isSep       = line.includes("──────");
 
-  const color = isError ? "#f87171"
-    : isHeader ? "#fbbf24"
-    : isFixed  ? "#34d399"
-    : isImage  ? "#60a5fa"
-    : isSeo    ? "#a78bfa"
-    : isResume ? "#fbbf24"
-    : isSep    ? "#333"
+  const color = isError     ? "#f87171"
+    : isDone      ? "#34d399"
+    : isCountdown ? "#fbbf24"
+    : isHeader    ? "#fbbf24"
+    : isFixed     ? "#34d399"
+    : isImage     ? "#60a5fa"
+    : isSeo       ? "#a78bfa"
+    : isResume    ? "#fbbf24"
+    : isSep       ? "#333"
     : "#9ca3af";
 
   return (
@@ -69,7 +73,7 @@ function LogLine({ line, index }) {
       color,
       lineHeight: 1.7,
       opacity: isHeader ? 1 : 0.9,
-      fontWeight: isHeader ? 600 : 400,
+      fontWeight: isHeader || isDone ? 600 : 400,
       borderLeft: isFixed || isImage || isSeo ? `2px solid ${color}33` : "none",
       paddingLeft: isFixed || isImage || isSeo ? 8 : 0,
       animation: `fadeIn 0.2s ease ${Math.min(index * 0.02, 0.5)}s both`,
@@ -80,48 +84,128 @@ function LogLine({ line, index }) {
 }
 
 export default function ShopifyFixDashboard() {
-  const [task,       setTask]       = useState("all");
-  const [chunkSize,  setChunkSize]  = useState(10);
-  const [offset,     setOffset]     = useState(0);
-  const [dryRun,     setDryRun]     = useState(true);
-  const [running,    setRunning]    = useState(false);
-  const [log,        setLog]        = useState([]);
-  const [stats,      setStats]      = useState(null);
-  const [nextOffset, setNextOffset] = useState(null);
-  const [history,    setHistory]    = useState([]);
-  const logRef = useRef(null);
+  const [task,            setTask]            = useState("all");
+  const [chunkSize,       setChunkSize]       = useState(10);
+  const [offset,          setOffset]          = useState(0);
+  const [dryRun,          setDryRun]          = useState(true);
+  const [autoContinue,    setAutoContinue]    = useState(false);
+  const [running,         setRunning]         = useState(false);
+  const [isAutoRunning,   setIsAutoRunning]   = useState(false);
+  const [log,             setLog]             = useState([]);
+  const [stats,           setStats]           = useState(null);
+  const [cumulativeStats, setCumulativeStats] = useState(null);
+  const [nextOffset,      setNextOffset]      = useState(null);
+  const [history,         setHistory]         = useState([]);
+  const logRef          = useRef(null);
+  const stopRequestedRef = useRef(false);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
   async function runFix() {
-    setRunning(true);
-    setLog([`▶ Starting${dryRun ? " [DRY RUN]" : ""} — task=${task} chunkSize=${chunkSize} offset=${offset}…`]);
+    const doAutoContinue = autoContinue;
+    stopRequestedRef.current = false;
+
+    if (doAutoContinue) setIsAutoRunning(true);
+
+    let currentOffset = offset;
+    let isFirstBatch  = true;
+    let cumulative    = { scanned: 0, sizeFixed: 0, variantsFixed: 0, imagesAssigned: 0, seoTranslated: 0, errors: 0 };
+
+    setCumulativeStats(null);
+    setLog([`▶ Starting${dryRun ? " [DRY RUN]" : ""} — task=${task} chunkSize=${chunkSize} offset=${currentOffset}…`]);
     setStats(null);
     setNextOffset(null);
 
-    try {
-      const params = new URLSearchParams({
-        task,
-        chunkSize: String(chunkSize),
-        offset: String(offset),
-        ...(dryRun ? { dryRun: "true" } : {}),
-      });
+    while (true) {
+      setRunning(true);
 
-      const res  = await fetch(`/api/shopifyFix?${params}`);
-      const json = await res.json();
+      let batchStats      = null;
+      let batchNextOffset = null;
+      let success         = true;
 
-      if (json.log)   setLog(json.log);
-      if (json.stats) setStats(json.stats);
-      if (json.nextOffset != null) {
-        setNextOffset(json.nextOffset);
-        setHistory(h => [...h, { offset, chunkSize, task, dryRun, stats: json.stats }]);
+      try {
+        const params = new URLSearchParams({
+          task,
+          chunkSize: String(chunkSize),
+          offset: String(currentOffset),
+          ...(dryRun ? { dryRun: "true" } : {}),
+        });
+
+        const res  = await fetch(`/api/shopifyFix?${params}`);
+        const json = await res.json();
+
+        if (json.log) {
+          if (isFirstBatch) {
+            setLog(json.log);
+          } else {
+            setLog(l => [...l, "──────────────────────────────", ...json.log]);
+          }
+        }
+
+        if (json.stats) {
+          batchStats = json.stats;
+          setStats(json.stats);
+
+          Object.keys(cumulative).forEach(k => {
+            cumulative[k] = (cumulative[k] || 0) + (json.stats[k] || 0);
+          });
+
+          if (doAutoContinue) setCumulativeStats({ ...cumulative });
+        }
+
+        if (json.nextOffset != null) {
+          batchNextOffset = json.nextOffset;
+          setNextOffset(json.nextOffset);
+          setHistory(h => [...h, { offset: currentOffset, chunkSize, task, dryRun, stats: json.stats }]);
+        }
+      } catch (err) {
+        setLog(l => [...l, `❌ Fetch error: ${err.message}`]);
+        success = false;
+      } finally {
+        setRunning(false);
       }
-    } catch (err) {
-      setLog(l => [...l, `❌ Fetch error: ${err.message}`]);
-    } finally {
-      setRunning(false);
+
+      isFirstBatch = false;
+
+      const canContinue = doAutoContinue
+        && success
+        && batchStats
+        && batchStats.scanned > 0
+        && (batchStats.errors || 0) === 0
+        && batchNextOffset != null
+        && !stopRequestedRef.current;
+
+      if (!canContinue) {
+        if (doAutoContinue) {
+          if (success && batchStats && batchStats.scanned === 0) {
+            setLog(l => [...l, "✅ All done! Full catalog processed."]);
+          }
+          setIsAutoRunning(false);
+        }
+        break;
+      }
+
+      // Countdown 3…2…1…
+      for (let i = 3; i >= 1; i--) {
+        setLog(l => {
+          const filtered = l.filter(line => !line.startsWith("⏱"));
+          return [...filtered, `⏱ Next batch in ${i}…`];
+        });
+        await new Promise(r => setTimeout(r, 1000));
+        if (stopRequestedRef.current) break;
+      }
+
+      if (stopRequestedRef.current) {
+        setLog(l => l.filter(line => !line.startsWith("⏱")));
+        setIsAutoRunning(false);
+        break;
+      }
+
+      setLog(l => l.filter(line => !line.startsWith("⏱")));
+      currentOffset = batchNextOffset;
+      setOffset(batchNextOffset);
     }
   }
 
@@ -193,7 +277,7 @@ export default function ShopifyFixDashboard() {
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: dryRun ? "rgba(251,191,36,0.06)" : "rgba(239,68,68,0.06)", border: `1px solid ${dryRun ? "rgba(251,191,36,0.2)" : "rgba(239,68,68,0.2)"}`, borderRadius: 9, marginBottom: 20, cursor: "pointer" }} onClick={() => setDryRun(d => !d)}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: dryRun ? "rgba(251,191,36,0.06)" : "rgba(239,68,68,0.06)", border: `1px solid ${dryRun ? "rgba(251,191,36,0.2)" : "rgba(239,68,68,0.2)"}`, borderRadius: 9, marginBottom: 12, cursor: "pointer" }} onClick={() => setDryRun(d => !d)}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: dryRun ? "#fbbf24" : "#f87171" }}>{dryRun ? "🔍 Dry Run Mode" : "⚡ Live Mode"}</div>
                 <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{dryRun ? "No writes — preview only" : "Will write to Shopify"}</div>
@@ -203,11 +287,30 @@ export default function ShopifyFixDashboard() {
               </div>
             </div>
 
-            <button onClick={runFix} disabled={running} style={{ width: "100%", background: running ? "#1a1a1a" : "linear-gradient(135deg, #fbbf24, #f59e0b)", border: "none", borderRadius: 10, padding: "13px 0", color: running ? "#444" : "#000", fontSize: 14, fontWeight: 700, cursor: running ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              {running ? <><span style={{ display: "inline-block", animation: "spin 0.8s linear infinite", fontSize: 16 }}>⟳</span>Processing…</> : `▶ Run${dryRun ? " (Dry Run)" : ""}`}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: autoContinue ? "rgba(52,211,153,0.06)" : "rgba(255,255,255,0.02)", border: `1px solid ${autoContinue ? "rgba(52,211,153,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 9, marginBottom: 20, cursor: "pointer" }} onClick={() => setAutoContinue(a => !a)}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: autoContinue ? "#34d399" : "#555" }}>🔁 Auto-Continue</div>
+                <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Runs all batches automatically</div>
+              </div>
+              <div style={{ width: 36, height: 20, borderRadius: 10, background: autoContinue ? "#34d399" : "#333", position: "relative", transition: "background 0.2s" }}>
+                <div style={{ position: "absolute", top: 2, left: autoContinue ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+              </div>
+            </div>
 
-            {nextOffset != null && !running && (
+            {isAutoRunning ? (
+              <button
+                onClick={() => { stopRequestedRef.current = true; }}
+                style={{ width: "100%", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 10, padding: "13px 0", color: "#f87171", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s ease" }}
+              >
+                ⏹ Stop
+              </button>
+            ) : (
+              <button onClick={runFix} disabled={running} style={{ width: "100%", background: running ? "#1a1a1a" : "linear-gradient(135deg, #fbbf24, #f59e0b)", border: "none", borderRadius: 10, padding: "13px 0", color: running ? "#444" : "#000", fontSize: 14, fontWeight: 700, cursor: running ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {running ? <><span style={{ display: "inline-block", animation: "spin 0.8s linear infinite", fontSize: 16 }}>⟳</span>Processing…</> : `▶ Run${dryRun ? " (Dry Run)" : ""}`}
+              </button>
+            )}
+
+            {nextOffset != null && !running && !isAutoRunning && (
               <button onClick={() => { setOffset(nextOffset); setNextOffset(null); }} style={{ width: "100%", marginTop: 8, background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: 10, padding: "11px 0", color: "#60a5fa", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
                 ↪ Continue from offset {nextOffset}
               </button>
@@ -218,11 +321,24 @@ export default function ShopifyFixDashboard() {
             <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: 14, padding: 24, animation: "fadeIn 0.4s ease 0.15s both" }}>
               <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 16 }}>Results</div>
               {stats ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {Object.entries(STAT_LABELS).map(([key, label]) => (
-                    <StatCard key={key} label={label} value={stats[key]} accent={key === "errors" && stats[key] > 0} />
-                  ))}
-                </div>
+                <>
+                  {cumulativeStats && (
+                    <>
+                      <div style={{ fontSize: 10, color: "#444", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8, fontFamily: "monospace" }}>Cumulative Totals</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                        {Object.entries(STAT_LABELS).map(([key, label]) => (
+                          <StatCard key={key} label={label} value={cumulativeStats[key]} accent={key === "errors" && cumulativeStats[key] > 0} />
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#444", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8, fontFamily: "monospace" }}>Last Batch</div>
+                    </>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {Object.entries(STAT_LABELS).map(([key, label]) => (
+                      <StatCard key={key} label={label} value={stats[key]} accent={key === "errors" && stats[key] > 0} />
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div style={{ height: 120, display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: 13, fontStyle: "italic" }}>
                   {running ? <span style={{ animation: "pulse 1s ease infinite" }}>Running…</span> : "No run yet — configure and click Run"}
@@ -254,7 +370,7 @@ export default function ShopifyFixDashboard() {
         <div style={{ marginTop: 20, background: "#080808", border: "1px solid #1a1a1a", borderRadius: 14, overflow: "hidden", animation: "fadeIn 0.4s ease 0.25s both" }}>
           <div style={{ padding: "12px 20px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: running ? "#34d399" : log.length ? "#fbbf24" : "#333", animation: running ? "pulse 1s ease infinite" : "none" }} />
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: running || isAutoRunning ? "#34d399" : log.length ? "#fbbf24" : "#333", animation: running || isAutoRunning ? "pulse 1s ease infinite" : "none" }} />
               <span style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.12em" }}>Console Output</span>
             </div>
             {log.length > 0 && (
