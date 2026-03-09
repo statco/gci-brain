@@ -12,6 +12,7 @@
     "shopify-fix:dry": "node scripts/shopifyFix.js --dry-run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@google/generative-ai": "^0.21.0",
     "@react-google-maps/api": "^2.20.8",
     "axios": "^1.7.9",
