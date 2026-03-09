@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import InstallerApplicationForm from './components/InstallerApplicationForm';
 import ShopifyFixDashboard from './components/ShopifyFixDashboard';
+import UpdateCollectionSeo from './components/UpdateCollectionSeo';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -145,6 +146,7 @@ function App() {
         <Route path="/" element={<TireMatchApp />} />
         <Route path="/installer-application" element={<InstallerApplicationForm />} />
         <Route path="/shopify-fix" element={<ShopifyFixDashboard />} />
+        <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
       </Routes>
     </BrowserRouter>
   );
