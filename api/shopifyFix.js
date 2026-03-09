@@ -1,5 +1,5 @@
-const STORE       = process.env.SHOPIFY_STORE;
-const TOKEN       = process.env.SHOPIFY_ADMIN_TOKEN;
+const STORE       = process.env.SHOPIFY_STORE_DOMAIN;
+const TOKEN       = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 const API_VERSION = "2024-01";
 const BASE        = `https://${STORE}/admin/api/${API_VERSION}`;
 const SHOPIFY_HEADERS = {
