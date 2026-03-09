@@ -6,8 +6,6 @@
 //   /api/shopifyFix?task=size&chunkSize=20
 //   /api/shopifyFix?task=images&chunkSize=20
 
-import Anthropic from "@anthropic-ai/sdk";
-
 const STORE       = process.env.SHOPIFY_STORE;
 const TOKEN       = process.env.SHOPIFY_ADMIN_TOKEN;
 const API_VERSION = "2024-01";
@@ -16,8 +14,6 @@ const HEADERS     = {
   "X-Shopify-Access-Token": TOKEN,
   "Content-Type": "application/json",
 };
-
-const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── Regex ───────────────────────────────────────────────────────────────────
 const SIZE_RE = /(?<![A-Za-z\d])((?:LT|ST|[PC])?)(\d{3})(\d{2})(\d{2})\/[Rr](?!\d)/gi;
@@ -34,15 +30,24 @@ function looksNonEnglish(str) { return FRENCH_RE.test(str ?? ""); }
 
 async function translateToEnglish(text) {
   if (!looksNonEnglish(text)) return null;
-  const msg = await claude.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 256,
-    messages: [{
-      role: "user",
-      content: `Translate the following to English. Return only the translated text, no explanation:\n\n${text}`,
-    }],
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 256,
+      messages: [{
+        role: "user",
+        content: `Translate the following to English. Return only the translated text, no explanation:\n\n${text}`,
+      }],
+    }),
   });
-  return msg.content[0].text.trim();
+  const json = await res.json();
+  return json.content?.[0]?.text?.trim() ?? null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
