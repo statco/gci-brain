@@ -37,6 +37,12 @@ const catalogTools = [
     route: '/fix-theme',
     description: 'Fix footer legal line and menu labels',
   },
+  {
+    icon: '🔀',
+    title: 'Fix Redirects',
+    route: '/fix-redirects',
+    description: 'Create 301 redirects for all archived duplicate product URLs',
+  },
 ];
 
 const storeTools = [
