@@ -8,6 +8,7 @@ import FixProductDescriptions from './components/FixProductDescriptions';
 import FixAltTags from './components/FixAltTags';
 import FixThemeContent from './components/FixThemeContent';
 import FixRedirects from './components/FixRedirects';
+import FixTitles from './components/FixTitles';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -158,6 +159,7 @@ function App() {
         <Route path="/fix-alt-tags" element={<FixAltTags />} />
         <Route path="/fix-theme" element={<FixThemeContent />} />
         <Route path="/fix-redirects" element={<FixRedirects />} />
+        <Route path="/fix-titles" element={<FixTitles />} />
       </Routes>
     </BrowserRouter>
   );
