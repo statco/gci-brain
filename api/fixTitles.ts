@@ -37,17 +37,20 @@ const SYNC_TAG = 'ct-sync';
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<Response> {
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': SHOPIFY.token,
-      ...(options.headers || {}),
-    },
-  });
-  if (res.status === 429) { await delay(2000); return shopifyFetchRaw(url, options); }
-  if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
-  return res;
+  let wait = 2000;
+  while (true) {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY.token,
+        ...(options.headers || {}),
+      },
+    });
+    if (res.status === 429) { await delay(wait); wait = Math.min(wait * 2, 16000); continue; }
+    if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
+    return res;
+  }
 }
 
 async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -78,13 +81,24 @@ function toTitleCase(original: string): string {
     .replace(/\/r\b/g, '/R'); // Restore /R in tire sizes (e.g. 225/60R17)
 }
 
-// ─── FETCH ALL TAGGED PRODUCTS (paginated) ────────────────────────────────────
+// ─── FETCH A SLICE OF TAGGED PRODUCTS (early-exit, no full-scan) ─────────────
 
 interface ShopifyProduct { id: number; title: string; }
 
-async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
-  const all: ShopifyProduct[] = [];
+/**
+ * Fetches only the products needed for the current batch (offset…offset+count).
+ * Stops fetching Shopify pages as soon as the slice is full, avoiding the
+ * long "idle" that occurred when the entire catalogue was loaded up-front.
+ *
+ * Returns the slice and a `hasMore` flag (true when a next batch exists).
+ */
+async function fetchTaggedProductSlice(
+  offset: number,
+  count: number,
+): Promise<{ slice: ShopifyProduct[]; hasMore: boolean }> {
   let url: string = `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title`;
+  let seen = 0;
+  const slice: ShopifyProduct[] = [];
   let page = 0;
 
   while (url) {
@@ -92,16 +106,25 @@ async function fetchAllTaggedProducts(): Promise<ShopifyProduct[]> {
     const response = await shopifyFetchRaw(url);
     const data: any = await response.json();
     const products: ShopifyProduct[] = data.products || [];
-    all.push(...products);
-    console.log(`  [fetchAllTaggedProducts] page ${page}: fetched ${products.length} products (running total: ${all.length})`);
+    console.log(`  [fetchTaggedProductSlice] page ${page}: +${products.length} products`);
+
+    for (const p of products) {
+      if (seen < offset) { seen++; continue; }
+      if (slice.length < count) { slice.push(p); seen++; }
+      else {
+        // One extra product beyond the slice confirms a next batch exists.
+        console.log(`  [fetchTaggedProductSlice] done — ${page} page(s), slice=${slice.length}, hasMore=true`);
+        return { slice, hasMore: true };
+      }
+    }
 
     const link = response.headers.get('Link') || '';
     const next = link.match(/<([^>]+)>;\s*rel="next"/);
     url = next ? next[1] : '';
   }
 
-  console.log(`  [fetchAllTaggedProducts] done — ${page} page(s), ${all.length} total products`);
-  return all;
+  console.log(`  [fetchTaggedProductSlice] done — ${page} page(s), slice=${slice.length}, hasMore=false`);
+  return { slice, hasMore: false };
 }
 
 // ─── HANDLER ──────────────────────────────────────────────────────────────────
@@ -138,12 +161,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`  ${product.title} → ${newTitle}`);
 
+    let didUpdate = false;
     if (changed && !dryRun) {
       try {
         await shopifyFetch(`/products/${product.id}.json`, {
           method: 'PUT',
           body: JSON.stringify({ product: { id: product.id, title: newTitle } }),
         });
+        didUpdate = true;
       } catch (err) {
         return res.status(500).json({ error: `Failed to update product ${productId}: ${String(err)}` });
       }
@@ -155,26 +180,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       productId: product.id,
       originalTitle: product.title,
       newTitle,
-      updated: (!force && !changed) ? 0 : (dryRun ? 0 : 1),
-      skipped: (!force && !changed) ? 1 : 0,
+      changed,
+      updated: didUpdate ? 1 : 0,
+      skipped: didUpdate ? 0 : 1,
       errors: [],
     });
   }
 
-  // ── Batch mode (original behaviour) ───────────────────────────────────────
+  // ── Batch mode ─────────────────────────────────────────────────────────────
   console.log(`🔤 fixTitles — dry=${dryRun} force=${force} offset=${offset} chunkSize=${chunkSize} limit=${limit ?? 'all'}`);
 
-  let allProducts: ShopifyProduct[];
+  // When ?limit is set, cap the slice so we never exceed it.
+  const effectiveCount = (limit !== null && !isNaN(limit))
+    ? Math.max(0, Math.min(chunkSize, limit - offset))
+    : chunkSize;
+
+  let products: ShopifyProduct[];
+  let hasMore: boolean;
   try {
-    allProducts = await fetchAllTaggedProducts();
+    ({ slice: products, hasMore } = await fetchTaggedProductSlice(offset, effectiveCount));
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
 
-  // Apply legacy ?limit first, then window the pool by offset/chunkSize
-  const pool     = (limit !== null && !isNaN(limit)) ? allProducts.slice(0, limit) : allProducts;
-  const products = pool.slice(offset, offset + chunkSize);
-  const nextOffset = (offset + chunkSize) < pool.length ? offset + chunkSize : null;
+  // If ?limit caused us to clip, there is no next offset beyond the limit.
+  const nextOffset = hasMore && (limit === null || isNaN(limit) || offset + chunkSize < limit)
+    ? offset + chunkSize
+    : null;
 
   let updated = 0;
   let skipped = 0;
@@ -210,7 +242,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const summary = {
     dryRun,
     force,
-    total: pool.length,
     offset,
     chunkSize,
     nextOffset,
