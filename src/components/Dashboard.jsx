@@ -43,6 +43,12 @@ const catalogTools = [
     route: '/fix-redirects',
     description: 'Create 301 redirects for all archived duplicate product URLs',
   },
+  {
+    icon: '🔤',
+    title: 'Fix Titles',
+    route: '/fix-titles',
+    description: 'Convert ALL CAPS product titles to Title Case',
+  },
 ];
 
 const storeTools = [
