@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Dashboard from './components/Dashboard';
 import InstallerApplicationForm from './components/InstallerApplicationForm';
 import ShopifyFixDashboard from './components/ShopifyFixDashboard';
 import UpdateCollectionSeo from './components/UpdateCollectionSeo';
@@ -147,7 +148,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<TireMatchApp />} />
+        <Route path="/" element={<Dashboard />} />
         <Route path="/installer-application" element={<InstallerApplicationForm />} />
         <Route path="/shopify-fix" element={<ShopifyFixDashboard />} />
         <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
