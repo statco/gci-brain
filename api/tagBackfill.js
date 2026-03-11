@@ -28,18 +28,29 @@ const WINTER_KEYWORDS = [
   'SNOWTREK','NORDICTRACK',
 ];
 
-const AMBIGUOUS_SEASON_KEYWORDS = [
-  'ALL WEATHER','ALL-WEATHER','ALLWEATHER','3PMSF',
+const ALL_WEATHER_KEYWORDS = [
+  'ALL WEATHER','ALL-WEATHER','ALLWEATHER',
 ];
+
+// 3PMSF alone is still ambiguous — keep skipping
+const AMBIGUOUS_SEASON_KEYWORDS = ['3PMSF'];
 
 function inferSeason(title) {
   const t = title.toUpperCase();
-  for (const kw of AMBIGUOUS_SEASON_KEYWORDS) {
-    if (t.includes(kw)) return null; // can't determine — skip
+
+  // All-weather is its own season — resolve before checking winter keywords
+  for (const kw of ALL_WEATHER_KEYWORDS) {
+    if (t.includes(kw)) return 'all-weather';
   }
+
+  for (const kw of AMBIGUOUS_SEASON_KEYWORDS) {
+    if (t.includes(kw)) return null;
+  }
+
   for (const kw of WINTER_KEYWORDS) {
     if (t.includes(kw)) return 'winter';
   }
+
   return 'all-season';
 }
 
@@ -85,7 +96,7 @@ function inferVehicleType(title) {
 
 // ─── TAG HELPERS ─────────────────────────────────────────────────────────────
 
-function hasSeasonTag(tags)     { return tags.some(t => t === 'winter' || t === 'all-season' || t === 'summer'); }
+function hasSeasonTag(tags)     { return tags.some(t => t === 'winter' || t === 'all-season' || t === 'all-weather' || t === 'summer'); }
 function hasVehicleTypeTag(tags){ return tags.some(t => t.startsWith('tire-type-')); }
 function vehicleTypeTag(vt)     { return vt === 'light_truck' ? 'tire-type-light_truck' : 'tire-type-passenger'; }
 
