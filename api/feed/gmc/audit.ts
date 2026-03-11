@@ -7,7 +7,7 @@
 // GET /api/feed/gmc/audit?secret=xxx&fix=1   (future: auto-fix mode)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
-const SHOPIFY_TOKEN  = process.env.SHOPIFY_ADMIN_API_TOKEN!;
+const SHOPIFY_TOKEN  = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN!;
 const STOREFRONT_URL = 'https://gcitires.com';
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Severity = 'error' | 'warning' | 'info';

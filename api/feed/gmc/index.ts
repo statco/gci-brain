@@ -6,14 +6,14 @@
 //
 // Env vars required:
 //   SHOPIFY_STORE_DOMAIN      e.g. gci-tires.myshopify.com
-//   SHOPIFY_ADMIN_API_TOKEN   Admin API token
+//   SHOPIFY_ADMIN_ACCESS_TOKEN  Admin API token
 //   FEED_SECRET               (optional) query param ?secret=xxx to restrict access
 //
 // Feed URL: https://your-vercel-domain.vercel.app/api/feed/gmc?secret=xxx
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 // ─── Config ─────────────────────────────────────────────────────────────────
 const SHOPIFY_DOMAIN   = process.env.SHOPIFY_STORE_DOMAIN!;
-const SHOPIFY_TOKEN    = process.env.SHOPIFY_ADMIN_API_TOKEN!;
+const SHOPIFY_TOKEN    = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN!;
 const STOREFRONT_URL   = 'https://gcitires.com'; // canonical storefront
 // GMC google_product_category for tires
 const GOOGLE_CATEGORY  = 'Vehicles & Parts > Vehicle Parts & Accessories > Tires';
