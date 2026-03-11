@@ -10,8 +10,6 @@
 // GET /api/tagBackfill?offset=0&chunkSize=250 → run all at once (careful: rate limits)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 const SHOPIFY = {
@@ -197,7 +195,7 @@ async function fetchAllSyncedProducts(): Promise<ShopifyProduct[]> {
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   const dryRun     = req.query.dryRun === 'true';
   const chunkSize  = parseInt((req.query.chunkSize as string) || '20', 10);
   const offset     = parseInt((req.query.offset     as string) || '0',  10);
