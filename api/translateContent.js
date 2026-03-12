@@ -14,7 +14,7 @@ const SHOPIFY_HEADERS = {
 };
 
 const BATCH_SIZE = 1;    // sequential — avoid rate limit
-const BATCH_MS   = 1500; // 1.5s between each call = ~40 req/min safely under 50
+const BATCH_MS   = 2000; // 2s between each item = 1 Claude call per item, well under 50 req/min
 
 // ── French detection ──────────────────────────────────────────────────
 
@@ -114,26 +114,24 @@ async function shopifyPut(path, body, retries = 4) {
 
 // ── Claude Haiku translation ──────────────────────────────────────────
 
-async function translateField(text, fieldType = 'text') {
-  if (!text || text.trim().length < 3) return { translated: text, changed: false };
-  const isHtml = fieldType === 'html';
-  const systemPrompt = isHtml
-    ? `You are a professional translator for a Canadian tire retailer.
-Translate French HTML content to English.
+async function translateAllFields(fields) {
+  // fields: [{ key, value, type }]
+  // Build a single prompt with all fields as JSON
+  const input = {};
+  for (const f of fields) {
+    if (f.value && f.value.trim().length >= 3) input[f.key] = f.value;
+  }
+  if (Object.keys(input).length === 0) return {};
+  const systemPrompt = `You are a professional translator for a Canadian tire retailer.
+You will receive a JSON object where each key is a field name and each value is content to translate from French to English.
 Rules:
-- Preserve ALL HTML tags exactly as-is
-- Only translate the text content between tags
-- If the content is already in English, return it UNCHANGED
-- Keep tire sizes, brand names, part numbers, and technical specs unchanged
-- Return ONLY the translated HTML, no explanation`
-    : `You are a professional translator for a Canadian tire retailer.
-Translate French text to English.
-Rules:
-- If the text is already in English, return it UNCHANGED
-- Keep tire sizes, brand names, part numbers, and technical specs unchanged
-- For short labels/titles, use proper title case in English
-- Return ONLY the translated text, no explanation`;
-  const MAX_RETRIES = 5;
+- If a value is already in English, return it UNCHANGED
+- For HTML values (keys ending in _html or body_html), preserve ALL HTML tags, only translate text content
+- Keep tire sizes (e.g. 215/55R17), brand names, part numbers, and technical specs unchanged
+- For title fields, use proper English title case
+- Return ONLY a valid JSON object with the same keys and translated values
+- No explanation, no markdown, no code blocks — raw JSON only`;
+  const MAX_RETRIES = 6;
   let attempt = 0;
   while (attempt < MAX_RETRIES) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -145,14 +143,14 @@ Rules:
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: systemPrompt,
-        messages: [{ role: 'user', content: text }],
+        messages: [{ role: 'user', content: JSON.stringify(input) }],
       }),
     });
     if (res.status === 429) {
       attempt++;
-      const waitMs = Math.pow(2, attempt) * 2000; // 4s, 8s, 16s, 32s, 64s
+      const waitMs = Math.pow(2, attempt) * 3000; // 6s, 12s, 24s, 48s, 96s, 192s
       console.log(`Claude 429 — attempt ${attempt}/${MAX_RETRIES}, waiting ${waitMs}ms`);
       await sleep(waitMs);
       continue;
@@ -162,8 +160,23 @@ Rules:
       throw new Error(`Claude API ${res.status}: ${err.slice(0, 100)}`);
     }
     const data = await res.json();
-    const translated = data.content?.[0]?.text?.trim() || text;
-    return { translated, changed: translated !== text };
+    const raw = data.content?.[0]?.text?.trim() || '{}';
+    let translated;
+    try {
+      translated = JSON.parse(raw);
+    } catch {
+      // Strip markdown fences if present
+      const clean = raw.replace(/```json|```/g, '').trim();
+      try { translated = JSON.parse(clean); } catch { translated = {}; }
+    }
+    // Build result map with changed flag
+    const results = {};
+    for (const f of fields) {
+      const orig = f.value || '';
+      const trans = translated[f.key] || orig;
+      results[f.key] = { translated: trans, changed: trans !== orig };
+    }
+    return results;
   }
   throw new Error(`Claude API still rate-limited after ${MAX_RETRIES} retries`);
 }
@@ -336,73 +349,95 @@ async function translateProducts({ offset, chunkSize, dryRun }) {
       const updates = {};
       let previewTitle = product.title;
 
-      // Title
-      if (isFrench(product.title)) {
-        const { translated, changed } = await translateField(product.title, 'text');
-        if (changed) {
-          changes.push(`title: "${product.title}" → "${translated}"`);
-          updates.title = translated;
-          previewTitle = translated;
-        }
-      }
-
-      // Body HTML
+      // Build fields array for a single Claude call
+      const fields = [];
+      if (isFrench(product.title)) fields.push({ key: 'title', value: product.title });
       const bodyText = stripHtml(product.body_html);
-      if (bodyText && isFrench(bodyText)) {
-        const { translated, changed } = await translateField(product.body_html, 'html');
-        if (changed) {
-          changes.push("body_html: translated");
-          updates.body_html = translated;
-        }
-      }
+      if (bodyText && isFrench(bodyText)) fields.push({ key: 'body_html', value: product.body_html });
 
-      // Tags
-      if (product.tags) {
-        const tagList = product.tags.split(",").map((t) => t.trim()).filter(Boolean);
-        const newTags = [];
-        let tagsChanged = false;
-
-        for (const tag of tagList) {
-          const mapped = translateTag(tag);
-          if (mapped) {
-            newTags.push(mapped);
-            tagsChanged = true;
-          } else if (isFrench(tag)) {
-            const { translated, changed } = await translateField(tag, 'text');
-            if (changed) {
-              newTags.push(translated.toLowerCase().replace(/\s+/g, "-"));
-              tagsChanged = true;
-            } else {
-              newTags.push(tag);
-            }
-          } else {
-            newTags.push(tag);
-          }
-        }
-
-        if (tagsChanged) {
-          changes.push(`tags: updated ${tagList.filter((t, i) => newTags[i] !== t).length} tags`);
-          updates.tags = newTags.join(", ");
+      // Tags: static map first, batch remaining French tags
+      const tagList = product.tags ? product.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
+      const tagMappings = [];
+      for (let i = 0; i < tagList.length; i++) {
+        const tag = tagList[i];
+        const mapped = translateTag(tag);
+        if (mapped) {
+          tagMappings.push({ originalTag: tag, staticMapped: mapped, fieldKey: null });
+        } else if (isFrench(tag)) {
+          const fieldKey = `tag__${i}`;
+          tagMappings.push({ originalTag: tag, staticMapped: null, fieldKey });
+          fields.push({ key: fieldKey, value: tag });
+        } else {
+          tagMappings.push({ originalTag: tag, staticMapped: null, fieldKey: null });
         }
       }
 
       // SEO metafields
       const metafields = await fetchSeoMetafields("products", product.id);
-      const seoMeta = {};
+      const seoMfMap = {}; // fieldKey -> { mfId, mfKey }
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { key: "title_tag", value: translated, original: mf.value };
+          const fk = `seo_title_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = { mfId: mf.id, mfKey: "title_tag" };
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { key: "description_tag", value: translated, original: mf.value };
+          const fk = `seo_desc_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = { mfId: mf.id, mfKey: "description_tag" };
         }
       }
 
+      const hasStaticTagChanges = tagMappings.some((tm) => tm.staticMapped !== null);
+      if (fields.length === 0 && !hasStaticTagChanges) {
+        skippedCount++;
+        return;
+      }
+
+      // Single Claude call for all French fields
+      const results = fields.length > 0 ? await translateAllFields(fields) : {};
+
+      // Apply title
+      if (results.title?.changed) {
+        changes.push(`title: "${product.title}" → "${results.title.translated}"`);
+        updates.title = results.title.translated;
+        previewTitle = results.title.translated;
+      }
+
+      // Apply body_html
+      if (results.body_html?.changed) {
+        changes.push("body_html: translated");
+        updates.body_html = results.body_html.translated;
+      }
+
+      // Apply tags
+      const newTags = [];
+      let tagsChanged = false;
+      for (const tm of tagMappings) {
+        if (tm.staticMapped) {
+          newTags.push(tm.staticMapped);
+          tagsChanged = true;
+        } else if (tm.fieldKey && results[tm.fieldKey]?.changed) {
+          newTags.push(results[tm.fieldKey].translated.toLowerCase().replace(/\s+/g, "-"));
+          tagsChanged = true;
+        } else {
+          newTags.push(tm.originalTag);
+        }
+      }
+      if (tagsChanged) {
+        changes.push(`tags: updated ${tagMappings.filter((tm) => tm.staticMapped || (tm.fieldKey && results[tm.fieldKey]?.changed)).length} tags`);
+        updates.tags = newTags.join(", ");
+      }
+
+      // Apply SEO metafields
+      const seoMeta = {};
+      for (const [fk, info] of Object.entries(seoMfMap)) {
+        if (results[fk]?.changed) {
+          seoMeta[info.mfId] = { key: info.mfKey, value: results[fk].translated };
+        }
+      }
       if (Object.keys(seoMeta).length > 0) {
-        const seoKeys = Object.values(seoMeta).map((m) => m.key);
-        changes.push(`seo: updated ${seoKeys.join(", ")}`);
+        changes.push(`seo: updated ${Object.values(seoMeta).map((m) => m.key).join(", ")}`);
       }
 
       if (changes.length === 0) {
@@ -467,40 +502,50 @@ async function translateCollections({ offset, chunkSize, dryRun }) {
       const updates = {};
       let previewTitle = col.title;
 
-      if (isFrench(col.title)) {
-        const { translated, changed } = await translateField(col.title, 'text');
-        if (changed) {
-          changes.push(`title: "${col.title}" → "${translated}"`);
-          updates.title = translated;
-          previewTitle = translated;
-        }
-      }
-
+      const fields = [];
+      if (isFrench(col.title)) fields.push({ key: 'title', value: col.title });
       const bodyText = stripHtml(col.body_html);
-      if (bodyText && isFrench(bodyText)) {
-        const { translated, changed } = await translateField(col.body_html, 'html');
-        if (changed) {
-          changes.push("body_html: translated");
-          updates.body_html = translated;
-        }
-      }
+      if (bodyText && isFrench(bodyText)) fields.push({ key: 'body_html', value: col.body_html });
 
       const metafields = await fetchSeoMetafields(
         col._kind === "smart_collections" ? "smart_collections" : "custom_collections",
         col.id
       );
-      const seoMeta = {};
+      const seoMfMap = {};
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { value: translated };
+          const fk = `seo_title_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = mf.id;
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { value: translated };
+          const fk = `seo_desc_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = mf.id;
         }
       }
 
+      if (fields.length === 0) {
+        skippedCount++;
+        return;
+      }
+
+      const results = await translateAllFields(fields);
+
+      if (results.title?.changed) {
+        changes.push(`title: "${col.title}" → "${results.title.translated}"`);
+        updates.title = results.title.translated;
+        previewTitle = results.title.translated;
+      }
+      if (results.body_html?.changed) {
+        changes.push("body_html: translated");
+        updates.body_html = results.body_html.translated;
+      }
+
+      const seoMeta = {};
+      for (const [fk, mfId] of Object.entries(seoMfMap)) {
+        if (results[fk]?.changed) seoMeta[mfId] = { value: results[fk].translated };
+      }
       if (Object.keys(seoMeta).length > 0) changes.push("seo: updated metafields");
 
       if (changes.length === 0) {
@@ -565,37 +610,47 @@ async function translatePages({ offset, chunkSize, dryRun }) {
       const updates = {};
       let previewTitle = page.title;
 
-      if (isFrench(page.title)) {
-        const { translated, changed } = await translateField(page.title, 'text');
-        if (changed) {
-          changes.push(`title: "${page.title}" → "${translated}"`);
-          updates.title = translated;
-          previewTitle = translated;
-        }
-      }
-
+      const fields = [];
+      if (isFrench(page.title)) fields.push({ key: 'title', value: page.title });
       const bodyText = stripHtml(page.body_html);
-      if (bodyText && isFrench(bodyText)) {
-        const { translated, changed } = await translateField(page.body_html, 'html');
-        if (changed) {
-          changes.push("body_html: translated");
-          updates.body_html = translated;
-        }
-      }
+      if (bodyText && isFrench(bodyText)) fields.push({ key: 'body_html', value: page.body_html });
 
       const metafields = await fetchSeoMetafields("pages", page.id);
-      const seoMeta = {};
+      const seoMfMap = {};
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { value: translated };
+          const fk = `seo_title_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = mf.id;
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const { translated, changed } = await translateField(mf.value, 'text');
-          if (changed) seoMeta[mf.id] = { value: translated };
+          const fk = `seo_desc_${mf.id}`;
+          fields.push({ key: fk, value: mf.value });
+          seoMfMap[fk] = mf.id;
         }
       }
 
+      if (fields.length === 0) {
+        skippedCount++;
+        return;
+      }
+
+      const results = await translateAllFields(fields);
+
+      if (results.title?.changed) {
+        changes.push(`title: "${page.title}" → "${results.title.translated}"`);
+        updates.title = results.title.translated;
+        previewTitle = results.title.translated;
+      }
+      if (results.body_html?.changed) {
+        changes.push("body_html: translated");
+        updates.body_html = results.body_html.translated;
+      }
+
+      const seoMeta = {};
+      for (const [fk, mfId] of Object.entries(seoMfMap)) {
+        if (results[fk]?.changed) seoMeta[mfId] = { value: results[fk].translated };
+      }
       if (Object.keys(seoMeta).length > 0) changes.push("seo: updated metafields");
 
       if (changes.length === 0) {
@@ -669,24 +724,43 @@ async function translateTags({ offset, chunkSize, dryRun }) {
   await processBatch(chunk, async (product) => {
     try {
       const tagList = product.tags.split(",").map((t) => t.trim()).filter(Boolean);
-      const newTags = [];
-      let tagsChanged = false;
 
-      for (const tag of tagList) {
+      // Build tag mappings and batch unmapped French tags into one Claude call
+      const tagMappings = [];
+      const fields = [];
+      for (let i = 0; i < tagList.length; i++) {
+        const tag = tagList[i];
         const mapped = translateTag(tag);
         if (mapped) {
-          newTags.push(mapped);
-          if (mapped !== tag) tagsChanged = true;
+          tagMappings.push({ originalTag: tag, staticMapped: mapped, fieldKey: null });
         } else if (isFrench(tag)) {
-          const { translated, changed } = await translateField(tag, 'text');
-          if (changed) {
-            newTags.push(translated.toLowerCase().replace(/\s+/g, "-"));
-            tagsChanged = true;
-          } else {
-            newTags.push(tag);
-          }
+          const fieldKey = `tag__${i}`;
+          tagMappings.push({ originalTag: tag, staticMapped: null, fieldKey });
+          fields.push({ key: fieldKey, value: tag });
         } else {
-          newTags.push(tag);
+          tagMappings.push({ originalTag: tag, staticMapped: null, fieldKey: null });
+        }
+      }
+
+      const hasStaticChanges = tagMappings.some((tm) => tm.staticMapped !== null);
+      if (!hasStaticChanges && fields.length === 0) {
+        skippedCount++;
+        return;
+      }
+
+      const results = fields.length > 0 ? await translateAllFields(fields) : {};
+
+      const newTags = [];
+      let tagsChanged = false;
+      for (const tm of tagMappings) {
+        if (tm.staticMapped) {
+          newTags.push(tm.staticMapped);
+          tagsChanged = true;
+        } else if (tm.fieldKey && results[tm.fieldKey]?.changed) {
+          newTags.push(results[tm.fieldKey].translated.toLowerCase().replace(/\s+/g, "-"));
+          tagsChanged = true;
+        } else {
+          newTags.push(tm.originalTag);
         }
       }
 
