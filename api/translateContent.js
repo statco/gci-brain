@@ -14,7 +14,7 @@ const SHOPIFY_HEADERS = {
 };
 
 const BATCH_SIZE = 1;    // sequential — avoid rate limit
-const BATCH_MS   = 2000; // 2s between each item = 1 Claude call per item, well under 50 req/min
+const BATCH_MS   = 5000; // 5s between each item
 
 // ── French detection ──────────────────────────────────────────────────
 

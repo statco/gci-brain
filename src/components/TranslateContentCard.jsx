@@ -22,8 +22,8 @@ const TAG_MAP_PREVIEW = [
   { fr: 'en-stock', en: 'in-stock' },
 ];
 
-const CHUNK_SIZE = 5;
-const CHUNK_DELAY_MS = 2000;
+const CHUNK_SIZE = 1;
+const CHUNK_DELAY_MS = 8000;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
