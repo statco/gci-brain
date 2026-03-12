@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import TranslateContentCard from './TranslateContentCard';
 
 const catalogTools = [
   {
@@ -156,6 +157,12 @@ export default function Dashboard() {
             ))}
           </div>
         </section>
+
+        {/* TRANSLATION TOOLS — full width row */}
+        <section style={styles.translateSection}>
+          <h2 style={styles.sectionHeading}>TRANSLATION TOOLS</h2>
+          <TranslateContentCard />
+        </section>
       </main>
 
       {/* Footer */}
@@ -250,6 +257,7 @@ const styles = {
     zIndex: 1,
     display: 'flex',
     flex: 1,
+    flexWrap: 'wrap',
     gap: '24px',
     padding: '32px',
     alignItems: 'flex-start',
@@ -397,6 +405,10 @@ const styles = {
     borderRadius: '2px',
     textDecoration: 'none',
     cursor: 'pointer',
+  },
+  translateSection: {
+    width: '100%',
+    flexBasis: '100%',
   },
   footer: {
     position: 'relative',
