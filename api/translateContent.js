@@ -4,7 +4,7 @@
 
 const STORE = process.env.SHOPIFY_STORE_DOMAIN;
 const TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const API_VERSION = "2024-01";
 const BASE = `https://${STORE}/admin/api/${API_VERSION}`;
 
@@ -114,30 +114,58 @@ async function shopifyPut(path, body, retries = 4) {
 
 // ── Claude Haiku translation ──────────────────────────────────────────
 
-async function callClaude(text) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system:
-        "Translate French to English. If already English, return UNCHANGED. Preserve HTML tags. Keep tire sizes, brand names, part numbers unchanged. Return ONLY the translated content.",
-      messages: [{ role: "user", content: text }],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Claude API error: ${res.status} ${err.slice(0, 200)}`);
+async function translateField(text, fieldType = 'text') {
+  if (!text || text.trim().length < 3) return { translated: text, changed: false };
+  const isHtml = fieldType === 'html';
+  const systemPrompt = isHtml
+    ? `You are a professional translator for a Canadian tire retailer.
+Translate French HTML content to English.
+Rules:
+- Preserve ALL HTML tags exactly as-is
+- Only translate the text content between tags
+- If the content is already in English, return it UNCHANGED
+- Keep tire sizes, brand names, part numbers, and technical specs unchanged
+- Return ONLY the translated HTML, no explanation`
+    : `You are a professional translator for a Canadian tire retailer.
+Translate French text to English.
+Rules:
+- If the text is already in English, return it UNCHANGED
+- Keep tire sizes, brand names, part numbers, and technical specs unchanged
+- For short labels/titles, use proper title case in English
+- Return ONLY the translated text, no explanation`;
+  const MAX_RETRIES = 5;
+  let attempt = 0;
+  while (attempt < MAX_RETRIES) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: text }],
+      }),
+    });
+    if (res.status === 429) {
+      attempt++;
+      const waitMs = Math.pow(2, attempt) * 2000; // 4s, 8s, 16s, 32s, 64s
+      console.log(`Claude 429 — attempt ${attempt}/${MAX_RETRIES}, waiting ${waitMs}ms`);
+      await sleep(waitMs);
+      continue;
+    }
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      throw new Error(`Claude API ${res.status}: ${err.slice(0, 100)}`);
+    }
+    const data = await res.json();
+    const translated = data.content?.[0]?.text?.trim() || text;
+    return { translated, changed: translated !== text };
   }
-  const json = await res.json();
-  const result = json.content?.[0]?.text?.trim() ?? null;
-  if (result === "UNCHANGED") return null;
-  return result;
+  throw new Error(`Claude API still rate-limited after ${MAX_RETRIES} retries`);
 }
 
 // ── Batch helper ─────────────────────────────────────────────────────
@@ -310,8 +338,8 @@ async function translateProducts({ offset, chunkSize, dryRun }) {
 
       // Title
       if (isFrench(product.title)) {
-        const translated = await callClaude(product.title);
-        if (translated && translated !== product.title) {
+        const { translated, changed } = await translateField(product.title, 'text');
+        if (changed) {
           changes.push(`title: "${product.title}" → "${translated}"`);
           updates.title = translated;
           previewTitle = translated;
@@ -321,8 +349,8 @@ async function translateProducts({ offset, chunkSize, dryRun }) {
       // Body HTML
       const bodyText = stripHtml(product.body_html);
       if (bodyText && isFrench(bodyText)) {
-        const translated = await callClaude(product.body_html);
-        if (translated && translated !== product.body_html) {
+        const { translated, changed } = await translateField(product.body_html, 'html');
+        if (changed) {
           changes.push("body_html: translated");
           updates.body_html = translated;
         }
@@ -340,8 +368,8 @@ async function translateProducts({ offset, chunkSize, dryRun }) {
             newTags.push(mapped);
             tagsChanged = true;
           } else if (isFrench(tag)) {
-            const translated = await callClaude(tag);
-            if (translated && translated !== tag) {
+            const { translated, changed } = await translateField(tag, 'text');
+            if (changed) {
               newTags.push(translated.toLowerCase().replace(/\s+/g, "-"));
               tagsChanged = true;
             } else {
@@ -363,12 +391,12 @@ async function translateProducts({ offset, chunkSize, dryRun }) {
       const seoMeta = {};
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { key: "title_tag", value: translated, original: mf.value };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { key: "title_tag", value: translated, original: mf.value };
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { key: "description_tag", value: translated, original: mf.value };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { key: "description_tag", value: translated, original: mf.value };
         }
       }
 
@@ -440,8 +468,8 @@ async function translateCollections({ offset, chunkSize, dryRun }) {
       let previewTitle = col.title;
 
       if (isFrench(col.title)) {
-        const translated = await callClaude(col.title);
-        if (translated && translated !== col.title) {
+        const { translated, changed } = await translateField(col.title, 'text');
+        if (changed) {
           changes.push(`title: "${col.title}" → "${translated}"`);
           updates.title = translated;
           previewTitle = translated;
@@ -450,8 +478,8 @@ async function translateCollections({ offset, chunkSize, dryRun }) {
 
       const bodyText = stripHtml(col.body_html);
       if (bodyText && isFrench(bodyText)) {
-        const translated = await callClaude(col.body_html);
-        if (translated && translated !== col.body_html) {
+        const { translated, changed } = await translateField(col.body_html, 'html');
+        if (changed) {
           changes.push("body_html: translated");
           updates.body_html = translated;
         }
@@ -464,12 +492,12 @@ async function translateCollections({ offset, chunkSize, dryRun }) {
       const seoMeta = {};
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { value: translated };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { value: translated };
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { value: translated };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { value: translated };
         }
       }
 
@@ -538,8 +566,8 @@ async function translatePages({ offset, chunkSize, dryRun }) {
       let previewTitle = page.title;
 
       if (isFrench(page.title)) {
-        const translated = await callClaude(page.title);
-        if (translated && translated !== page.title) {
+        const { translated, changed } = await translateField(page.title, 'text');
+        if (changed) {
           changes.push(`title: "${page.title}" → "${translated}"`);
           updates.title = translated;
           previewTitle = translated;
@@ -548,8 +576,8 @@ async function translatePages({ offset, chunkSize, dryRun }) {
 
       const bodyText = stripHtml(page.body_html);
       if (bodyText && isFrench(bodyText)) {
-        const translated = await callClaude(page.body_html);
-        if (translated && translated !== page.body_html) {
+        const { translated, changed } = await translateField(page.body_html, 'html');
+        if (changed) {
           changes.push("body_html: translated");
           updates.body_html = translated;
         }
@@ -559,12 +587,12 @@ async function translatePages({ offset, chunkSize, dryRun }) {
       const seoMeta = {};
       for (const mf of metafields) {
         if (mf.key === "title_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { value: translated };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { value: translated };
         }
         if (mf.key === "description_tag" && isFrench(mf.value)) {
-          const translated = await callClaude(mf.value);
-          if (translated) seoMeta[mf.id] = { value: translated };
+          const { translated, changed } = await translateField(mf.value, 'text');
+          if (changed) seoMeta[mf.id] = { value: translated };
         }
       }
 
@@ -650,8 +678,8 @@ async function translateTags({ offset, chunkSize, dryRun }) {
           newTags.push(mapped);
           if (mapped !== tag) tagsChanged = true;
         } else if (isFrench(tag)) {
-          const translated = await callClaude(tag);
-          if (translated && translated !== tag) {
+          const { translated, changed } = await translateField(tag, 'text');
+          if (changed) {
             newTags.push(translated.toLowerCase().replace(/\s+/g, "-"));
             tagsChanged = true;
           } else {

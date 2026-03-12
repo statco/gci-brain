@@ -23,7 +23,7 @@ const TAG_MAP_PREVIEW = [
 ];
 
 const CHUNK_SIZE = 5;
-const CHUNK_DELAY_MS = 800;
+const CHUNK_DELAY_MS = 3000;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
