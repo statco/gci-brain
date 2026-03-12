@@ -13,6 +13,9 @@ const SHOPIFY_HEADERS = {
   "Content-Type": "application/json",
 };
 
+const BATCH_SIZE = 1;    // sequential — avoid rate limit
+const BATCH_MS   = 1500; // 1.5s between each call = ~40 req/min safely under 50
+
 // ── French detection ──────────────────────────────────────────────────
 
 const FRENCH_ACCENTS_RE = /[àâäéèêëîïôùûüçœæ]/i;
@@ -137,16 +140,15 @@ async function callClaude(text) {
   return result;
 }
 
-// ── Batch helper (3 items, 500ms between batches) ─────────────────────
+// ── Batch helper ─────────────────────────────────────────────────────
 
 async function processBatch(items, fn) {
   const results = [];
-  const BATCH_SIZE = 3;
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(batch.map(fn));
     results.push(...batchResults);
-    if (i + BATCH_SIZE < items.length) await sleep(500);
+    if (i + BATCH_SIZE < items.length) await sleep(BATCH_MS);
   }
   return results;
 }

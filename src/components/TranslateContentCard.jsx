@@ -22,7 +22,7 @@ const TAG_MAP_PREVIEW = [
   { fr: 'en-stock', en: 'in-stock' },
 ];
 
-const CHUNK_SIZE = 10;
+const CHUNK_SIZE = 5;
 const CHUNK_DELAY_MS = 800;
 
 function sleep(ms) {
