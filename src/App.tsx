@@ -150,7 +150,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<TireMatchApp />} />
+        <Route path="/brain" element={<Dashboard />} />
         <Route path="/installer-application" element={<InstallerApplicationForm />} />
         <Route path="/shopify-fix" element={<ShopifyFixDashboard />} />
         <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
