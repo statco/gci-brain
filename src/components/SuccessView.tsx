@@ -3,6 +3,7 @@ import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
 import { airtableService } from '../services/airtableService';
 import InstallerMap from './InstallerMap';
+import { CalendlyButton } from '../utils/validateCalendlyLink';
 
 interface SuccessViewProps {
   selectedTire: {
@@ -343,16 +344,7 @@ const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, 
                           )}
                         </div>
                       </div>
-                      {installer.calendlyLink && (
-                        <a
-                          href={installer.calendlyLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-4 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors text-sm whitespace-nowrap"
-                        >
-                          {t.bookAppointment}
-                        </a>
-                      )}
+                      <CalendlyButton url={installer.calendlyLink} label={t.bookAppointment} />
                     </div>
                   </div>
                 ))
