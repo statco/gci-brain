@@ -3,7 +3,6 @@ import axios from 'axios';
 
 // Initialize API clients
 const geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 const WHEEL_SIZE_API_KEY = process.env.WHEEL_SIZE_API_KEY || '';
 
 interface VehicleData {
@@ -148,9 +147,10 @@ Respond ONLY with valid JSON, no additional text.
     vehicle: VehicleData
   ): Promise<MarketInsight> {
     try {
-      const response = await axios.post(
-        'https://api.perplexity.ai/chat/completions',
-        {
+      const proxyRes = await fetch('/api/perplexity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           model: 'llama-3.1-sonar-small-128k-online',
           messages: [
             {
@@ -162,18 +162,11 @@ Respond ONLY with valid JSON, no additional text.
               content: `What are the current tire prices and popular brands for a ${vehicle.year} ${vehicle.make} ${vehicle.model} in Canada? Include average prices and recent customer reviews. Format as JSON with fields: averagePrice, popularBrands (array), recentReviews (array), trends (array).`,
             },
           ],
-          temperature: 0.2,
-          max_tokens: 1000,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+        }),
+      });
+      const response = await proxyRes.json();
 
-      const content = response.data.choices[0].message.content;
+      const content = response.choices[0].message.content;
       
       // Try to parse JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);

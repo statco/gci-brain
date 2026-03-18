@@ -17,7 +17,6 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env.API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || env.API_KEY || ''),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || ''),
-      'process.env.PERPLEXITY_API_KEY': JSON.stringify(env.VITE_PERPLEXITY_API_KEY || env.PERPLEXITY_API_KEY || ''),
       'process.env.GROK_API_KEY': JSON.stringify(env.VITE_GROK_API_KEY || env.GROK_API_KEY || ''),
       'process.env.WHEEL_SIZE_API_KEY': JSON.stringify(env.VITE_WHEEL_SIZE_API_KEY || env.WHEEL_SIZE_API_KEY || ''),
       'process.env.SHOPIFY_STOREFRONT_TOKEN': JSON.stringify(env.VITE_SHOPIFY_STOREFRONT_TOKEN || env.SHOPIFY_STOREFRONT_TOKEN || ''),
