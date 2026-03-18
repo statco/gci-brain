@@ -1,24 +1,19 @@
 // src/services/geminiService.ts
 // ✅ FULLY DYNAMIC VERSION - Fetches products from Shopify automatically
+// 🔄 UPDATED: Now uses unified AI provider (Gemini → Deepseek fallback)
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { TireProduct, Language } from '../types';
-import { fetchProductsByCollection, fetchProductsByTag, fetchProductsByType } from './shopifyProductService';
+import { fetchProductsByTag } from './shopifyProductService';
+import { generateAIContent } from './aiService'; // 👈 NEW unified provider
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-
-if (!API_KEY) {
-  console.warn('⚠️ VITE_GEMINI_API_KEY not set. Using fallback recommendations.');
-}
-
-const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
+// ── No more direct GoogleGenerativeAI import needed here ──────
+// The aiService handles all provider logic and fallbacks
 
 // ✅ NO MORE MOCK_PRODUCTS!
 // Products are now fetched from Shopify dynamically
 
 /**
  * ✅ Fetch available tire products from Shopify
- * Choose ONE of these methods:
  */
 async function getAvailableProducts(): Promise<TireProduct[]> {
   // OPTION 1: By Collection (RECOMMENDED)
@@ -32,15 +27,15 @@ async function getAvailableProducts(): Promise<TireProduct[]> {
 }
 
 /**
- * Get tire recommendations using Gemini AI
- * ✅ Now uses dynamic Shopify products
+ * Get tire recommendations using AI with automatic fallback
+ * ✅ Gemini (primary) → Deepseek (backup) → Keyword fallback
  */
 export async function getTireRecommendations(
   userRequest: string,
   language: Language = 'en',
   oemSizes?: string[]
 ): Promise<TireProduct[]> {
-  console.log('🤖 Requesting Gemini AI recommendations...');
+  console.log('🤖 Requesting AI recommendations...');
   console.log('   User request:', userRequest);
   if (oemSizes && oemSizes.length > 0) {
     console.log('   OEM sizes constraint:', oemSizes);
@@ -55,29 +50,19 @@ export async function getTireRecommendations(
     return [];
   }
 
-  // Build catalog: only in-stock products visible to Gemini
+  // Build catalog: only in-stock products visible to AI
   const catalogProducts = availableProducts.filter(p => p.inStock);
   console.log('[debug] in-stock catalog size:', catalogProducts.length);
   const oemMatches = catalogProducts.filter(p => p.size === '235/55R18');
   console.log('[debug] in-stock 235/55R18 count:', oemMatches.length, oemMatches.map(p => p.title));
 
-  // If no API key, return fallback immediately
-  if (!genAI) {
-    console.log('⚠️ No API key, using fallback');
-    return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
-  }
+  // Build OEM constraint text
+  const oemConstraint = (oemSizes && oemSizes.length > 0)
+    ? `\nCRITICAL REQUIREMENT: You MUST only recommend products whose size EXACTLY matches one of these OEM sizes: ${oemSizes.join(', ')}. Do NOT recommend any product with a different size. If you cannot find products matching these exact sizes in the catalog, return an empty array rather than recommending wrong sizes.\n`
+    : '';
 
-  try {
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      systemInstruction: "You are a professional tire expert for a Canadian retailer. Use professional, clear language.",
-    });
-
-    const oemConstraint = (oemSizes && oemSizes.length > 0)
-      ? `\nCRITICAL REQUIREMENT: You MUST only recommend products whose size EXACTLY matches one of these OEM sizes: ${oemSizes.join(', ')}. Do NOT recommend any product with a different size. If you cannot find products matching these exact sizes in the catalog, return an empty array rather than recommending wrong sizes.\n`
-      : '';
-
-    const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
+  // Build the prompt
+  const prompt = `You are a tire expert at GCI Tire in Canada. A customer needs tire recommendations.
 
 Customer Request: "${userRequest}"
 Language: ${language === 'fr' ? 'French' : 'English'}
@@ -97,20 +82,23 @@ Rules:
 - Consider Canadian climate if winter/all-season is mentioned
 - NO explanations, ONLY the JSON array`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+  const systemInstruction =
+    'You are a professional tire expert for a Canadian retailer. Use professional, clear language. Always respond with valid JSON only.';
 
-    console.log('📥 Gemini response:', text);
+  try {
+    // 🔄 Try AI providers in order: Gemini → Deepseek
+    const aiResult = await generateAIContent({ prompt, systemInstruction });
+    
+    console.log(`📥 AI response [${aiResult.provider}/${aiResult.model}]:`, aiResult.text);
 
     // Parse the response
-    const jsonMatch = text.match(/\[[\s\S]*?\]/);
+    const jsonMatch = aiResult.text.match(/\[[\s\S]*?\]/);
     if (!jsonMatch) {
       throw new Error('No JSON array found in response');
     }
 
     const recommendedIds = JSON.parse(jsonMatch[0]);
-    
+
     // Validate it's an array
     if (!Array.isArray(recommendedIds)) {
       throw new Error('Response is not an array');
@@ -121,25 +109,26 @@ Rules:
       recommendedIds.includes(p.id)
     );
 
-    console.log('✅ Gemini recommendations:', recommendations.length);
+    console.log(`✅ AI recommendations: ${recommendations.length} (via ${aiResult.provider})`);
 
     // If no matches, return fallback
     if (recommendations.length === 0) {
-      console.log('⚠️ No matching products, using fallback');
+      console.log('⚠️ No matching products, using keyword fallback');
       return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
     }
 
     return recommendations;
 
   } catch (error) {
-    console.error('❌ Error getting Gemini recommendations:', error);
-    console.log('⚠️ Using fallback recommendations');
+    // All AI providers failed — use keyword fallback
+    console.error('❌ All AI providers failed:', error);
+    console.log('⚠️ Using keyword fallback recommendations');
     return getFallbackRecommendations(userRequest, catalogProducts, oemSizes);
   }
 }
 
 /**
- * Fallback recommendations when AI fails or returns empty.
+ * Fallback recommendations when all AI providers fail.
  * Respects oemSizes when provided: filters candidates to exact-size matches first.
  * If no size-matched products exist, returns top 3 from the full list as a last resort.
  */
@@ -148,7 +137,7 @@ function getFallbackRecommendations(
   products: TireProduct[],
   oemSizes?: string[]
 ): TireProduct[] {
-  console.log('🔄 Generating fallback recommendations...');
+  console.log('🔄 Generating keyword fallback recommendations...');
 
   const requestLower = userRequest.toLowerCase();
 
@@ -163,8 +152,6 @@ function getFallbackRecommendations(
   }
 
   const exactFitmentAvailable = sizePool.length > 0;
-
-  // Apply season / brand filters within the size pool
   let filtered = [...(exactFitmentAvailable ? sizePool : products)];
 
   // Filter by season
@@ -191,10 +178,8 @@ function getFallbackRecommendations(
     console.warn('⚠️ [fallback] No products matched OEM sizes — returning top 3 without exact fitment');
   }
 
-  // Return top 6
   const result = filtered.slice(0, 6);
-  console.log('✅ Fallback recommendations:', result.length);
-  
+  console.log('✅ Keyword fallback recommendations:', result.length);
   return result;
 }
 
