@@ -1,8 +1,6 @@
-// Environment variables for Vercel/Vite
-const API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
-const BASE_ID = import.meta.env.VITE_AIRTABLE_BASE_ID;
-const INSTALLERS_TABLE = import.meta.env.VITE_AIRTABLE_INSTALLERS_TABLE || 'Installers';
-const APPLICATIONS_TABLE = import.meta.env.VITE_AIRTABLE_APPLICATIONS_TABLE || 'Installer Applications';
+// Proxy all Airtable calls through /api/airtable serverless function
+const INSTALLERS_TABLE = 'Installers';
+const APPLICATIONS_TABLE = 'Installer Applications';
 
 // Mock data fallback to prevent 500 errors if Airtable is unreachable
 const MOCK_DATA = [
@@ -34,6 +32,25 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 }
 
+async function airtableRequest(
+  method: string,
+  table: string,
+  body?: any,
+  filter?: string,
+  recordId?: string
+): Promise<any> {
+  const response = await fetch('/api/airtable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ table, method, body, filter, recordId }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(`Airtable proxy error: ${response.status} ${JSON.stringify(error)}`);
+  }
+  return response.json();
+}
+
 /**
  * Submit installer application to Airtable
  */
@@ -51,48 +68,26 @@ export async function submitInstallerApplication(formData: {
   certifications?: string;
   additionalInfo?: string;
 }) {
-  if (!API_KEY || !BASE_ID) {
-    console.warn("Airtable Configuration Missing. Cannot submit application.");
-    throw new Error("Service temporarily unavailable. Please try again later.");
-  }
-
   try {
-    const url = `https://api.airtable.com/v0/${BASE_ID}/${APPLICATIONS_TABLE}`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        fields: {
-          'Business Name': formData.businessName,
-          'Contact Name': formData.contactName,
-          'Email': formData.email,
-          'Phone': formData.phone,
-          'Address': formData.address,
-          'City': formData.city,
-          'Province': formData.province,
-          'Postal Code': formData.postalCode,
-          'Years in Business': formData.yearsInBusiness || 0,
-          'Insurance Coverage': formData.insuranceCoverage || false,
-          'Certifications': formData.certifications || '',
-          'Additional Info': formData.additionalInfo || '',
-          'Status': 'Pending Review',
-          'Submitted Date': new Date().toISOString()
-        }
-      }),
-      signal: AbortSignal.timeout(8000)
+    const data = await airtableRequest('POST', APPLICATIONS_TABLE, {
+      fields: {
+        'Business Name': formData.businessName,
+        'Contact Name': formData.contactName,
+        'Email': formData.email,
+        'Phone': formData.phone,
+        'Address': formData.address,
+        'City': formData.city,
+        'Province': formData.province,
+        'Postal Code': formData.postalCode,
+        'Years in Business': formData.yearsInBusiness || 0,
+        'Insurance Coverage': formData.insuranceCoverage || false,
+        'Certifications': formData.certifications || '',
+        'Additional Info': formData.additionalInfo || '',
+        'Status': 'Pending Review',
+        'Submitted Date': new Date().toISOString()
+      }
     });
-
-    if (!response.ok) {
-      throw new Error(`Airtable error: ${response.status}`);
-    }
-
-    const data = await response.json();
     return { success: true, recordId: data.id };
-    
   } catch (error) {
     console.error("Failed to submit installer application:", error);
     throw new Error("Failed to submit application. Please try again.");
@@ -101,29 +96,10 @@ export async function submitInstallerApplication(formData: {
 
 export const airtableService = {
   async findNearbyInstallers(userLat: number, userLng: number, radiusKm: number = 100) {
-    // 1. Check if config exists. If not, return Mock Data immediately to avoid serverless crash.
-    if (!API_KEY || !BASE_ID) {
-      console.warn("Airtable Configuration Missing. Falling back to Mock Data.");
-      return MOCK_DATA;
-    }
-
     try {
-      // 2. Build the request URL with a filter for 'Active' status
-      const url = `https://api.airtable.com/v0/${BASE_ID}/${INSTALLERS_TABLE}?filterByFormula={Status}='Active'`;
-      
-      const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${API_KEY}` },
-        // 3. Set a strict timeout to stay within Vercel's serverless limits
-        signal: AbortSignal.timeout(6000)
-      });
+      const data = await airtableRequest('GET', INSTALLERS_TABLE, undefined, "{Status}='Active'");
 
-      if (!response.ok) {
-        throw new Error(`Airtable error: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // 4. Transform and map Airtable records to the flattened structure SuccessView expects
+      // Transform and map Airtable records to the flattened structure SuccessView expects
       const records = (data.records || []).map((record: any) => {
         const fields = record.fields;
         const lat = Number(fields.Latitude);
@@ -145,23 +121,22 @@ export const airtableService = {
           pricePerTire: fields.PricePerTire || fields['Price Per Tire'],
           rating: fields.Rating,
           distance: dist,
-          // ✅ FIXED: Return flat lat/lng instead of nested coordinates
           lat: hasValidCoords ? lat : undefined,
           lng: hasValidCoords ? lng : undefined
         };
       });
 
-      // 5. Filter by radius and sort by distance
+      // Filter by radius and sort by distance
       const filtered = records
         .filter((r: any) => r.lat !== undefined && r.lng !== undefined && r.distance <= radiusKm)
         .sort((a: any, b: any) => a.distance - b.distance);
 
-      // 6. Final safety: if no real records found, return Mock data to show something on the map
+      // Final safety: if no real records found, return Mock data to show something on the map
       return filtered.length > 0 ? filtered : MOCK_DATA;
-      
+
     } catch (error) {
       console.error("Airtable Fetch Failed:", error);
-      // 7. Critical fallback: Return Mock Data so the SuccessView UI never breaks
+      // Critical fallback: Return Mock Data so the SuccessView UI never breaks
       return MOCK_DATA;
     }
   }
