@@ -1,6 +1,10 @@
 {
   "functions": {
-    "api/shopifyFix.js": { "maxDuration": 60 }
+    "api/shopifyFix.js":    { "maxDuration": 60  },
+    "api/shopifySync.ts":   { "maxDuration": 300 },
+    "api/walmart-sync.ts":  { "maxDuration": 300 },
+    "api/order-router.ts":  { "maxDuration": 60  },
+    "api/authorize-order.ts": { "maxDuration": 30 }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
@@ -16,7 +20,11 @@
   "crons": [
     {
       "path": "/api/shopifySync",
-      "schedule": "0 8 * * *"
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/walmart-sync",
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/feed/gmc",
