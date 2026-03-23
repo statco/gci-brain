@@ -184,14 +184,14 @@ function getClosestWarehouse(p: CTTire): string {
   return p.inventory.find(l => l.quantity > 0)?.location || '';
 }
 
-function parseTireSize(raw: string): string {
-  const [w='',a='',r=''] = String(raw).replace(/,/g,'/').split('/');
+function parseTireSize(raw: string | number): string {
+  const [w='',a='',r=''] = String(raw ?? '').replace(/,/g,'/').split('/');
   return `${w}/${a}R${r}`;
 }
 
 // Handles compact 8-digit CT codes like "2256016/R" → "225/60R16"
-function formatTireSize(rawCode: string): string {
-  const raw = String(rawCode);
+function formatTireSize(rawCode: string | number): string {
+  const raw = String(rawCode ?? '');
   const match = raw.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
   if (!match) return parseTireSize(raw);
   return `${match[1]}/${match[2]}R${match[3]}`;
