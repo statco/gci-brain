@@ -12,7 +12,6 @@
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTireImageUrl } from './addTireImages.js';
-import { classifyTire } from '../lib/classifyTire.js';
 
 export const config = { maxDuration: 300 };
 
@@ -398,7 +397,7 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
 // Uses REAL CT dealer cost (ct.cost field) instead of MSRP estimate.
 // Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
 
-function buildPayload(ct: CTTire) {
+async function buildPayload(ct: CTTire) {
   const size    = formatTireSize(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
   const qty     = getTotalQty(ct);
@@ -415,6 +414,7 @@ function buildPayload(ct: CTTire) {
   const floorPrice     = netCost + shippingBuffer;
 
   const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
+  const { classifyTire } = await import('../lib/classifyTire.js');
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
 
   const tags = [
@@ -531,7 +531,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
   // Create new products (only positive stock)
   await processBatches(createChunk, async (ct) => {
-    const payload = buildPayload(ct);
+    const payload = await buildPayload(ct);
     const normTitle = normalizeTitle(payload.product.title);
 
     // Skip if an active product with the same normalized title already exists
