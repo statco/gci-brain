@@ -185,14 +185,15 @@ function getClosestWarehouse(p: CTTire): string {
 }
 
 function parseTireSize(raw: string): string {
-  const [w='',a='',r=''] = raw.toString().replace(/,/g,'/').split('/');
+  const [w='',a='',r=''] = String(raw).replace(/,/g,'/').split('/');
   return `${w}/${a}R${r}`;
 }
 
 // Handles compact 8-digit CT codes like "2256016/R" → "225/60R16"
 function formatTireSize(rawCode: string): string {
-  const match = rawCode.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
-  if (!match) return parseTireSize(rawCode);
+  const raw = String(rawCode);
+  const match = raw.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
+  if (!match) return parseTireSize(raw);
   return `${match[1]}/${match[2]}R${match[3]}`;
 }
 
