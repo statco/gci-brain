@@ -2,15 +2,14 @@
 // ============================================================
 // CJ Dropshipping API v2 client
 //
-// Credentials extracted from the old nuprozone.com Shopify store
-// must be provided via environment variables:
-//   CJ_API_KEY    — CJ Dropshipping API key (preferred over email/password)
-//   CJ_EMAIL      — CJ account email (fallback auth)
-//   CJ_PASSWORD   — CJ account password (fallback auth)
+// Required env vars:
+//   CJ_EMAIL   — CJ account email
+//   CJ_API_KEY — CJ API key (used as the password in the auth request)
 //
 // Token lifecycle:
-//   - Access tokens expire after ~1 hour
-//   - This module caches the token in-process and refreshes transparently
+//   - Access tokens expire per accessTokenExpiryDate returned by CJ
+//   - Refresh tokens are used to obtain a new access token transparently
+//   - Both are cached in-process
 //
 // Docs: https://developers.cjdropshipping.com/api2.0/v1/
 // ============================================================
@@ -47,30 +46,34 @@ export interface CJOrderResult {
 
 // ─── TOKEN CACHE ──────────────────────────────────────────────────────────────
 
-let _token:     string | null = null;
-let _tokenExp:  number        = 0;   // unix ms
+let _token:        string | null = null;
+let _tokenExp:     number        = 0;   // unix ms
+let _refreshToken: string | null = null;
 
 async function getAccessToken(): Promise<string> {
   if (_token && Date.now() < _tokenExp - 60_000) return _token;
 
-  // Prefer API key auth, fall back to email/password
-  const apiKey = process.env.CJ_API_KEY || '';
-  if (apiKey) {
-    _token    = apiKey;
-    _tokenExp = Date.now() + 365 * 24 * 60 * 60 * 1000; // static key, never expires
-    return _token;
+  // Try refresh first if we have a refresh token
+  if (_refreshToken) {
+    try {
+      return await refreshAccessToken();
+    } catch {
+      // Fall through to full re-auth
+      _refreshToken = null;
+    }
   }
 
-  const email    = process.env.CJ_EMAIL    || '';
-  const password = process.env.CJ_PASSWORD || '';
-  if (!email || !password) {
-    throw new Error('CJ Dropshipping credentials not configured. Set CJ_API_KEY or CJ_EMAIL + CJ_PASSWORD.');
+  const email  = process.env.CJ_EMAIL   || '';
+  const apiKey = process.env.CJ_API_KEY || '';
+
+  if (!email || !apiKey) {
+    throw new Error('CJ Dropshipping credentials not configured. Set CJ_EMAIL and CJ_API_KEY.');
   }
 
   const res = await fetch(`${CJ_BASE}/authentication/getAccessToken`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email, password }),
+    body:    JSON.stringify({ email, password: apiKey }),
   });
 
   const data: any = await res.json();
@@ -78,12 +81,36 @@ async function getAccessToken(): Promise<string> {
     throw new Error(`CJ auth failed: ${JSON.stringify(data.message || data)}`);
   }
 
-  _token    = data.data.accessToken as string;
-  // CJ tokens expire in 1 hour (3600s); cache for 55 minutes
-  _tokenExp = Date.now() + 55 * 60 * 1000;
+  _token        = data.data.accessToken  as string;
+  _refreshToken = data.data.refreshToken as string | null;
+  _tokenExp     = data.data.accessTokenExpiryDate
+    ? new Date(data.data.accessTokenExpiryDate).getTime()
+    : Date.now() + 55 * 60 * 1000; // fallback: 55 minutes
 
   console.log('✅ CJ Dropshipping access token refreshed');
   return _token;
+}
+
+async function refreshAccessToken(): Promise<string> {
+  const res = await fetch(`${CJ_BASE}/authentication/refreshAccessToken`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ refreshToken: _refreshToken }),
+  });
+
+  const data: any = await res.json();
+  if (!data.result || !data.data?.accessToken) {
+    throw new Error(`CJ token refresh failed: ${JSON.stringify(data.message || data)}`);
+  }
+
+  _token        = data.data.accessToken  as string;
+  _refreshToken = data.data.refreshToken as string | null ?? _refreshToken;
+  _tokenExp     = data.data.accessTokenExpiryDate
+    ? new Date(data.data.accessTokenExpiryDate).getTime()
+    : Date.now() + 55 * 60 * 1000;
+
+  console.log('✅ CJ Dropshipping access token refreshed via refresh token');
+  return _token!;
 }
 
 // ─── INTERNAL FETCH HELPER ────────────────────────────────────────────────────
@@ -93,7 +120,7 @@ async function cjFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${CJ_BASE}${path}`, {
     ...options,
     headers: {
-      'Content-Type':   'application/json',
+      'Content-Type':    'application/json',
       'CJ-Access-Token': token,
       ...(options.headers || {}),
     },
