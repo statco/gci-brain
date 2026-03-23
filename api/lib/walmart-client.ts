@@ -1,17 +1,17 @@
 // api/lib/walmart-client.ts
 // ============================================================
-// Walmart Marketplace API client (Canada & US)
+// Walmart Marketplace API client (Canada only)
 //
 // Required env vars:
 //   WALMART_CLIENT_ID      — Marketplace seller client ID
 //   WALMART_CLIENT_SECRET  — Marketplace seller client secret
 //   WALMART_BASE_URL       — Base URL (default: https://marketplace.walmartapis.com)
-//                            For Walmart Canada use: https://marketplace.walmartapis.com
-//                            (same API, channel differentiated by credentials)
+//                            Canada is identified via WM_MARKET header, not the URL.
+//   WALMART_MARKET         — Market identifier (default: CA)
 //
 // Auth: OAuth 2.0 client credentials (token valid ~15 min, cached here)
 //
-// Docs: https://developer.walmart.com/doc/us/mp/us-mp-feeds/
+// Docs: https://developer.walmart.com/doc/ca/mp/
 // ============================================================
 
 const WALMART_BASE = (process.env.WALMART_BASE_URL || 'https://marketplace.walmartapis.com').replace(/\/$/, '');
@@ -36,10 +36,12 @@ async function getWalmartToken(): Promise<string> {
   const res = await fetch(`${WALMART_BASE}/v3/token`, {
     method: 'POST',
     headers: {
-      'Authorization':    `Basic ${credentials}`,
-      'Content-Type':     'application/x-www-form-urlencoded',
-      'WM_SVC.NAME':      'Walmart Marketplace',
-      'WM_QOS.CORRELATION_ID': `gci-${Date.now()}`,
+      'Authorization':              `Basic ${credentials}`,
+      'Content-Type':               'application/x-www-form-urlencoded',
+      'WM_SVC.NAME':                'Walmart Marketplace',
+      'WM_QOS.CORRELATION_ID':      `gci-${Date.now()}`,
+      'WM_MARKET':                  process.env.WALMART_MARKET || 'CA',
+      'WM_CONSUMER.CHANNEL.TYPE':   'WALMART_CA',
     },
     body: 'grant_type=client_credentials',
   });
@@ -69,11 +71,13 @@ async function walmartFetch<T>(
   const res   = await fetch(`${WALMART_BASE}${path}`, {
     ...options,
     headers: {
-      'Authorization':         `Bearer ${token}`,
-      'Content-Type':          'application/json',
-      'Accept':                accept,
-      'WM_SVC.NAME':           'Walmart Marketplace',
-      'WM_QOS.CORRELATION_ID': `gci-${Date.now()}`,
+      'Authorization':              `Bearer ${token}`,
+      'Content-Type':               'application/json',
+      'Accept':                     accept,
+      'WM_SVC.NAME':                'Walmart Marketplace',
+      'WM_QOS.CORRELATION_ID':      `gci-${Date.now()}`,
+      'WM_MARKET':                  process.env.WALMART_MARKET || 'CA',
+      'WM_CONSUMER.CHANNEL.TYPE':   'WALMART_CA',
       ...(options.headers || {}),
     },
   });
