@@ -228,7 +228,12 @@ async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
     for (const p of products) {
       const hasImages = Array.isArray(p.images) && p.images.length > 0;
       for (const v of p.variants) {
-        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages });
+        if (v.sku) {
+          map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages });
+          // Also index without prefix for backward compat during transition
+          const bare = v.sku.replace(/^TIRE-/, '');
+          if (bare !== v.sku) map.set(bare, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages });
+        }
       }
     }
     if (products.length < 250) break;
@@ -439,7 +444,7 @@ function buildPayload(ct: CTTire) {
       product_type: 'Tire',
       tags,
       variants: [{
-        sku:                  ct.partNumber,
+        sku:                  `TIRE-${ct.partNumber}`,
         price:                msrp.toFixed(2),                // Selling price (bulk updater adjusts later)
         compare_at_price:     msrp.toFixed(2),                // MSRP strikethrough
         cost:                 netCost.toFixed(2),              // Net cost = MSRP × 0.50
