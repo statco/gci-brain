@@ -415,7 +415,9 @@ async function buildPayload(ct: CTTire) {
   const floorPrice     = netCost + shippingBuffer;
 
   const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
-  const { classifyTire } = await import('../lib/classifyTire.js');
+  // Use Function constructor so esbuild does not transform this import() into
+  // require(), which would fail because classifyTire.js is an ES module.
+  const { classifyTire } = await (new Function('return import("../lib/classifyTire.js")')() as Promise<typeof import('../lib/classifyTire.js')>);
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
 
   const tags = [
