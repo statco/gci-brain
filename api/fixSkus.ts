@@ -74,9 +74,10 @@ interface VariantUpdate {
 async function fetchProductsByTag(tag: string): Promise<ShopifyProduct[]> {
   const products: ShopifyProduct[] = [];
   let sinceId = 0;
+  const encodedTag = encodeURIComponent(tag);
 
   while (true) {
-    const q = `tag=${tag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const q = `tag=${encodedTag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const page: ShopifyProduct[] = data.products || [];
     if (page.length === 0) break;
@@ -205,10 +206,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else if (action === 'fix-nuproz') {
       products = await fetchProductsByTag(TAG_NUPROZ);
       ({ toUpdate, skipped } = planPrefix(products, 'NUPROZ-'));
-    } else {
-      // revert-nuproz: fetch nuproz products and fix any TIRE- wrongly applied
+    } else if (action === 'revert-nuproz') {
+      // Fetch ONLY nuproz-innovation products and fix any TIRE- wrongly applied
       products = await fetchProductsByTag(TAG_NUPROZ);
       ({ toUpdate, skipped } = planRevertNuproz(products));
+    } else {
+      return res.status(400).json({ error: `Unhandled action "${action}"` });
     }
 
     const total = products.reduce((n, p) => n + p.variants.length, 0);
