@@ -12,6 +12,8 @@
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTireImageUrl } from './addTireImages.js';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { classifyTire } = require('../lib/classifyTire.cjs') as typeof import('../lib/classifyTire.js');
 
 export const config = { maxDuration: 300 };
 
@@ -415,9 +417,6 @@ async function buildPayload(ct: CTTire) {
   const floorPrice     = netCost + shippingBuffer;
 
   const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
-  const { classifyTire } = await import(
-    new URL('../lib/classifyTire.js', import.meta.url).href
-  );
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
 
   const tags = [

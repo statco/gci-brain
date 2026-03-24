@@ -15,7 +15,8 @@
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { classifyTire } from '../lib/classifyTire.js';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { classifyTire } = require('../lib/classifyTire.cjs') as typeof import('../lib/classifyTire.js');
 
 export const config = { maxDuration: 300 };
 
