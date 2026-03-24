@@ -1,9 +1,12 @@
 // api/fixSkus.ts
 // ============================================================
-// Prefix all ct-sync product variant SKUs with "TIRE-"
+// Fix variant SKU prefixes for ct-sync and nuproz-innovation products
 //
-// GET /api/fixSkus            — run prefixing
-// GET /api/fixSkus?dryRun=true — preview changes without saving
+// GET /api/fixSkus?action=fix-tires        — prefix ct-sync SKUs with "TIRE-"
+// GET /api/fixSkus?action=fix-nuproz       — prefix nuproz-innovation SKUs with "NUPROZ-"
+// GET /api/fixSkus?action=revert-nuproz    — fix nuproz products wrongly prefixed "TIRE-"
+// (no action param defaults to fix-tires)
+// Add ?dryRun=true to any action to preview without saving
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -19,9 +22,10 @@ const SHOPIFY = {
   get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
 };
 
-const SYNC_TAG   = 'ct-sync';
-const BATCH_SIZE = 5;
-const BATCH_MS   = 300;
+const TAG_CT_SYNC  = 'ct-sync';
+const TAG_NUPROZ   = 'nuproz-innovation';
+const BATCH_SIZE   = 5;
+const BATCH_MS     = 300;
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -65,14 +69,14 @@ interface VariantUpdate {
   newSku: string;
 }
 
-// ─── FETCH ALL CT-SYNC PRODUCTS ───────────────────────────────────────────────
+// ─── FETCH PRODUCTS BY TAG ────────────────────────────────────────────────────
 
-async function fetchAllCtSyncProducts(): Promise<ShopifyProduct[]> {
+async function fetchProductsByTag(tag: string): Promise<ShopifyProduct[]> {
   const products: ShopifyProduct[] = [];
   let sinceId = 0;
 
   while (true) {
-    const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const q = `tag=${tag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const page: ShopifyProduct[] = data.products || [];
     if (page.length === 0) break;
@@ -84,74 +88,134 @@ async function fetchAllCtSyncProducts(): Promise<ShopifyProduct[]> {
   return products;
 }
 
+// ─── PLAN HELPERS ─────────────────────────────────────────────────────────────
+
+/** Collect variants that need a prefix applied (skip if already prefixed). */
+function planPrefix(
+  products: ShopifyProduct[],
+  prefix: string,
+): { toUpdate: VariantUpdate[]; skipped: VariantUpdate[] } {
+  const toUpdate: VariantUpdate[] = [];
+  const skipped: VariantUpdate[] = [];
+
+  for (const product of products) {
+    for (const variant of product.variants) {
+      const base: Omit<VariantUpdate, 'newSku'> = {
+        productId: product.id,
+        productTitle: product.title,
+        variantId: variant.id,
+        oldSku: variant.sku,
+      };
+      if (!variant.sku || variant.sku.startsWith(prefix)) {
+        skipped.push({ ...base, newSku: variant.sku });
+      } else {
+        toUpdate.push({ ...base, newSku: `${prefix}${variant.sku}` });
+      }
+    }
+  }
+
+  return { toUpdate, skipped };
+}
+
+/**
+ * Collect nuproz variants that were wrongly prefixed with "TIRE-".
+ * Strips "TIRE-" and replaces with "NUPROZ-".
+ */
+function planRevertNuproz(
+  products: ShopifyProduct[],
+): { toUpdate: VariantUpdate[]; skipped: VariantUpdate[] } {
+  const toUpdate: VariantUpdate[] = [];
+  const skipped: VariantUpdate[] = [];
+
+  for (const product of products) {
+    for (const variant of product.variants) {
+      const base: Omit<VariantUpdate, 'newSku'> = {
+        productId: product.id,
+        productTitle: product.title,
+        variantId: variant.id,
+        oldSku: variant.sku,
+      };
+      if (variant.sku && variant.sku.startsWith('TIRE-')) {
+        const bare = variant.sku.slice('TIRE-'.length);
+        toUpdate.push({ ...base, newSku: `NUPROZ-${bare}` });
+      } else {
+        skipped.push({ ...base, newSku: variant.sku });
+      }
+    }
+  }
+
+  return { toUpdate, skipped };
+}
+
+// ─── APPLY UPDATES ────────────────────────────────────────────────────────────
+
+async function applyUpdates(
+  toUpdate: VariantUpdate[],
+  dryRun: boolean,
+): Promise<{ updated: VariantUpdate[]; errors: { variantId: number; sku: string; error: string }[] }> {
+  const updated: VariantUpdate[] = [];
+  const errors: { variantId: number; sku: string; error: string }[] = [];
+
+  if (dryRun) {
+    return { updated: [...toUpdate], errors };
+  }
+
+  for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+    const batch = toUpdate.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (item) => {
+        try {
+          await shopifyFetch(`/products/${item.productId}/variants/${item.variantId}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({ variant: { id: item.variantId, sku: item.newSku } }),
+          });
+          updated.push(item);
+        } catch (err: any) {
+          errors.push({ variantId: item.variantId, sku: item.oldSku, error: err.message || String(err) });
+        }
+      }),
+    );
+
+    if (i + BATCH_SIZE < toUpdate.length) await delay(BATCH_MS);
+  }
+
+  return { updated, errors };
+}
+
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const dryRun = req.query.dryRun === 'true' || req.query.dryRun === '1';
+  const action = (req.query.action as string) || 'fix-tires';
 
-  const updated: VariantUpdate[] = [];
-  const skipped: VariantUpdate[] = [];
-  const errors: { variantId: number; sku: string; error: string }[] = [];
+  const validActions = ['fix-tires', 'fix-nuproz', 'revert-nuproz'];
+  if (!validActions.includes(action)) {
+    return res.status(400).json({ error: `Unknown action "${action}". Valid: ${validActions.join(', ')}` });
+  }
 
   try {
-    const products = await fetchAllCtSyncProducts();
-    const total = products.reduce((n, p) => n + p.variants.length, 0);
+    let products: ShopifyProduct[];
+    let toUpdate: VariantUpdate[];
+    let skipped: VariantUpdate[];
 
-    // Collect all variants that need updating
-    const toUpdate: VariantUpdate[] = [];
-    for (const product of products) {
-      for (const variant of product.variants) {
-        if (!variant.sku || variant.sku.startsWith('TIRE-')) {
-          skipped.push({
-            productId: product.id,
-            productTitle: product.title,
-            variantId: variant.id,
-            oldSku: variant.sku,
-            newSku: variant.sku,
-          });
-        } else {
-          toUpdate.push({
-            productId: product.id,
-            productTitle: product.title,
-            variantId: variant.id,
-            oldSku: variant.sku,
-            newSku: `TIRE-${variant.sku}`,
-          });
-        }
-      }
-    }
-
-    if (!dryRun) {
-      // Process updates in batches
-      for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
-        const batch = toUpdate.slice(i, i + BATCH_SIZE);
-
-        await Promise.all(
-          batch.map(async (item) => {
-            try {
-              await shopifyFetch(`/products/${item.productId}/variants/${item.variantId}.json`, {
-                method: 'PUT',
-                body: JSON.stringify({ variant: { id: item.variantId, sku: item.newSku } }),
-              });
-              updated.push(item);
-            } catch (err: any) {
-              errors.push({
-                variantId: item.variantId,
-                sku: item.oldSku,
-                error: err.message || String(err),
-              });
-            }
-          }),
-        );
-
-        if (i + BATCH_SIZE < toUpdate.length) await delay(BATCH_MS);
-      }
+    if (action === 'fix-tires') {
+      products = await fetchProductsByTag(TAG_CT_SYNC);
+      ({ toUpdate, skipped } = planPrefix(products, 'TIRE-'));
+    } else if (action === 'fix-nuproz') {
+      products = await fetchProductsByTag(TAG_NUPROZ);
+      ({ toUpdate, skipped } = planPrefix(products, 'NUPROZ-'));
     } else {
-      // Dry run — just report what would change
-      updated.push(...toUpdate);
+      // revert-nuproz: fetch nuproz products and fix any TIRE- wrongly applied
+      products = await fetchProductsByTag(TAG_NUPROZ);
+      ({ toUpdate, skipped } = planRevertNuproz(products));
     }
+
+    const total = products.reduce((n, p) => n + p.variants.length, 0);
+    const { updated, errors } = await applyUpdates(toUpdate, dryRun);
 
     return res.status(200).json({
+      action,
       dryRun,
       total,
       updated: updated.length,
