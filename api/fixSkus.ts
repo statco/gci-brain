@@ -58,6 +58,7 @@ interface ShopifyVariant {
 interface ShopifyProduct {
   id: number;
   title: string;
+  tags: string;
   variants: ShopifyVariant[];
 }
 
@@ -72,22 +73,22 @@ interface VariantUpdate {
 // ─── FETCH PRODUCTS BY TAG ────────────────────────────────────────────────────
 
 async function fetchProductsByTag(tag: string): Promise<ShopifyProduct[]> {
-  const products: ShopifyProduct[] = [];
+  const results: ShopifyProduct[] = [];
   let sinceId = 0;
 
   while (true) {
-    const path = `/products.json?tag=${tag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
-    console.log(`[fixSkus] fetching: ${SHOPIFY.baseUrl}${path}`);
+    const path = `/products.json?limit=250&fields=id,title,variants,tags${sinceId ? `&since_id=${sinceId}` : ''}`;
+    console.log(`[fixSkus] fetching page sinceId=${sinceId}`);
     const data: any = await shopifyFetch<any>(path);
     const page: ShopifyProduct[] = data.products || [];
-    console.log(`[fixSkus] tag="${tag}" page returned ${page.length} products (total so far: ${products.length + page.length})`);
-    if (page.length === 0) break;
-    products.push(...page);
+    const filtered = page.filter(p => p.tags && p.tags.split(', ').includes(tag));
+    console.log(`[fixSkus] page=${page.length} matched tag="${tag}": ${filtered.length} (running total: ${results.length + filtered.length})`);
+    results.push(...filtered);
     if (page.length < 250) break;
     sinceId = page[page.length - 1].id;
   }
 
-  return products;
+  return results;
 }
 
 // ─── PLAN HELPERS ─────────────────────────────────────────────────────────────
