@@ -74,12 +74,13 @@ interface VariantUpdate {
 async function fetchProductsByTag(tag: string): Promise<ShopifyProduct[]> {
   const products: ShopifyProduct[] = [];
   let sinceId = 0;
-  const encodedTag = encodeURIComponent(tag);
 
   while (true) {
-    const q = `tag=${encodedTag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
-    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
+    const path = `/products.json?tag=${tag}&limit=250&fields=id,title,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+    console.log(`[fixSkus] fetching: ${SHOPIFY.baseUrl}${path}`);
+    const data: any = await shopifyFetch<any>(path);
     const page: ShopifyProduct[] = data.products || [];
+    console.log(`[fixSkus] tag="${tag}" page returned ${page.length} products (total so far: ${products.length + page.length})`);
     if (page.length === 0) break;
     products.push(...page);
     if (page.length < 250) break;
