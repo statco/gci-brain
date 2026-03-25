@@ -595,6 +595,10 @@ function calculatePrice(
   const { netCost, shippingBuffer } = product;
   const profit = PRICING.fixedProfit;
 
+  // NUPROZ- SKUs are CJDropshipping products — CJ ships directly to customer, no shipping cost to us
+  const isNuproz = product.sku.startsWith('NUPROZ-');
+  const effectiveShipping = isNuproz ? 0 : shippingBuffer;
+
   let sellingPrice: number;
   let reason: string;
 
@@ -606,16 +610,16 @@ function calculatePrice(
     const WALMART_FEE = 0.12;
     const TARGET_MARGIN = 0.14;
     const MARKUP = 1.08;
-    const floorPrice = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_MARGIN);
+    const floorPrice = (netCost + effectiveShipping) / (1 - WALMART_FEE - TARGET_MARGIN);
     sellingPrice = floorPrice * MARKUP;
-    reason = `$${netCost.toFixed(0)} cost + $${shippingBuffer} ship → floor $${floorPrice.toFixed(2)} × ${MARKUP} markup`;
+    reason = `$${netCost.toFixed(0)} cost + $${effectiveShipping} ship${isNuproz ? ' (CJ dropship)' : ''} → floor $${floorPrice.toFixed(2)} × ${MARKUP} markup`;
   }
 
   // Round to .99 for cleaner retail look
   sellingPrice = Math.floor(sellingPrice) + 0.99;
 
-  // Safety: never sell below cost + shipping (even with manual override)
-  const absolute_floor = netCost + shippingBuffer;
+  // Safety: never sell below cost + effective shipping (even with manual override)
+  const absolute_floor = netCost + effectiveShipping;
   if (sellingPrice < absolute_floor) {
     sellingPrice = Math.ceil(absolute_floor) + 0.99;
     reason += ` (raised to cover cost+ship)`;
