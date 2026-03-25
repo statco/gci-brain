@@ -60,9 +60,9 @@ const BATCH_MS   = 300;
 const NET_MULTIPLIER = 0.50;
 
 const SHIPPING_BUFFERS: Record<string, number> = {
-  passenger:   35,
-  light_truck: 40,
-  heavy_truck: 50,
+  passenger:   40,
+  light_truck: 50,
+  heavy_truck: 65,
 };
 
 /**
@@ -414,7 +414,9 @@ async function buildPayload(ct: CTTire) {
 
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const floorPrice     = netCost + shippingBuffer;
+  const WALMART_FEE = 0.12;
+  const TARGET_MARGIN = 0.14;
+  const floorPrice     = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_MARGIN);
 
   const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
