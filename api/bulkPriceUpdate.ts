@@ -117,9 +117,9 @@ const PRICING = {
   fixedProfit: 30,        // $30 fixed profit per tire — non-negotiable
 
   shippingBuffers: {
-    passenger:   35,
-    light_truck: 40,
-    heavy_truck: 50,
+    passenger:   40,
+    light_truck: 50,
+    heavy_truck: 65,
   } as Record<string, number>,
 };
 
@@ -564,9 +564,9 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
   return products;
 }
 
-// ─── CALCULATE PRICE — FIXED MARGIN MODEL ────────────────────────────────────
-// Formula: selling_price = net_cost + fixed_profit + shipping_buffer
-// Every tire guarantees $30 profit. Period.
+// ─── CALCULATE PRICE — WALMART MARGIN MODEL ──────────────────────────────────
+// Formula: floor = (netCost + shippingBuffer) / (1 - 0.12 - 0.14)
+//          selling_price = floor * 1.08  (8% competitiveness markup)
 
 interface PriceRecommendation {
   sku: string;
@@ -602,9 +602,13 @@ function calculatePrice(
     sellingPrice = manualOverride;
     reason = `Manual override → $${manualOverride.toFixed(2)}`;
   } else {
-    // Fixed margin: net cost + $30 profit + shipping
-    sellingPrice = netCost + profit + shippingBuffer;
-    reason = `$${netCost.toFixed(0)} cost + $${profit} profit + $${shippingBuffer} ship`;
+    // Full margin model: break-even covers Walmart fee + target margin, then apply 8% competitiveness markup
+    const WALMART_FEE = 0.12;
+    const TARGET_MARGIN = 0.14;
+    const MARKUP = 1.08;
+    const floorPrice = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_MARGIN);
+    sellingPrice = floorPrice * MARKUP;
+    reason = `$${netCost.toFixed(0)} cost + $${shippingBuffer} ship → floor $${floorPrice.toFixed(2)} × ${MARKUP} markup`;
   }
 
   // Round to .99 for cleaner retail look
@@ -875,21 +879,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'price-preview': {
         console.log('👀 Running price update preview...');
         const manualPrices = req.body?.manualPrices || undefined;
+        const previewLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : null;
         const result = await runPriceUpdate(true, manualPrices);
 
         // Sort: biggest savings first
-        const sorted = [...result.recommendations]
+        let sorted = [...result.recommendations]
           .filter(r => r.action !== 'no-change')
           .sort((a, b) => a.changeAmount - b.changeAmount);
+
+        if (previewLimit !== null && previewLimit > 0) {
+          sorted = sorted.slice(0, previewLimit);
+        }
 
         return res.status(200).json({
           success: true,
           dryRun: true,
-          pricingModel: `Real CT cost + $${PRICING.fixedProfit} profit + shipping`,
+          pricingModel: `Walmart margin model: (cost + ship) / (1 - 0.12 - 0.14) × 1.08`,
           summary: {
             totalProducts: result.totalProducts,
             priceChanges: result.priceChanges,
             unchanged: result.unchanged,
+            showing: previewLimit !== null ? Math.min(previewLimit, sorted.length) : sorted.length,
           },
           changes: sorted,
           allRecommendations: result.recommendations,
