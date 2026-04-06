@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import TranslateContentCard from './TranslateContentCard';
 
@@ -85,6 +86,281 @@ const storeTools = [
   },
 ];
 
+// ─── TIRE SIZE FIX CARD ───────────────────────────────────────────────────────
+
+function TireSizeFixCard() {
+  const [status, setStatus]         = useState('idle'); // 'idle'|'running'|'done'|'error'
+  const [progress, setProgress]     = useState({ fixed: 0, skipped: 0, total: 0 });
+  const [errors, setErrors]         = useState([]);
+  const [previewItems, setPreview]  = useState([]);
+
+  const run = async (preview = false) => {
+    setStatus('running');
+    setProgress({ fixed: 0, skipped: 0, total: 0 });
+    setErrors([]);
+    setPreview([]);
+
+    let cursor      = 0;
+    let totalFixed  = 0;
+    let totalSkipped = 0;
+    let allErrors   = [];
+    let allPreview  = [];
+
+    try {
+      while (true) {
+        const url = `/api/fixTireSize?cursor=${cursor}${preview ? '&preview=true' : ''}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        const data = await resp.json();
+
+        totalFixed   += data.fixed   ?? 0;
+        totalSkipped += data.skipped ?? 0;
+        allErrors     = [...allErrors, ...(data.errors ?? [])];
+        if (allPreview.length < 20) {
+          allPreview = [...allPreview, ...(data.preview ?? [])].slice(0, 20);
+        }
+
+        setProgress({ fixed: totalFixed, skipped: totalSkipped, total: data.total ?? 0 });
+        setPreview([...allPreview]);
+
+        if (data.nextCursor == null) break;
+        cursor = data.nextCursor;
+      }
+
+      setErrors(allErrors);
+      setStatus('done');
+    } catch (err) {
+      setErrors(prev => [...prev, String(err)]);
+      setStatus('error');
+    }
+  };
+
+  const isRunning = status === 'running';
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      {/* Header row */}
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>📐</span>
+          <h3 style={styles.cardTitle}>Run Tire Size Fix</h3>
+        </div>
+        <span style={isRunning ? tsfc.badgeRunning : status === 'done' ? tsfc.badgeDone : tsfc.badgeIdle}>
+          {isRunning ? '⟳ RUNNING' : status === 'done' ? '✓ DONE' : status === 'error' ? '✗ ERROR' : '● READY'}
+        </span>
+      </div>
+
+      <p style={styles.cardDesc}>
+        Fix malformed size codes in product titles (2154517/r → 215/45R17). Runs in 50-product chunks.
+      </p>
+
+      {/* Progress bar */}
+      {(isRunning || status === 'done' || status === 'error') && (
+        <div style={tsfc.progressWrap}>
+          <div style={tsfc.progressLabel}>
+            {isRunning
+              ? `Fixed ${progress.fixed} / ${progress.total} — ${progress.skipped} skipped…`
+              : `Fixed ${progress.fixed} / ${progress.total} — ${progress.skipped} skipped${errors.length ? ` — ${errors.length} error(s)` : ''}`
+            }
+          </div>
+          {progress.total > 0 && (
+            <div style={tsfc.barTrack}>
+              <div style={{ ...tsfc.barFill, width: `${Math.round(((progress.fixed + progress.skipped) / progress.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div style={tsfc.btnRow}>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnSecondary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(true)}
+          disabled={isRunning}
+        >
+          PREVIEW
+        </button>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnPrimary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(false)}
+          disabled={isRunning}
+        >
+          {isRunning ? 'RUNNING…' : 'RUN ALL'}
+        </button>
+      </div>
+
+      {/* Preview table (first 20 changes) */}
+      {previewItems.length > 0 && (
+        <div style={tsfc.previewWrap}>
+          <div style={tsfc.previewHeading}>PREVIEW — first {previewItems.length} changes</div>
+          <div style={tsfc.previewList}>
+            {previewItems.map((item, i) => (
+              <div key={i} style={tsfc.previewRow}>
+                <span style={tsfc.previewBefore}>{item.before}</span>
+                <span style={tsfc.previewArrow}>→</span>
+                <span style={tsfc.previewAfter}>{item.after}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Errors */}
+      {errors.length > 0 && (
+        <div style={tsfc.errorList}>
+          {errors.map((e, i) => <div key={i} style={tsfc.errorItem}>⚠ {e}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Styles scoped to TireSizeFixCard
+const tsfc = {
+  card: {
+    background: '#12121a',
+    border: '1px solid #2a2a3a',
+    borderRadius: '4px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  top: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  titleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  badgeIdle: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#888',
+    letterSpacing: '0.1em',
+  },
+  badgeRunning: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#facc15',
+    letterSpacing: '0.1em',
+  },
+  badgeDone: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#4ade80',
+    letterSpacing: '0.1em',
+  },
+  progressWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  progressLabel: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '12px',
+    color: '#aaa',
+  },
+  barTrack: {
+    height: '4px',
+    background: '#2a2a3a',
+    borderRadius: '2px',
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    background: '#ff3c00',
+    borderRadius: '2px',
+    transition: 'width 300ms ease',
+  },
+  btnRow: {
+    display: 'flex',
+    gap: '10px',
+  },
+  btn: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '12px',
+    fontWeight: 700,
+    letterSpacing: '0.12em',
+    padding: '8px 18px',
+    borderRadius: '2px',
+    cursor: 'pointer',
+    border: 'none',
+    transition: 'background 200ms, color 200ms, opacity 200ms',
+  },
+  btnPrimary: {
+    background: '#ff3c00',
+    color: '#fff',
+  },
+  btnSecondary: {
+    background: 'transparent',
+    border: '1px solid #ff3c00',
+    color: '#ff3c00',
+  },
+  btnDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+  },
+  previewWrap: {
+    background: '#0d0d14',
+    border: '1px solid #2a2a3a',
+    borderRadius: '3px',
+    padding: '12px',
+    maxHeight: '240px',
+    overflowY: 'auto',
+  },
+  previewHeading: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '10px',
+    color: '#ff3c00',
+    letterSpacing: '0.12em',
+    marginBottom: '10px',
+  },
+  previewList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  previewRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr auto 1fr',
+    gap: '8px',
+    alignItems: 'baseline',
+  },
+  previewBefore: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#888',
+    wordBreak: 'break-word',
+  },
+  previewArrow: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#ff3c00',
+  },
+  previewAfter: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#e8e8e8',
+    wordBreak: 'break-word',
+  },
+  errorList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    maxHeight: '120px',
+    overflowY: 'auto',
+  },
+  errorItem: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#f87171',
+  },
+};
+
 export default function Dashboard() {
   return (
     <div style={styles.root}>
@@ -162,6 +438,12 @@ export default function Dashboard() {
         <section style={styles.translateSection}>
           <h2 style={styles.sectionHeading}>TRANSLATION TOOLS</h2>
           <TranslateContentCard />
+        </section>
+
+        {/* AUTOMATION TOOLS — full width row */}
+        <section style={styles.translateSection}>
+          <h2 style={styles.sectionHeading}>AUTOMATION TOOLS</h2>
+          <TireSizeFixCard />
         </section>
       </main>
 

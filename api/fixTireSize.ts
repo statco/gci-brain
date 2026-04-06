@@ -9,13 +9,21 @@
 // updates the SEO meta title metafield.
 //
 // MODES
-//   GET /api/fixTireSize                  — fix all products
-//   GET /api/fixTireSize?preview=true     — dry run, no writes
-//   GET /api/fixTireSize?brand=Nexen      — one brand only
+//   GET /api/fixTireSize                        — chunk 0 (50 products)
+//   GET /api/fixTireSize?cursor=50              — next chunk
+//   GET /api/fixTireSize?preview=true           — dry run, no writes
+//   GET /api/fixTireSize?brand=Nexen            — filter by brand
+//   GET /api/fixTireSize?cursor=50&brand=Nexen  — combined
 //
 // RESPONSE
-//   { total, fixed, skipped, errors, preview }
-//   preview: first 20 changed pairs { before, after }
+//   { total, fixed, skipped, errors, nextCursor, preview }
+//   nextCursor — numeric offset for the next call; null when done
+//   preview    — first 20 changed pairs { before, after }
+//
+// CHUNKING
+//   50 products per invocation keeps well under the 60s Vercel limit.
+//   Writes are batched 10 at a time (Promise.all) with 200ms between
+//   batches — ~8s per chunk vs the previous ~2.5 min for all products.
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -205,6 +213,9 @@ async function upsertSeoTitleMetafield(productId: number, value: string): Promis
 
 // ─── HANDLER ──────────────────────────────────────────────────────────────────
 
+const CHUNK_SIZE = 50; // products per invocation
+const BATCH_SIZE = 10; // concurrent writes per batch
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
@@ -213,91 +224,87 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const preview     = req.query.preview === 'true';
-  const brandFilter = req.query.brand ? String(req.query.brand) : undefined;
+  const brandFilter = req.query.brand  ? String(req.query.brand)  : undefined;
+  const cursor      = req.query.cursor ? parseInt(String(req.query.cursor), 10) : 0;
 
-  console.log(`🔧 fixTireSize — preview=${preview} brand=${brandFilter ?? 'all'}`);
+  console.log(`🔧 fixTireSize — preview=${preview} brand=${brandFilter ?? 'all'} cursor=${cursor}`);
 
-  // ── Step 1: Fetch products ────────────────────────────────────────────────
-  let products: ShopifyProduct[];
+  // ── Step 1: Fetch all products (fast, read-only) then slice by cursor ─────
+  // Fetching all gives us a stable total count for progress tracking in the UI.
+  // Even 1000 products is only ~4 Shopify API reads and takes <2s.
+  let allProducts: ShopifyProduct[];
   try {
-    products = await fetchAllProducts(brandFilter);
+    allProducts = await fetchAllProducts(brandFilter);
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
 
-  console.log(`  Fetched ${products.length} products`);
+  const total      = allProducts.length;
+  const chunk      = allProducts.slice(cursor, cursor + CHUNK_SIZE);
+  const nextCursor = (cursor + CHUNK_SIZE) < total ? cursor + CHUNK_SIZE : null;
 
-  // ── Steps 2–5: Process each product ──────────────────────────────────────
-  let fixed   = 0;
-  let skipped = 0;
-  const errors:  string[]                         = [];
-  const previewItems: Array<{ before: string; after: string }> = [];
+  console.log(`  Total: ${total} | Chunk: ${chunk.length} (offset ${cursor}) | nextCursor: ${nextCursor}`);
 
-  for (const product of products) {
-    // Step 2: Check for the malformed size pattern
-    const result = extractAndFixSize(product.title);
-    if (!result) {
-      skipped++;
-      continue;
-    }
-
-    // Step 3: Rebuild full title
-    const newTitle = rebuildTitle(product.title, result.correctedSize);
-
-    // Skip if nothing actually changed (product already in correct format)
-    if (newTitle === product.title) {
-      skipped++;
-      continue;
-    }
-
-    // Step 4: Build SEO title
-    const seoTitle = buildSeoTitle(newTitle);
-
-    console.log(`  [${product.id}] "${product.title}"`);
-    console.log(`         → "${newTitle}"`);
-    console.log(`         SEO: "${seoTitle}"`);
-
-    if (previewItems.length < 20) {
-      previewItems.push({ before: product.title, after: newTitle });
-    }
-
-    if (preview) {
-      fixed++;
-      continue; // no writes in preview mode
-    }
-
-    // Step 5: Write changes to Shopify (title update + SEO metafield)
-    try {
-      // Update product title
-      await shopifyFetch(`/products/${product.id}.json`, {
-        method: 'PUT',
-        body:   JSON.stringify({ product: { id: product.id, title: newTitle } }),
-      });
-
-      // Update SEO meta title metafield
-      await upsertSeoTitleMetafield(product.id, seoTitle);
-
-      fixed++;
-    } catch (err) {
-      const msg = `Product ${product.id} ("${product.title}"): ${String(err)}`;
-      console.error(`  ❌ ${msg}`);
-      errors.push(msg);
-      continue;
-    }
-
-    // Respect Shopify rate limits between writes
-    await delay(500);
+  // ── Steps 2–4: Determine what needs updating ──────────────────────────────
+  interface WorkItem {
+    product:  ShopifyProduct;
+    newTitle: string;
+    seoTitle: string;
   }
 
-  // ── Step 6: Return report ─────────────────────────────────────────────────
-  const report = {
-    total:   products.length,
-    fixed,
-    skipped,
-    errors,
-    preview: previewItems,
-  };
+  const workItems: WorkItem[] = [];
+  let skipped = 0;
 
-  console.log(`✅ Done — total:${report.total} fixed:${fixed} skipped:${skipped} errors:${errors.length}`);
+  for (const product of chunk) {
+    const result = extractAndFixSize(product.title);
+    if (!result) { skipped++; continue; }
+
+    const newTitle = rebuildTitle(product.title, result.correctedSize);
+    if (newTitle === product.title) { skipped++; continue; }
+
+    workItems.push({ product, newTitle, seoTitle: buildSeoTitle(newTitle) });
+  }
+
+  const previewItems = workItems
+    .slice(0, 20)
+    .map(({ product, newTitle }) => ({ before: product.title, after: newTitle }));
+
+  // ── Preview mode: return plan without writing ──────────────────────────────
+  if (preview) {
+    console.log(`  Preview — ${workItems.length} would change, ${skipped} skipped`);
+    return res.status(200).json({ total, fixed: workItems.length, skipped, errors: [], nextCursor, preview: previewItems });
+  }
+
+  // ── Step 5: Write in concurrent batches of BATCH_SIZE ─────────────────────
+  // Promise.all within each batch, 200ms pause between batches.
+  let fixed = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < workItems.length; i += BATCH_SIZE) {
+    const batch = workItems.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(batch.map(async ({ product, newTitle, seoTitle }) => {
+      try {
+        await shopifyFetch(`/products/${product.id}.json`, {
+          method: 'PUT',
+          body:   JSON.stringify({ product: { id: product.id, title: newTitle } }),
+        });
+        await upsertSeoTitleMetafield(product.id, seoTitle);
+        fixed++;
+        console.log(`  ✅ [${product.id}] "${product.title}" → "${newTitle}"`);
+      } catch (err) {
+        const msg = `Product ${product.id} ("${product.title}"): ${String(err)}`;
+        console.error(`  ❌ ${msg}`);
+        errors.push(msg);
+      }
+    }));
+
+    // Brief pause between batches — lets Shopify breathe without per-product delay
+    if (i + BATCH_SIZE < workItems.length) await delay(200);
+  }
+
+  // ── Step 6: Return chunk report ───────────────────────────────────────────
+  const report = { total, fixed, skipped, errors, nextCursor, preview: previewItems };
+  console.log(`✅ Chunk done — cursor:${cursor} fixed:${fixed} skipped:${skipped} errors:${errors.length} nextCursor:${nextCursor}`);
   return res.status(200).json(report);
 }
