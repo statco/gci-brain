@@ -578,6 +578,146 @@ const ibc = {
   },
 };
 
+// ─── TAG OOS CARD ─────────────────────────────────────────────────────────────
+
+function TagOosCard() {
+  const [status, setStatus]     = useState('idle'); // 'idle'|'running'|'done'|'error'
+  const [progress, setProgress] = useState({ tagged: 0, untagged: 0, total: 0 });
+  const [errors, setErrors]     = useState([]);
+  const [previewItems, setPreview] = useState([]);
+
+  const run = async (preview = false) => {
+    setStatus('running');
+    setProgress({ tagged: 0, untagged: 0, total: 0 });
+    setErrors([]);
+    setPreview([]);
+
+    let cursor       = 0;
+    let totalTagged  = 0;
+    let totalUntagged = 0;
+    let allErrors    = [];
+    let allPreview   = [];
+
+    try {
+      while (true) {
+        const url = `/api/tagOos?cursor=${cursor}${preview ? '&preview=true' : ''}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        const data = await resp.json();
+
+        totalTagged   += data.tagged   ?? 0;
+        totalUntagged += data.untagged ?? 0;
+        allErrors      = [...allErrors, ...(data.errors ?? [])];
+        if (allPreview.length < 30) {
+          allPreview = [...allPreview, ...(data.preview ?? [])].slice(0, 30);
+        }
+
+        setProgress({ tagged: totalTagged, untagged: totalUntagged, total: data.total ?? 0 });
+        setPreview([...allPreview]);
+
+        if (data.nextCursor == null) break;
+        cursor = data.nextCursor;
+
+        // Preview only runs first chunk
+        if (preview) break;
+      }
+
+      setErrors(allErrors);
+      setStatus('done');
+    } catch (err) {
+      setErrors(prev => [...prev, String(err)]);
+      setStatus('error');
+    }
+  };
+
+  const isRunning  = status === 'running';
+  const tagCount   = previewItems.filter(i => i.action === 'tag').length;
+  const untagCount = previewItems.filter(i => i.action === 'untag').length;
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      {/* Header row */}
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>🏷</span>
+          <h3 style={styles.cardTitle}>Tag OOS Products</h3>
+        </div>
+        <span style={isRunning ? tsfc.badgeRunning : status === 'done' ? tsfc.badgeDone : tsfc.badgeIdle}>
+          {isRunning ? '⟳ RUNNING' : status === 'done' ? '✓ DONE' : status === 'error' ? '✗ ERROR' : '● READY'}
+        </span>
+      </div>
+
+      <p style={styles.cardDesc}>
+        Sync "sold-out" tags based on live inventory. Sends back-in-stock emails for restocked products. Runs in 100-product chunks.
+      </p>
+
+      {/* Progress */}
+      {(isRunning || status === 'done' || status === 'error') && (
+        <div style={tsfc.progressWrap}>
+          <div style={tsfc.progressLabel}>
+            {isRunning
+              ? `Tagged ${progress.tagged} sold-out, untagged ${progress.untagged} back-in-stock…`
+              : `Tagged ${progress.tagged} sold-out · Untagged ${progress.untagged} back-in-stock${errors.length ? ` · ${errors.length} error(s)` : ''}`
+            }
+          </div>
+          {progress.total > 0 && (
+            <div style={tsfc.barTrack}>
+              <div style={{ ...tsfc.barFill, width: `${Math.round(((progress.tagged + progress.untagged) / progress.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div style={tsfc.btnRow}>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnSecondary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(true)}
+          disabled={isRunning}
+        >
+          PREVIEW
+        </button>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnPrimary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(false)}
+          disabled={isRunning}
+        >
+          {isRunning ? 'RUNNING…' : 'RUN'}
+        </button>
+      </div>
+
+      {/* Preview list */}
+      {previewItems.length > 0 && (
+        <div style={tsfc.previewWrap}>
+          <div style={tsfc.previewHeading}>
+            PREVIEW — {tagCount} to tag · {untagCount} to untag (first {previewItems.length})
+          </div>
+          <div style={tsfc.previewList}>
+            {previewItems.map((item, i) => (
+              <div key={i} style={tsfc.previewRow}>
+                <span style={{ ...tsfc.previewBefore, color: item.action === 'untag' ? '#4ade80' : '#aaa' }}>
+                  {item.title}
+                </span>
+                <span style={tsfc.previewArrow}>→</span>
+                <span style={{ ...tsfc.previewAfter, color: item.action === 'tag' ? '#f87171' : '#4ade80' }}>
+                  {item.action === 'tag' ? 'sold-out' : 'in stock'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Errors */}
+      {errors.length > 0 && (
+        <div style={tsfc.errorList}>
+          {errors.map((e, i) => <div key={i} style={tsfc.errorItem}>⚠ {e}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   return (
     <div style={styles.root}>
@@ -663,6 +803,7 @@ export default function Dashboard() {
           <div style={automationGrid}>
             <TireSizeFixCard />
             <ImageBackfillCard />
+            <TagOosCard />
           </div>
         </section>
       </main>
@@ -927,6 +1068,6 @@ const styles = {
 
 const automationGrid = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(2, 1fr)',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
   gap: '16px',
 };
