@@ -93,14 +93,32 @@ function extractBrandAndSlug(title: string): { brand: string; modelSlug: string 
   return { brand, modelSlug };
 }
 
-// ─── SOURCE A — NEXEN CDN ────────────────────────────────────────────────────
+// ─── SOURCE A — NEXEN IMAGE MAP ──────────────────────────────────────────────
+//
+//   Nexen CDN uses unpredictable WordPress media upload paths, so we maintain
+//   a hardcoded map of known-good URLs keyed by lowercase model name
+//   (brand prefix and size suffix stripped).
 
-function nexenCandidates(modelSlug: string): string[] {
-  return [
-    `https://www.nexentire.com/upload/product/${modelSlug}_main.jpg`,
-    `https://www.nexentire.com/upload/product/${modelSlug}.jpg`,
-    `https://www.nexentire.com/image/product/${modelSlug}/main.jpg`,
-  ];
+const NEXEN_IMAGE_MAP: Record<string, string> = {
+  'winguard sport 2': 'https://www.nexentireusa.com/wp-content/uploads/2025/11/Winguard_Sport_2_Main-350x416-5.jpg',
+  'roadian mtx':      'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_MTX_Main-350x416-2.jpg',
+  'roadian htx 2':    'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'roadian htx2':     'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'npriz s':          'https://www.nexentireusa.com/wp-content/uploads/2025/11/NPriz_S_Main-350x416-3.jpg',
+  'npriz s oe':       'https://www.nexentireusa.com/wp-content/uploads/2025/11/NPriz_S_Main-350x416-3.jpg',
+};
+
+// Returns the mapped URL for a Nexen product title, or null if not in the map.
+// Strips brand ("Nexen") and size suffix, then does a lowercase key lookup.
+function nexenMappedUrl(title: string): string | null {
+  const withoutSize = title
+    .replace(TIRE_SIZE_RE, '')
+    .replace(COMPACT_RE, '')
+    .replace(TRAILING_JUNK, '');
+
+  // Remove leading brand word "Nexen" (case-insensitive)
+  const modelName = withoutSize.replace(/^nexen\s+/i, '').trim().toLowerCase();
+  return NEXEN_IMAGE_MAP[modelName] ?? null;
 }
 
 // ─── SOURCE B — COOPER CDN ───────────────────────────────────────────────────
@@ -164,12 +182,13 @@ interface ProbeOutcome {
 }
 
 function urlToSource(url: string): SourceLabel {
-  if (url.includes('nexentire.com'))  return 'nexen-cdn';
-  if (url.includes('coopertire'))     return 'cooper-cdn';
-  if (url.includes('coopertyres'))    return 'cooper-cdn';
-  if (url.includes('vredestein.com')) return 'vredestein-cdn';
-  if (url.includes('simpletire.com')) return 'simpletire';
-  if (url.includes('tirerack.com'))   return 'tirerack';
+  if (url.includes('nexentireusa.com')) return 'nexen-cdn';
+  if (url.includes('nexentire.com'))    return 'nexen-cdn';
+  if (url.includes('coopertire'))       return 'cooper-cdn';
+  if (url.includes('coopertyres'))      return 'cooper-cdn';
+  if (url.includes('vredestein.com'))   return 'vredestein-cdn';
+  if (url.includes('simpletire.com'))   return 'simpletire';
+  if (url.includes('tirerack.com'))     return 'tirerack';
   return 'not-found';
 }
 
@@ -216,11 +235,18 @@ function candidatesForTitle(title: string): string[] {
   if (!modelSlug) return [];
 
   const brandUpper = brand.toUpperCase();
-  const specific: string[] =
-    brandUpper === 'NEXEN'      ? nexenCandidates(modelSlug)     :
-    brandUpper === 'COOPER'     ? cooperCandidates(modelSlug)    :
-    brandUpper === 'VREDESTEIN' ? vredesteinCandidates(modelSlug):
-    [];
+
+  let specific: string[] = [];
+  if (brandUpper === 'NEXEN') {
+    // Use hardcoded image map — Nexen CDN paths aren't slug-predictable
+    const mapped = nexenMappedUrl(title);
+    if (mapped) specific = [mapped];
+    // No CDN slug fallback for Nexen; fall through to SimpleTire below
+  } else if (brandUpper === 'COOPER') {
+    specific = cooperCandidates(modelSlug);
+  } else if (brandUpper === 'VREDESTEIN') {
+    specific = vredesteinCandidates(modelSlug);
+  }
 
   const fallback = simpleTireCandidates(brand, modelSlug);
   return [...specific, ...fallback];
