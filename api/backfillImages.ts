@@ -103,9 +103,9 @@ const NEXEN_IMAGE_MAP: Record<string, string> = {
   'winguard sport 2':          'https://www.nexentireusa.com/wp-content/uploads/2025/11/Winguard_Sport_2_Main-350x416-5.jpg',
   'roadian mtx':               'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_MTX_Main-350x416-2.jpg',
   'roadian mtx rm7':           'https://www.nexentireusa.com/wp-content/uploads/2025/11/RO-MTX-Main350-4.jpg',
-  'roadian htx 2':             'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
-  'roadian htx2':              'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
-  'roadian htx 2 all-weather': 'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'roadian htx 2':             'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian-HTX2-Tilt-4.jpg',
+  'roadian htx2':              'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian-HTX2-Tilt-4.jpg',
+  'roadian htx 2 all-weather': 'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian-HTX2-Tilt-4.jpg',
   'npriz s':                   'https://www.nexentireusa.com/wp-content/uploads/2026/02/NPriz-S_Tilt.jpg',
   'npriz s oe':                'https://www.nexentireusa.com/wp-content/uploads/2026/02/NPriz-S_Tilt.jpg',
 };
