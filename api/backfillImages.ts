@@ -121,14 +121,27 @@ function nexenMappedUrl(title: string): string | null {
   return NEXEN_IMAGE_MAP[modelName] ?? null;
 }
 
-// ─── SOURCE B — COOPER CDN ───────────────────────────────────────────────────
+// ─── SOURCE B — COOPER IMAGE MAP ─────────────────────────────────────────────
+//
+//   Cooper CDN paths are not reliably slug-predictable. Use hardcoded
+//   SimpleTire image URLs (images.simpletire.com) with known line IDs.
 
-function cooperCandidates(modelSlug: string): string[] {
-  return [
-    `https://coopertire.com/content/dam/coopertire/products/${modelSlug}/product-image.png`,
-    `https://www.coopertire.com/content/dam/coopertire/tires/${modelSlug}.jpg`,
-    `https://coopertyres.com/content/dam/coopertyres/products/${modelSlug}/main.jpg`,
-  ];
+const COOPER_IMAGE_MAP: Record<string, string> = {
+  'cs5 grand touring': 'https://images.simpletire.com/images/q_auto/line-images/9406/9406-sidetread/cooper-cs5-grand-touring.png',
+  'cs5 ultra touring': 'https://images.simpletire.com/images/q_auto/line-images/9407/9407-sidetread/cooper-cs5-ultra-touring.png',
+  'procontrol':        'https://images.simpletire.com/images/q_auto/line-images/19705/19705-sidetread/cooper-procontrol.png',
+};
+
+// Returns the mapped URL for a Cooper product title, or null if not in the map.
+// Strips brand ("Cooper") and size suffix, then does a lowercase key lookup.
+function cooperMappedUrl(title: string): string | null {
+  const withoutSize = title
+    .replace(TIRE_SIZE_RE, '')
+    .replace(COMPACT_RE, '')
+    .replace(TRAILING_JUNK, '');
+
+  const modelName = withoutSize.replace(/^cooper\s+/i, '').trim().toLowerCase();
+  return COOPER_IMAGE_MAP[modelName] ?? null;
 }
 
 // ─── SOURCE C — VREDESTEIN CDN ───────────────────────────────────────────────
@@ -140,22 +153,22 @@ function vredesteinCandidates(modelSlug: string): string[] {
   ];
 }
 
-// ─── SOURCE D — SIMPLETIRE CDN (universal fallback) ──────────────────────────
+// ─── SOURCE D — SIMPLETIRE FALLBACK (best-effort) ────────────────────────────
 //
-//   SimpleTire stores line images at:
-//   cdn.simpletire.com/images/tireImages/lines/{Brand}/{Model}/{Model}-tire.png
-//   and a flat variant at:
-//   cdn.simpletire.com/images/tireImages/lines/{Brand}/{Model}-tire.png
+//   SimpleTire image URLs require a numeric line ID which we don't have for
+//   arbitrary products. The reliable format is:
+//     images.simpletire.com/images/q_auto/line-images/{id}/{id}-sidetread/{brand}-{model}.png
+//
+//   Without the line ID we can't construct a working URL, so this fallback
+//   is best-effort only. The hardcoded brand maps (NEXEN_IMAGE_MAP,
+//   COOPER_IMAGE_MAP) are the primary reliable sources.
 //
 function simpleTireCandidates(brand: string, modelSlug: string): string[] {
   const b = brand.toLowerCase().replace(/\s+/g, '-');
-  // Title-case brand for the nested path variant
-  const bTitle = brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
   return [
-    `https://cdn.simpletire.com/images/tireImages/lines/${bTitle}/${modelSlug}/${modelSlug}-tire.png`,
-    `https://cdn.simpletire.com/images/tireImages/lines/${bTitle}/${modelSlug}-tire.png`,
-    `https://cdn.simpletire.com/images/tireImages/lines/${b}/${modelSlug}.jpg`,
-    `https://cdn.simpletire.com/images/${b}/${modelSlug}.jpg`,
+    // Correct domain with slug-based guess (low hit rate without line ID)
+    `https://images.simpletire.com/images/q_auto/line-images/${b}-${modelSlug}/${b}-${modelSlug}-sidetread/${b}-${modelSlug}.png`,
+    `https://images.simpletire.com/images/q_auto/tire-images/${b}/${modelSlug}/${b}-${modelSlug}.png`,
   ];
 }
 
@@ -182,13 +195,13 @@ interface ProbeOutcome {
 }
 
 function urlToSource(url: string): SourceLabel {
-  if (url.includes('nexentireusa.com')) return 'nexen-cdn';
-  if (url.includes('nexentire.com'))    return 'nexen-cdn';
-  if (url.includes('coopertire'))       return 'cooper-cdn';
-  if (url.includes('coopertyres'))      return 'cooper-cdn';
-  if (url.includes('vredestein.com'))   return 'vredestein-cdn';
-  if (url.includes('simpletire.com'))   return 'simpletire';
-  if (url.includes('tirerack.com'))     return 'tirerack';
+  if (url.includes('nexentireusa.com'))  return 'nexen-cdn';
+  if (url.includes('nexentire.com'))     return 'nexen-cdn';
+  if (url.includes('coopertire'))        return 'cooper-cdn';
+  if (url.includes('coopertyres'))       return 'cooper-cdn';
+  if (url.includes('vredestein.com'))    return 'vredestein-cdn';
+  if (url.includes('simpletire.com'))    return 'simpletire';   // matches both cdn. and images.
+  if (url.includes('tirerack.com'))      return 'tirerack';
   return 'not-found';
 }
 
@@ -243,7 +256,10 @@ function candidatesForTitle(title: string): string[] {
     if (mapped) specific = [mapped];
     // No CDN slug fallback for Nexen; fall through to SimpleTire below
   } else if (brandUpper === 'COOPER') {
-    specific = cooperCandidates(modelSlug);
+    // Use hardcoded image map — Cooper CDN paths aren't slug-predictable
+    const mapped = cooperMappedUrl(title);
+    if (mapped) specific = [mapped];
+    // Unmatched Cooper products fall through to SimpleTire below
   } else if (brandUpper === 'VREDESTEIN') {
     specific = vredesteinCandidates(modelSlug);
   }
