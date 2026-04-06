@@ -98,11 +98,14 @@ function TireMatchApp() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 pb-20 relative flex flex-col">
-      <nav className="bg-white border-b py-4 px-6 sticky top-0 z-30 shadow-sm">
+      <nav className="py-4 px-6 sticky top-0 z-30 shadow-sm" style={{ backgroundColor: '#0E0E0E' }}>
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <div className="flex items-center gap-2 cursor-pointer" onClick={resetApp}>
-                <div className="w-10 h-10 bg-red-600 rounded flex items-center justify-center text-white font-black">G</div>
-                <span className="font-black text-lg tracking-tighter">GCI TIRE</span>
+            <div className="flex items-center cursor-pointer" onClick={resetApp}>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 60" height="36">
+                  <polygon points="0,15 22,15 22,0 44,30 22,60 22,45 0,45" fill="#B8192E"/>
+                  <text x="55" y="24" fontFamily="'Arial Black','Arial',sans-serif" fontSize="17" fontWeight="900" fill="#FFFFFF" letterSpacing="1">GCI BRAIN</text>
+                  <text x="56" y="42" fontFamily="'Arial Narrow','Arial',sans-serif" fontSize="10" fontWeight="400" fill="#3A3A3A" letterSpacing="3">INTERNAL TOOLS</text>
+                </svg>
             </div>
             <div className="flex gap-4">
                 {appState !== AppStates.IDLE && (
