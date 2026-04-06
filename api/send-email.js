@@ -93,13 +93,26 @@ function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInsta
           
           <!-- Header -->
           <tr>
-            <td style="background-color: #ef4444; padding: 30px 40px; text-align: center;">
-              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 900;">
-                GCI TIRE
-              </h1>
-              <p style="margin: 10px 0 0 0; color: #ffffff; font-size: 14px;">
-                ${isFrench ? 'Expert en pneus' : 'Tire Experts'}
-              </p>
+            <td style="padding:0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background-color:#B8192E; padding:20px 32px;">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding-right:14px; vertical-align:middle;">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 56" width="28" height="36">
+                            <polygon points="0,14 22,14 22,0 44,28 22,56 22,42 0,42" fill="#FFFFFF"/>
+                          </svg>
+                        </td>
+                        <td style="vertical-align:middle;">
+                          <div style="font-family:'Arial Black',Arial,sans-serif; font-size:20px; font-weight:900; color:#FFFFFF; letter-spacing:1px; line-height:1;">GCI TIRES</div>
+                          <div style="font-family:'Arial Narrow',Arial,sans-serif; font-size:11px; color:rgba(255,255,255,0.55); letter-spacing:4px; margin-top:3px;">gcitires.com</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
 
