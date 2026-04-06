@@ -45,45 +45,63 @@ function TireMatchApp() {
   });
 
   useEffect(() => {
-    // Priority 1: Read lang from URL parameter (from Shopify iframe)
     const urlParams = new URLSearchParams(window.location.search);
-    const langParam = urlParams.get('lang');
-    
+
+    // ── Language (URL takes priority over localStorage) ──────────────────
+    const langParam = urlParams.get('lang') as Language | null;
+    const resolvedLang: Language = (langParam === 'fr' || langParam === 'en') ? langParam : 'en';
     if (langParam === 'fr' || langParam === 'en') {
       setLang(langParam);
-      return; // Use URL param and skip localStorage
     }
-    
-    // Priority 2: Load from localStorage if no URL param
+
+    // ── YMM params from the Shopify YMM finder widget ────────────────────
+    // When all three are present: pre-fill vehicle data and auto-trigger
+    // the tire search. Stop at RESULTS — never auto-advance to checkout.
+    const yearParam  = urlParams.get('year');
+    const makeParam  = urlParams.get('make');
+    const modelParam = urlParams.get('model');
+
+    if (yearParam && makeParam && modelParam) {
+      const vehicle: VehicleInput = { year: yearParam, make: makeParam, model: modelParam };
+      const request = `Vehicle: ${yearParam} ${makeParam} ${modelParam}`;
+      // Pass resolvedLang so the correct language is used before the lang
+      // state update has re-rendered the component.
+      startProcessing(request, vehicle, resolvedLang);
+      return; // Skip localStorage restore — stale state is irrelevant here
+    }
+
+    // ── Restore persisted state (no YMM params) ──────────────────────────
+    // Only restore RESULTS, never CHECKOUT or SUCCESS — those states
+    // require explicit user action and must not be auto-resumed on load.
     const savedState = localStorage.getItem('gci_app_state_v2');
     if (savedState) {
       try {
         const parsed = JSON.parse(savedState);
-        if (parsed.lang) setLang(parsed.lang);
-        if (parsed.favorites) setFavorites(parsed.favorites);
+        if (parsed.lang && !langParam) setLang(parsed.lang);
+        if (parsed.favorites)   setFavorites(parsed.favorites);
         if (parsed.compareList) setCompareList(parsed.compareList);
-        if (parsed.appState && ![AppStates.IDLE, AppStates.PROCESSING, AppStates.ERROR].includes(parsed.appState)) {
-           setAppState(parsed.appState);
-           if (parsed.recommendations) setRecommendations(parsed.recommendations);
-           if (parsed.selectedTire) setSelectedTire(parsed.selectedTire);
+        if (parsed.appState === AppStates.RESULTS) {
+          setAppState(AppStates.RESULTS);
+          if (parsed.recommendations) setRecommendations(parsed.recommendations);
         }
-      } catch (e) { console.error("Load state failed", e); }
+      } catch (e) { console.error('Load state failed', e); }
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const t = translations[lang];
 
-  const startProcessing = async (request: string, vehicle?: VehicleInput) => {
+  const startProcessing = async (request: string, vehicle?: VehicleInput, langOverride?: Language) => {
+    const activeLang = langOverride ?? lang;
     setAppState(AppStates.PROCESSING);
     setLogs([
-      { stage: ProcessingStages.ANALYZING, message: lang === 'en' ? "Consulting expert databases..." : "Consultation des bases d'experts...", status: 'active' },
-      { stage: ProcessingStages.VALIDATING, message: lang === 'en' ? "Verifying fitment..." : "Vérification...", status: 'pending' },
-      { stage: ProcessingStages.INVENTORY, message: lang === 'en' ? "Checking GCI inventory..." : "Vérification de l'inventaire...", status: 'pending' }
+      { stage: ProcessingStages.ANALYZING, message: activeLang === 'en' ? "Consulting expert databases..." : "Consultation des bases d'experts...", status: 'active' },
+      { stage: ProcessingStages.VALIDATING, message: activeLang === 'en' ? "Verifying fitment..." : "Vérification...", status: 'pending' },
+      { stage: ProcessingStages.INVENTORY, message: activeLang === 'en' ? "Checking GCI inventory..." : "Vérification de l'inventaire...", status: 'pending' }
     ]);
 
     try {
       const oemSizes = await fetchFitmentSizes(vehicle, request);
-      const products = await getTireRecommendations(request, lang, oemSizes);
+      const products = await getTireRecommendations(request, activeLang, oemSizes);
       const verifiedProducts = await verifyFitmentForProducts(vehicle, products, request, oemSizes);
       setRecommendations(verifiedProducts);
       setAppState(AppStates.RESULTS);
