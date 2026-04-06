@@ -361,6 +361,223 @@ const tsfc = {
   },
 };
 
+// ─── IMAGE BACKFILL CARD ──────────────────────────────────────────────────────
+
+function ImageBackfillCard() {
+  const [status, setStatus]     = useState('idle'); // 'idle'|'running'|'done'|'error'
+  const [progress, setProgress] = useState({ attached: 0, skipped: 0, total: 0 });
+  const [errors, setErrors]     = useState([]);
+  const [results, setResults]   = useState([]);
+  const [brand, setBrand]       = useState('');
+
+  const run = async (preview = false) => {
+    setStatus('running');
+    setProgress({ attached: 0, skipped: 0, total: 0 });
+    setErrors([]);
+    setResults([]);
+
+    let cursor       = 0;
+    let totalAttached = 0;
+    let totalSkipped  = 0;
+    let allErrors    = [];
+    let allResults   = [];
+
+    try {
+      while (true) {
+        let url = `/api/backfillImages?cursor=${cursor}`;
+        if (preview)    url += '&preview=true';
+        if (brand.trim()) url += `&brand=${encodeURIComponent(brand.trim())}`;
+
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        const data = await resp.json();
+
+        totalAttached += data.attached ?? 0;
+        totalSkipped  += data.skipped  ?? 0;
+        allErrors      = [...allErrors, ...(data.errors ?? [])];
+        if (allResults.length < 30) {
+          allResults = [...allResults, ...(data.results ?? [])].slice(0, 30);
+        }
+
+        setProgress({ attached: totalAttached, skipped: totalSkipped, total: data.total ?? 0 });
+        setResults([...allResults]);
+
+        if (data.nextCursor == null) break;
+        cursor = data.nextCursor;
+
+        // In preview mode only run the first chunk (diagnostic)
+        if (preview) break;
+      }
+
+      setErrors(allErrors);
+      setStatus('done');
+    } catch (err) {
+      setErrors(prev => [...prev, String(err)]);
+      setStatus('error');
+    }
+  };
+
+  const isRunning = status === 'running';
+  const found     = results.filter(r => r.imageUrl);
+  const notFound  = results.filter(r => !r.imageUrl);
+
+  const sourceBadgeColor = (src) => ({
+    'nexen-cdn':      '#facc15',
+    'cooper-cdn':     '#38bdf8',
+    'vredestein-cdn': '#a78bfa',
+    'simpletire':     '#4ade80',
+    'not-found':      '#555',
+  }[src] ?? '#888');
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      {/* Header row */}
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>🖼</span>
+          <h3 style={styles.cardTitle}>Image Backfill</h3>
+        </div>
+        <span style={isRunning ? tsfc.badgeRunning : status === 'done' ? tsfc.badgeDone : tsfc.badgeIdle}>
+          {isRunning ? '⟳ RUNNING' : status === 'done' ? '✓ DONE' : status === 'error' ? '✗ ERROR' : '● READY'}
+        </span>
+      </div>
+
+      <p style={styles.cardDesc}>
+        Find imageless products and attach images from Nexen, Cooper, Vredestein CDNs + SimpleTire fallback.
+      </p>
+
+      {/* Brand filter */}
+      <div style={ibc.filterRow}>
+        <label style={ibc.filterLabel}>BRAND FILTER</label>
+        <input
+          style={ibc.filterInput}
+          type="text"
+          placeholder="e.g. Nexen  (blank = all brands)"
+          value={brand}
+          onChange={e => setBrand(e.target.value)}
+          disabled={isRunning}
+        />
+      </div>
+
+      {/* Progress */}
+      {(isRunning || status === 'done' || status === 'error') && (
+        <div style={tsfc.progressWrap}>
+          <div style={tsfc.progressLabel}>
+            {isRunning
+              ? `Attached ${progress.attached} / ${progress.total} — ${progress.skipped} skipped…`
+              : `Attached ${progress.attached} / ${progress.total} — ${progress.skipped} skipped${errors.length ? ` — ${errors.length} error(s)` : ''}`
+            }
+          </div>
+          {progress.total > 0 && (
+            <div style={tsfc.barTrack}>
+              <div style={{ ...tsfc.barFill, width: `${Math.round(((progress.attached + progress.skipped) / progress.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div style={tsfc.btnRow}>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnSecondary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(true)}
+          disabled={isRunning}
+        >
+          PREVIEW
+        </button>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnPrimary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(false)}
+          disabled={isRunning}
+        >
+          {isRunning ? 'RUNNING…' : 'RUN ALL'}
+        </button>
+      </div>
+
+      {/* Results table */}
+      {results.length > 0 && (
+        <div style={tsfc.previewWrap}>
+          <div style={tsfc.previewHeading}>
+            RESULTS — {found.length} found · {notFound.length} not found (first {results.length})
+          </div>
+          <div style={tsfc.previewList}>
+            {results.map((r, i) => (
+              <div key={i} style={ibc.resultRow}>
+                <span style={{ ...ibc.sourceBadge, color: sourceBadgeColor(r.source) }}>
+                  {r.source}
+                </span>
+                <span style={tsfc.previewBefore}>{r.title}</span>
+                {r.imageUrl
+                  ? <a href={r.imageUrl} target="_blank" rel="noopener noreferrer" style={ibc.imageLink}>view ↗</a>
+                  : <span style={ibc.noImage}>—</span>
+                }
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Errors */}
+      {errors.length > 0 && (
+        <div style={tsfc.errorList}>
+          {errors.map((e, i) => <div key={i} style={tsfc.errorItem}>⚠ {e}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Styles scoped to ImageBackfillCard
+const ibc = {
+  filterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  filterLabel: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '10px',
+    color: '#666',
+    letterSpacing: '0.12em',
+    whiteSpace: 'nowrap',
+  },
+  filterInput: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '12px',
+    background: '#0d0d14',
+    border: '1px solid #2a2a3a',
+    borderRadius: '2px',
+    color: '#e8e8e8',
+    padding: '5px 10px',
+    flex: 1,
+    outline: 'none',
+  },
+  resultRow: {
+    display: 'grid',
+    gridTemplateColumns: '120px 1fr auto',
+    gap: '8px',
+    alignItems: 'baseline',
+  },
+  sourceBadge: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '10px',
+    letterSpacing: '0.06em',
+    whiteSpace: 'nowrap',
+  },
+  imageLink: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#ff3c00',
+    textDecoration: 'none',
+    whiteSpace: 'nowrap',
+  },
+  noImage: {
+    fontFamily: "'Courier New', monospace",
+    fontSize: '11px',
+    color: '#444',
+  },
+};
+
 export default function Dashboard() {
   return (
     <div style={styles.root}>
@@ -443,7 +660,10 @@ export default function Dashboard() {
         {/* AUTOMATION TOOLS — full width row */}
         <section style={styles.translateSection}>
           <h2 style={styles.sectionHeading}>AUTOMATION TOOLS</h2>
-          <TireSizeFixCard />
+          <div style={automationGrid}>
+            <TireSizeFixCard />
+            <ImageBackfillCard />
+          </div>
         </section>
       </main>
 
@@ -703,4 +923,10 @@ const styles = {
     color: '#555',
     letterSpacing: '0.06em',
   },
+};
+
+const automationGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, 1fr)',
+  gap: '16px',
 };
