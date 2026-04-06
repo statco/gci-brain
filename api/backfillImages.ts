@@ -143,31 +143,68 @@ function simpleTireCandidates(brand: string, modelSlug: string): string[] {
 
 // ─── URL PROBE ────────────────────────────────────────────────────────────────
 //
-//   Returns the first URL in `candidates` that responds with HTTP 200 and an
-//   image content-type. Uses HEAD to avoid downloading the full image.
+//   Tries every candidate URL and records the outcome for each attempt.
+//   Returns the first successful URL plus a full attempt log for diagnostics.
 
 const PROBE_UA      = 'Mozilla/5.0 (compatible; GCIBot/1.0)';
 const PROBE_TIMEOUT = 8000;
 
-async function probeFirst(candidates: string[]): Promise<string | null> {
+type SourceLabel =
+  | 'nexen-cdn'
+  | 'cooper-cdn'
+  | 'vredestein-cdn'
+  | 'simpletire'
+  | 'tirerack'
+  | 'not-found';
+
+interface ProbeOutcome {
+  imageUrl:  string | null;
+  source:    SourceLabel;
+  attempted: string[];  // "https://url → reason" for every URL tried
+}
+
+function urlToSource(url: string): SourceLabel {
+  if (url.includes('nexentire.com'))  return 'nexen-cdn';
+  if (url.includes('coopertire'))     return 'cooper-cdn';
+  if (url.includes('coopertyres'))    return 'cooper-cdn';
+  if (url.includes('vredestein.com')) return 'vredestein-cdn';
+  if (url.includes('simpletire.com')) return 'simpletire';
+  if (url.includes('tirerack.com'))   return 'tirerack';
+  return 'not-found';
+}
+
+async function probeAllWithDetails(candidates: string[]): Promise<ProbeOutcome> {
+  const attempted: string[] = [];
+
   for (const url of candidates) {
+    let reason: string;
     try {
       const controller = new AbortController();
       const timer      = setTimeout(() => controller.abort(), PROBE_TIMEOUT);
       const res        = await fetch(url, {
-        method:  'HEAD',
+        method:   'HEAD',
         redirect: 'follow',
         signal:   controller.signal,
         headers:  { 'User-Agent': PROBE_UA, Accept: 'image/*,*/*' },
       });
       clearTimeout(timer);
       const ct = res.headers.get('content-type') ?? '';
-      if (res.ok && ct.startsWith('image/')) return url;
-    } catch {
-      // network error or timeout — try next candidate
+      if (res.ok && ct.startsWith('image/')) {
+        attempted.push(`${url} → ok (${ct})`);
+        return { imageUrl: url, source: urlToSource(url), attempted };
+      }
+      reason = res.ok
+        ? `wrong content-type: ${ct || 'none'}`
+        : `HTTP ${res.status}`;
+    } catch (err: any) {
+      reason = err?.name === 'AbortError'
+        ? 'timeout'
+        : `error: ${String(err?.message ?? err).slice(0, 100)}`;
     }
+    attempted.push(`${url} → ${reason}`);
   }
-  return null;
+
+  return { imageUrl: null, source: 'not-found', attempted };
 }
 
 // ─── CANDIDATE BUILDER ───────────────────────────────────────────────────────
@@ -208,11 +245,14 @@ async function fetchImagelessProducts(brandFilter?: string): Promise<ShopifyProd
     const page: ShopifyProduct[] = (data.products ?? []) as ShopifyProduct[];
 
     for (const p of page) {
-      // A product counts as imageless when it has no attached images,
-      // or only a Shopify placeholder (src contains "no-image").
-      const hasRealImage = p.images.some(
-        img => img.src && !img.src.includes('no-image'),
-      );
+      // A product counts as imageless when:
+      //   (a) it has no attached images at all, OR
+      //   (b) every image is a Shopify placeholder (src contains "no-image" or "placeholder")
+      const hasRealImage = p.images.some(img => {
+        if (!img.src) return false;
+        const src = img.src.toLowerCase();
+        return !src.includes('no-image') && !src.includes('placeholder');
+      });
       if (hasRealImage) continue;
 
       if (brandFilter && !p.title.toLowerCase().startsWith(brandFilter.toLowerCase())) continue;
@@ -270,66 +310,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log(`  Imageless: ${total} | Chunk: ${chunk.length} (offset ${cursor}) | nextCursor: ${nextCursor}`);
 
   // ── Probe CDN candidates in batches ──────────────────────────────────────
-  interface Match {
-    product: ShopifyProduct;
-    url:     string;
-    source:  string;
+  // Every product gets a result entry — found or not-found.
+  interface ProductResult {
+    productId: string;
+    title:     string;
+    source:    SourceLabel;
+    imageUrl:  string | null;
+    attempted: string[];   // "https://url → reason" for every URL tried
   }
 
-  const matches:  Match[]   = [];
-  const noMatch:  number[]  = []; // product IDs with no resolvable URL
+  const results: ProductResult[] = [];
 
   for (let i = 0; i < chunk.length; i += BATCH_SIZE) {
     const batch = chunk.slice(i, i + BATCH_SIZE);
 
-    await Promise.all(batch.map(async (product) => {
+    const batchResults = await Promise.all(batch.map(async (product) => {
       const candidates = candidatesForTitle(product.title);
+
       if (candidates.length === 0) {
-        noMatch.push(product.id);
         console.log(`  ⏭  [${product.id}] No candidates — "${product.title}"`);
-        return;
+        return {
+          productId: String(product.id),
+          title:     product.title,
+          source:    'not-found' as SourceLabel,
+          imageUrl:  null,
+          attempted: ['(no candidates generated for this title)'],
+        };
       }
 
-      const url = await probeFirst(candidates);
-      if (url) {
-        // Determine which source matched for reporting
-        const source =
-          url.includes('nexentire.com')   ? 'Nexen CDN'      :
-          url.includes('coopertire')      ? 'Cooper CDN'      :
-          url.includes('coopertyres')     ? 'Cooper CDN'      :
-          url.includes('vredestein.com')  ? 'Vredestein CDN'  :
-          url.includes('simpletire.com')  ? 'SimpleTire CDN'  :
-          'Unknown';
-        matches.push({ product, url, source });
-        console.log(`  ✅ [${product.id}] ${source} — "${product.title}"`);
-        console.log(`       ${url}`);
+      const outcome = await probeAllWithDetails(candidates);
+
+      if (outcome.imageUrl) {
+        console.log(`  ✅ [${product.id}] ${outcome.source} — "${product.title}"`);
+        console.log(`       ${outcome.imageUrl}`);
       } else {
-        noMatch.push(product.id);
-        console.log(`  ❌ [${product.id}] No URL resolved — "${product.title}"`);
+        console.log(`  ❌ [${product.id}] not-found — "${product.title}"`);
+        outcome.attempted.forEach(a => console.log(`       ${a}`));
       }
+
+      return {
+        productId: String(product.id),
+        title:     product.title,
+        source:    outcome.source,
+        imageUrl:  outcome.imageUrl,
+        attempted: outcome.attempted,
+      };
     }));
+
+    results.push(...batchResults);
 
     // Pause between probe batches to be CDN-friendly
     if (i + BATCH_SIZE < chunk.length) await delay(300);
   }
 
-  const previewItems = matches.slice(0, 20).map(({ product, url, source }) => ({
-    id:     product.id,
-    title:  product.title,
-    source,
-    url,
-  }));
+  const found   = results.filter(r => r.imageUrl !== null);
+  const notFound = results.filter(r => r.imageUrl === null);
 
-  // ── Preview mode: return plan without writing ──────────────────────────────
+  // ── Preview mode: return full results without writing ──────────────────────
   if (preview) {
     return res.status(200).json({
       total,
-      attached: matches.length,
-      skipped:  noMatch.length,
-      failed:   0,
-      errors:   [],
+      attached:  found.length,
+      skipped:   notFound.length,
+      failed:    0,
+      errors:    [],
       nextCursor,
-      preview:  previewItems,
+      results,   // every product in chunk with probe details
     });
   }
 
@@ -338,13 +384,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let attached = 0;
   const errors: string[] = [];
 
-  for (const { product, url } of matches) {
+  for (const result of found) {
     try {
-      await attachImage(product.id, url);
+      await attachImage(parseInt(result.productId, 10), result.imageUrl!);
       attached++;
-      console.log(`  📎 Attached image to product ${product.id}`);
+      console.log(`  📎 Attached image to product ${result.productId}`);
     } catch (err) {
-      const msg = `Product ${product.id} ("${product.title}"): ${String(err)}`;
+      const msg = `Product ${result.productId} ("${result.title}"): ${String(err)}`;
       console.error(`  ❌ ${msg}`);
       errors.push(msg);
     }
@@ -355,13 +401,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const report = {
     total,
     attached,
-    skipped: noMatch.length,
-    failed:  errors.length,
+    skipped:   notFound.length,
+    failed:    errors.length,
     errors,
     nextCursor,
-    preview: previewItems,
+    results,   // full probe details included in write-mode response too
   };
 
-  console.log(`✅ Chunk done — cursor:${cursor} attached:${attached} skipped:${noMatch.length} failed:${errors.length} nextCursor:${nextCursor}`);
+  console.log(`✅ Chunk done — cursor:${cursor} attached:${attached} skipped:${notFound.length} failed:${errors.length} nextCursor:${nextCursor}`);
   return res.status(200).json(report);
 }
