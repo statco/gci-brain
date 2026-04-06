@@ -1,7 +1,9 @@
 {
   "functions": {
     "api/shopifyFix.js":    { "maxDuration": 60  },
-    "api/shopifySync.ts":   { "maxDuration": 300 }
+    "api/shopifySync.ts":   { "maxDuration": 300 },
+    "api/tagOos.ts":        { "maxDuration": 300 },
+    "api/notifyMe.ts":      { "maxDuration": 15  }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
@@ -21,6 +23,10 @@
     },
     {
       "path": "/api/feed/gmc",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/tagOos",
       "schedule": "0 */6 * * *"
     }
   ],
