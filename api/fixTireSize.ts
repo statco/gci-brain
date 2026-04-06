@@ -87,10 +87,10 @@ function extractAndFixSize(title: string): { correctedSize: string; } | null {
 // ─── SEASON DETECTION ─────────────────────────────────────────────────────────
 
 const SEASON_MAP: Array<{ keywords: string[]; season: string }> = [
-  { keywords: ['winguard', 'ice', 'blizzak', 'winter', 'snow', 'claw', 'arctic', 'nordic', 'hakka', 'winter'], season: 'Winter' },
-  { keywords: ['all weather', 'all-weather', 'allweather'],                                                      season: 'All-Weather' },
-  { keywords: ['all season', 'all-season', '4season', '4s', 'htx', 'roadian', 'crossclimate', 'weatherpeak'],   season: 'All-Season' },
-  { keywords: ['sport', 'nfera', 'summer', 'pilot sport', 'potenza', 'eagle f1'],                               season: 'Summer' },
+  { keywords: ['winguard', 'ice', 'blizzak', 'winter', 'snow', 'claw', 'arctic', 'artic', 'arctik', 'nordic', 'hakka', 'studdable'], season: 'Winter' },
+  { keywords: ['all weather', 'all-weather', 'allweather', '4season', '4s'],                                                          season: 'All-Weather' },
+  { keywords: ['all season', 'all-season', 'htx', 'roadian', 'crossclimate', 'weatherpeak'],                                         season: 'All-Season' },
+  { keywords: ['cobra', 'instinct', 'nfera', 'sport', 'hp', 'uhp', 'performance', 'pilot', 'eagle', 'potenza', 're', 'summer'],      season: 'Summer' },
 ];
 
 function detectSeason(titleLower: string): string {
