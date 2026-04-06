@@ -100,12 +100,14 @@ function extractBrandAndSlug(title: string): { brand: string; modelSlug: string 
 //   (brand prefix and size suffix stripped).
 
 const NEXEN_IMAGE_MAP: Record<string, string> = {
-  'winguard sport 2': 'https://www.nexentireusa.com/wp-content/uploads/2025/11/Winguard_Sport_2_Main-350x416-5.jpg',
-  'roadian mtx':      'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_MTX_Main-350x416-2.jpg',
-  'roadian htx 2':    'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
-  'roadian htx2':     'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
-  'npriz s':          'https://www.nexentireusa.com/wp-content/uploads/2025/11/NPriz_S_Main-350x416-3.jpg',
-  'npriz s oe':       'https://www.nexentireusa.com/wp-content/uploads/2025/11/NPriz_S_Main-350x416-3.jpg',
+  'winguard sport 2':          'https://www.nexentireusa.com/wp-content/uploads/2025/11/Winguard_Sport_2_Main-350x416-5.jpg',
+  'roadian mtx':               'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_MTX_Main-350x416-2.jpg',
+  'roadian mtx rm7':           'https://www.nexentireusa.com/wp-content/uploads/2025/11/RO-MTX-Main350-4.jpg',
+  'roadian htx 2':             'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'roadian htx2':              'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'roadian htx 2 all-weather': 'https://www.nexentireusa.com/wp-content/uploads/2025/11/Roadian_HTX2_Main-350x416-5.jpg',
+  'npriz s':                   'https://www.nexentireusa.com/wp-content/uploads/2026/02/NPriz-S_Tilt.jpg',
+  'npriz s oe':                'https://www.nexentireusa.com/wp-content/uploads/2026/02/NPriz-S_Tilt.jpg',
 };
 
 // Returns the mapped URL for a Nexen product title, or null if not in the map.
@@ -130,6 +132,7 @@ const COOPER_IMAGE_MAP: Record<string, string> = {
   'cs5 grand touring': 'https://images.simpletire.com/images/q_auto/line-images/9406/9406-sidetread/cooper-cs5-grand-touring.png',
   'cs5 ultra touring': 'https://images.simpletire.com/images/q_auto/line-images/9407/9407-sidetread/cooper-cs5-ultra-touring.png',
   'procontrol':        'https://images.simpletire.com/images/q_auto/line-images/19705/19705-sidetread/cooper-procontrol.png',
+  'zeon rs3-g1':       'https://images.simpletire.com/images/q_auto/line-images/12161/12161-sidetread/cooper-zeon-rs3-g1.png',
 };
 
 // Returns the mapped URL for a Cooper product title, or null if not in the map.
