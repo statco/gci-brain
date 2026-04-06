@@ -238,17 +238,32 @@ async function fetchImagelessProducts(brandFilter?: string): Promise<ShopifyProd
   const imageless: ShopifyProduct[] = [];
   let url: string | null =
     `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,images`;
+  let pageNum   = 0;
+  let totalSeen = 0;
 
   while (url) {
+    pageNum++;
     const res  = await shopifyFetchRaw(url);
     const data: any = await res.json();
     const page: ShopifyProduct[] = (data.products ?? []) as ShopifyProduct[];
+    totalSeen += page.length;
+
+    console.log(`  [fetchImageless] page ${pageNum}: ${page.length} products (${totalSeen} total so far)`);
+
+    // Log first product on page 1 for structure inspection
+    if (pageNum === 1 && page.length > 0) {
+      const sample = page[0];
+      const sampleImages = (sample.images ?? []).map(i => ({ id: i.id, src: i.src?.slice(0, 80) }));
+      console.log(`  [fetchImageless] sample product — id:${sample.id} title:"${sample.title}" images:${JSON.stringify(sampleImages)}`);
+    }
 
     for (const p of page) {
+      const images = p.images ?? [];
+
       // A product counts as imageless when:
       //   (a) it has no attached images at all, OR
       //   (b) every image is a Shopify placeholder (src contains "no-image" or "placeholder")
-      const hasRealImage = p.images.some(img => {
+      const hasRealImage = images.some(img => {
         if (!img.src) return false;
         const src = img.src.toLowerCase();
         return !src.includes('no-image') && !src.includes('placeholder');
@@ -265,6 +280,7 @@ async function fetchImagelessProducts(brandFilter?: string): Promise<ShopifyProd
     url = nextM ? nextM[1] : null;
   }
 
+  console.log(`  [fetchImageless] done — totalSeen:${totalSeen} imageless:${imageless.length} (${totalSeen - imageless.length} had real images)`);
   return imageless;
 }
 
@@ -293,21 +309,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const brandFilter = req.query.brand  ? String(req.query.brand)  : undefined;
   const cursor      = req.query.cursor ? parseInt(String(req.query.cursor), 10) : 0;
 
-  console.log(`🖼  backfillImages — preview=${preview} brand=${brandFilter ?? 'all'} cursor=${cursor}`);
+  console.log(`🖼  backfillImages called — preview=${preview} brand=${brandFilter ?? 'all'} cursor=${cursor}`);
+  console.log(`  SHOPIFY_STORE_DOMAIN set: ${!!SHOPIFY.domain} | token set: ${!!SHOPIFY.token}`);
 
   // ── Fetch all imageless products (fast read pass) ─────────────────────────
   let allImageless: ShopifyProduct[];
   try {
     allImageless = await fetchImagelessProducts(brandFilter);
   } catch (err) {
+    console.error(`  fetchImagelessProducts threw: ${String(err)}`);
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
+  }
+
+  console.log(`  imageless products found: ${allImageless.length}`);
+  if (allImageless.length > 0) {
+    console.log(`  first imageless product: ${JSON.stringify({ id: allImageless[0].id, title: allImageless[0].title, imageCount: (allImageless[0].images ?? []).length })}`);
+  } else {
+    console.log(`  ⚠️  No imageless products found — either all products have real images or fetch returned nothing`);
   }
 
   const total      = allImageless.length;
   const chunk      = allImageless.slice(cursor, cursor + CHUNK_SIZE);
   const nextCursor = (cursor + CHUNK_SIZE) < total ? cursor + CHUNK_SIZE : null;
 
-  console.log(`  Imageless: ${total} | Chunk: ${chunk.length} (offset ${cursor}) | nextCursor: ${nextCursor}`);
+  console.log(`  Imageless total: ${total} | chunk.length: ${chunk.length} (cursor=${cursor}, CHUNK_SIZE=${CHUNK_SIZE}) | nextCursor: ${nextCursor}`);
 
   // ── Probe CDN candidates in batches ──────────────────────────────────────
   // Every product gets a result entry — found or not-found.
@@ -368,6 +393,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // ── Preview mode: return full results without writing ──────────────────────
   if (preview) {
+    console.log(`  [preview] returning results.length=${results.length} found=${found.length} notFound=${notFound.length}`);
+    if (results.length === 0) {
+      console.log(`  [preview] ⚠️  results[] is empty — chunk.length was ${chunk.length} (total imageless: ${total}, cursor: ${cursor})`);
+    }
     return res.status(200).json({
       total,
       attached:  found.length,
