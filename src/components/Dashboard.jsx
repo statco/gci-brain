@@ -578,6 +578,129 @@ const ibc = {
   },
 };
 
+// ─── FIX VENDORS CARD ────────────────────────────────────────────────────────
+
+function FixVendorsCard() {
+  const [status, setStatus]     = useState('idle');
+  const [progress, setProgress] = useState({ fixed: 0, total: 0 });
+  const [errors, setErrors]     = useState([]);
+  const [previewItems, setPreview] = useState([]);
+
+  const run = async (preview = false) => {
+    setStatus('running');
+    setProgress({ fixed: 0, total: 0 });
+    setErrors([]);
+    setPreview([]);
+
+    let cursor    = 0;
+    let totalFixed = 0;
+    let allErrors = [];
+    let allPreview = [];
+
+    try {
+      while (true) {
+        const url = `/api/fixVendors?cursor=${cursor}${preview ? '&preview=true' : ''}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        const data = await resp.json();
+
+        totalFixed += data.fixed ?? 0;
+        allErrors   = [...allErrors, ...(data.errors ?? [])];
+        if (allPreview.length < 20) {
+          allPreview = [...allPreview, ...(data.preview ?? [])].slice(0, 20);
+        }
+
+        setProgress({ fixed: totalFixed, total: data.total ?? 0 });
+        setPreview([...allPreview]);
+
+        if (data.nextCursor == null) break;
+        cursor = data.nextCursor;
+        if (preview) break;
+      }
+
+      setErrors(allErrors);
+      setStatus('done');
+    } catch (err) {
+      setErrors(prev => [...prev, String(err)]);
+      setStatus('error');
+    }
+  };
+
+  const isRunning = status === 'running';
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>🏪</span>
+          <h3 style={styles.cardTitle}>Fix Vendors</h3>
+        </div>
+        <span style={isRunning ? tsfc.badgeRunning : status === 'done' ? tsfc.badgeDone : tsfc.badgeIdle}>
+          {isRunning ? '⟳ RUNNING' : status === 'done' ? '✓ DONE' : status === 'error' ? '✗ ERROR' : '● READY'}
+        </span>
+      </div>
+
+      <p style={styles.cardDesc}>
+        Normalise vendor names from ALL-CAPS to Title Case (NEXEN → Nexen, COOPER → Cooper, VREDESTEIN → Vredestein). Runs in 50-product chunks.
+      </p>
+
+      {(isRunning || status === 'done' || status === 'error') && (
+        <div style={tsfc.progressWrap}>
+          <div style={tsfc.progressLabel}>
+            {isRunning
+              ? `Fixed ${progress.fixed} / ${progress.total}…`
+              : `Fixed ${progress.fixed} / ${progress.total}${errors.length ? ` — ${errors.length} error(s)` : ''}`
+            }
+          </div>
+          {progress.total > 0 && (
+            <div style={tsfc.barTrack}>
+              <div style={{ ...tsfc.barFill, width: `${Math.round((progress.fixed / progress.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={tsfc.btnRow}>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnSecondary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(true)}
+          disabled={isRunning}
+        >
+          PREVIEW
+        </button>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnPrimary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(false)}
+          disabled={isRunning}
+        >
+          {isRunning ? 'RUNNING…' : 'RUN ALL'}
+        </button>
+      </div>
+
+      {previewItems.length > 0 && (
+        <div style={tsfc.previewWrap}>
+          <div style={tsfc.previewHeading}>PREVIEW — {previewItems.length} vendor(s) to fix</div>
+          <div style={tsfc.previewList}>
+            {previewItems.map((item, i) => (
+              <div key={i} style={tsfc.previewRow}>
+                <span style={tsfc.previewBefore}>{item.before}</span>
+                <span style={tsfc.previewArrow}>→</span>
+                <span style={tsfc.previewAfter}>{item.after}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {errors.length > 0 && (
+        <div style={tsfc.errorList}>
+          {errors.map((e, i) => <div key={i} style={tsfc.errorItem}>⚠ {e}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   return (
     <div style={styles.root}>
@@ -663,6 +786,7 @@ export default function Dashboard() {
           <div style={automationGrid}>
             <TireSizeFixCard />
             <ImageBackfillCard />
+            <FixVendorsCard />
           </div>
         </section>
       </main>
@@ -927,6 +1051,6 @@ const styles = {
 
 const automationGrid = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(2, 1fr)',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
   gap: '16px',
 };
