@@ -28,6 +28,10 @@
     {
       "path": "/api/tagOos",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/fixTireSize?autorun=true",
+      "schedule": "0 2 * * *"
     }
   ],
   "headers": [

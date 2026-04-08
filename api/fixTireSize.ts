@@ -14,11 +14,13 @@
 //   GET /api/fixTireSize?preview=true           — dry run, no writes
 //   GET /api/fixTireSize?brand=Nexen            — filter by brand
 //   GET /api/fixTireSize?cursor=50&brand=Nexen  — combined
+//   GET /api/fixTireSize?autorun=true           — process all chunks server-side, return summary
 //
 // RESPONSE
 //   { total, fixed, skipped, errors, nextCursor, preview }
 //   nextCursor — numeric offset for the next call; null when done
 //   preview    — first 20 changed pairs { before, after }
+//   autorun response: { fixed, total }
 //
 // CHUNKING
 //   50 products per invocation keeps well under the 60s Vercel limit.
@@ -216,6 +218,12 @@ async function upsertSeoTitleMetafield(productId: number, value: string): Promis
 const CHUNK_SIZE = 50; // products per invocation
 const BATCH_SIZE = 10; // concurrent writes per batch
 
+interface WorkItem {
+  product:  ShopifyProduct;
+  newTitle: string;
+  seoTitle: string;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json');
 
@@ -224,10 +232,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const preview     = req.query.preview === 'true';
+  const autorun     = req.query.autorun === 'true';
   const brandFilter = req.query.brand  ? String(req.query.brand)  : undefined;
   const cursor      = req.query.cursor ? parseInt(String(req.query.cursor), 10) : 0;
 
-  console.log(`🔧 fixTireSize — preview=${preview} brand=${brandFilter ?? 'all'} cursor=${cursor}`);
+  console.log(`🔧 fixTireSize — preview=${preview} autorun=${autorun} brand=${brandFilter ?? 'all'} cursor=${cursor}`);
 
   // ── Step 1: Fetch all products (fast, read-only) then slice by cursor ─────
   // Fetching all gives us a stable total count for progress tracking in the UI.
@@ -239,19 +248,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
 
-  const total      = allProducts.length;
+  const total = allProducts.length;
+
+  // ── Autorun mode: loop all chunks server-side, return a single summary ────
+  if (autorun) {
+    let totalFixed = 0;
+
+    for (let offset = 0; offset < total; offset += CHUNK_SIZE) {
+      const chunk = allProducts.slice(offset, offset + CHUNK_SIZE);
+
+      const workItems: WorkItem[] = [];
+      for (const product of chunk) {
+        const result = extractAndFixSize(product.title);
+        if (!result) continue;
+        const newTitle = rebuildTitle(product.title, result.correctedSize);
+        if (newTitle === product.title) continue;
+        workItems.push({ product, newTitle, seoTitle: buildSeoTitle(newTitle) });
+      }
+
+      for (let i = 0; i < workItems.length; i += BATCH_SIZE) {
+        const batch = workItems.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async ({ product, newTitle, seoTitle }) => {
+          try {
+            await shopifyFetch(`/products/${product.id}.json`, {
+              method: 'PUT',
+              body:   JSON.stringify({ product: { id: product.id, title: newTitle } }),
+            });
+            await upsertSeoTitleMetafield(product.id, seoTitle);
+            totalFixed++;
+            console.log(`  ✅ [${product.id}] "${product.title}" → "${newTitle}"`);
+          } catch (err) {
+            console.error(`  ❌ Product ${product.id} ("${product.title}"): ${String(err)}`);
+          }
+        }));
+        if (i + BATCH_SIZE < workItems.length) await delay(200);
+      }
+
+      // 200ms between chunks to respect rate limits
+      if (offset + CHUNK_SIZE < total) await delay(200);
+    }
+
+    console.log(`✅ Autorun done — fixed:${totalFixed} total:${total}`);
+    return res.status(200).json({ fixed: totalFixed, total });
+  }
+
   const chunk      = allProducts.slice(cursor, cursor + CHUNK_SIZE);
   const nextCursor = (cursor + CHUNK_SIZE) < total ? cursor + CHUNK_SIZE : null;
 
   console.log(`  Total: ${total} | Chunk: ${chunk.length} (offset ${cursor}) | nextCursor: ${nextCursor}`);
 
   // ── Steps 2–4: Determine what needs updating ──────────────────────────────
-  interface WorkItem {
-    product:  ShopifyProduct;
-    newTitle: string;
-    seoTitle: string;
-  }
-
   const workItems: WorkItem[] = [];
   let skipped = 0;
 
