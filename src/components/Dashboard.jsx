@@ -29,7 +29,7 @@ const catalogTools = [
   },
   {
     icon: '🗂',
-    title: 'Collection SEO',
+    title: 'Update Collection SEO',
     route: '/collection-seo',
     description: 'Update SEO titles & descriptions for all 11 collections',
   },
