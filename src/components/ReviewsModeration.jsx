@@ -5,7 +5,7 @@ const STARS = [1, 2, 3, 4, 5];
 function StarRating({ rating }) {
   return (
     <span style={{ color: '#B8192E', fontSize: 16, letterSpacing: 1 }}>
-      {STARS.map(i => (i <= rating ? '\u2605' : '\u2606')).join('')}
+      {STARS.map(i => (i <= rating ? '★' : '☆')).join('')}
     </span>
   );
 }
@@ -55,7 +55,7 @@ function ReviewRow({ review, token, onAction }) {
           <div style={s.reviewTitle}>{String(review.title)}</div>
         )}
         <div style={s.excerpt}>
-          {excerpt}{hasMore ? '\u2026' : ''}
+          {excerpt}{hasMore ? '…' : ''}
         </div>
         <div style={s.meta}>
           <span style={s.langBadge}>{String(review.language ?? 'EN')}</span>
@@ -70,14 +70,14 @@ function ReviewRow({ review, token, onAction }) {
           onClick={() => act('approve')}
           disabled={loading}
         >
-          \u2713 Approve
+          ✓ Approve
         </button>
         <button
           style={{ ...s.btn, ...s.btnReject, opacity: loading ? 0.5 : 1, marginTop: 6 }}
           onClick={() => act('reject')}
           disabled={loading}
         >
-          \u2717 Reject
+          ✗ Reject
         </button>
       </td>
     </tr>
@@ -127,11 +127,11 @@ export default function ReviewsModeration() {
       {/* Header */}
       <header style={s.header}>
         <div style={s.headerLeft}>
-          <span style={s.logo}>\u2699 GCI BRAIN</span>
-          <span style={s.headerSep}>\u2014</span>
+          <span style={s.logo}>⚙ GCI BRAIN</span>
+          <span style={s.headerSep}>—</span>
           <span style={s.pageTitle}>Customer Reviews</span>
         </div>
-        <a href="/brain" style={s.backLink}>\u2190 Dashboard</a>
+        <a href="/brain" style={s.backLink}>← Dashboard</a>
       </header>
 
       <main style={s.main}>
@@ -146,7 +146,7 @@ export default function ReviewsModeration() {
             style={s.tokenInput}
           />
           <button style={s.loadBtn} onClick={load} disabled={loading}>
-            {loading ? 'Loading\u2026' : '\u21bb Load'}
+            {loading ? 'Loading…' : '↻ Load'}
           </button>
         </div>
 
