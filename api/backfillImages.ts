@@ -133,6 +133,8 @@ const COOPER_IMAGE_MAP: Record<string, string> = {
   'cs5 ultra touring': 'https://images.simpletire.com/images/q_auto/line-images/9407/9407-sidetread/cooper-cs5-ultra-touring.png',
   'procontrol':        'https://images.simpletire.com/images/q_auto/line-images/19705/19705-sidetread/cooper-procontrol.png',
   'zeon rs3-g1':       'https://images.simpletire.com/images/q_auto/line-images/12161/12161-sidetread/cooper-zeon-rs3-g1.png',
+  'discoverer snow claw lt': 'https://images.simpletire.com/images/q_auto/line-images/17674/17674-sidetread/cooper-discoverer-snow-claw.png',
+  'discoverer snow claw': 'https://images.simpletire.com/images/q_auto/line-images/17674/17674-sidetread/cooper-discoverer-snow-claw.png',
 };
 
 // Returns the mapped URL for a Cooper product title, or null if not in the map.
