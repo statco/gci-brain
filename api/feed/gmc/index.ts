@@ -70,6 +70,7 @@ async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   let url: string | null =
     `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/products.json?limit=250&status=active&fields=id,title,handle,body_html,vendor,tags,images,variants`;
   while (url) {
+    console.log(`[feed/gmc] Fetching: ${url} | tokenPrefix: ${SHOPIFY_TOKEN?.slice(0, 10)}`);
     const res = await fetch(url, {
       headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
     });
