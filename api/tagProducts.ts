@@ -96,7 +96,15 @@ const VEHICLE_RULES: Array<{ match: (t: string) => boolean; tag: string }> = [
 const VEHICLE_DEFAULT = 'vehicle_type:Passenger';
 
 // Keywords that identify non-tire service/accessory products to skip
-const NON_TIRE_KEYWORDS = ['installation', 'service', 'balancing', 'mounting', 'valve', 'tpms'];
+const NON_TIRE_KEYWORDS = [
+  'installation', 'service', 'balancing', 'mounting', 'valve', 'tpms',
+  'bottle', 'vacuum', 'cleaner', 'massager', 'cervical', 'neck',
+  'shoulder', 'relaxer', 'nuproz', 'water', 'gym', 'sports drinking',
+  'home appliance', 'cordless', 'handheld', 'suction',
+];
+
+// Product must contain at least one tire-related term to be processed
+const TIRE_TERMS_RE = /tire|tyre|pneu|R1[5-9]|R2[0-2]|\bLT\b|\bXL\b|3PMSF/i;
 
 function deriveTags(title: string): string[] {
   const t = title.toLowerCase();
@@ -164,9 +172,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const previewItems: PreviewItem[] = [];
 
   for (const product of chunk) {
-    // Skip non-tire products
+    // Skip non-tire products (blocklist) or products with no tire-related term (allowlist)
     const titleLower = product.title.toLowerCase();
     if (NON_TIRE_KEYWORDS.some(kw => titleLower.includes(kw))) { skipped++; continue; }
+    if (!TIRE_TERMS_RE.test(product.title)) { skipped++; continue; }
 
     // Parse existing tags
     const existingTags  = product.tags.split(',').map(t => t.trim()).filter(Boolean);
