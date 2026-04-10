@@ -24,7 +24,7 @@ export const config = { maxDuration: 300 };
 
 const SHOPIFY = {
   domain:     process.env.SHOPIFY_STORE_DOMAIN       || '',
-  token:      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
+  token:      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || process.env.SHOPIFY_ADMIN_API_TOKEN || '',
   apiVersion: '2024-01',
   get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
 };
