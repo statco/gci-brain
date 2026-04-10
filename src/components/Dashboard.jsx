@@ -701,15 +701,16 @@ function FixVendorsCard() {
   );
 }
 function ReviewsCard() {
-  const [pendingCount, setPendingCount] = useState(null);
-
+  const [count, setCount] = useState(null);
   useEffect(() => {
-    fetch('/api/reviews/pending-count')
+    const secret = import.meta.env.VITE_ADMIN_SECRET;
+    fetch('/api/reviews/pending-count', {
+      headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+    })
       .then(r => r.json())
-      .then(d => setPendingCount(d.pending ?? 0))
-      .catch(() => setPendingCount('?'));
+      .then(d => setCount(d.count ?? 0))
+      .catch(() => setCount(null));
   }, []);
-
   return (
     <div style={tsfc.card} className="dash-card">
       <div style={tsfc.top}>
@@ -717,18 +718,18 @@ function ReviewsCard() {
           <span style={styles.cardIcon}>⭐</span>
           <h3 style={styles.cardTitle}>Reviews</h3>
         </div>
-        <span style={{
-          ...tsfc.badgeIdle,
-          color: pendingCount > 0 ? '#facc15' : '#888',
-        }}>
-          {pendingCount === null ? '...' : `${pendingCount} PENDING`}
-        </span>
+        {count !== null && (
+          <span style={{ fontFamily: "'Courier New', monospace", fontSize: '11px',
+            letterSpacing: '0.1em', color: count > 0 ? '#facc15' : '#666' }}>
+            {count > 0 ? `● ${count} PENDING` : '● 0 PENDING'}
+          </span>
+        )}
       </div>
       <p style={styles.cardDesc}>
         Moderate customer reviews. Approve or reject pending submissions.
       </p>
       <Link to="/reviews" style={styles.launchBtn} className="dash-launch-btn">
-        MODERATE
+        LAUNCH
       </Link>
     </div>
   );
@@ -821,7 +822,7 @@ export default function Dashboard() {
             <FixVendorsCard />
           </div>
         </section>
-        {/* CUSTOMER TOOLS — full width row */}
+        {/* CUSTOMER TOOLS */}
         <section style={styles.translateSection}>
           <h2 style={styles.sectionHeading}>CUSTOMER TOOLS</h2>
           <div style={automationGrid}>
