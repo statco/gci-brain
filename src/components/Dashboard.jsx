@@ -703,7 +703,7 @@ function FixVendorsCard() {
 function ReviewsCard() {
   const [pendingCount, setPendingCount] = useState(null);
 
-  useState(() => {
+  useEffect(() => {
     fetch('/api/reviews/pending-count')
       .then(r => r.json())
       .then(d => setPendingCount(d.pending ?? 0))
