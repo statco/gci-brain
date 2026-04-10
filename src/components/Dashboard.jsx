@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import TranslateContentCard from './TranslateContentCard';
 
@@ -700,7 +700,39 @@ function FixVendorsCard() {
     </div>
   );
 }
+function ReviewsCard() {
+  const [pendingCount, setPendingCount] = useState(null);
 
+  useEffect(() => {
+    fetch('/api/reviews/pending-count')
+      .then(r => r.json())
+      .then(d => setPendingCount(d.pending ?? 0))
+      .catch(() => setPendingCount('?'));
+  }, []);
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>⭐</span>
+          <h3 style={styles.cardTitle}>Reviews</h3>
+        </div>
+        <span style={{
+          ...tsfc.badgeIdle,
+          color: pendingCount > 0 ? '#facc15' : '#888',
+        }}>
+          {pendingCount === null ? '...' : `${pendingCount} PENDING`}
+        </span>
+      </div>
+      <p style={styles.cardDesc}>
+        Moderate customer reviews. Approve or reject pending submissions.
+      </p>
+      <Link to="/reviews" style={styles.launchBtn} className="dash-launch-btn">
+        MODERATE
+      </Link>
+    </div>
+  );
+}
 export default function Dashboard() {
   return (
     <div style={styles.root}>
@@ -787,6 +819,13 @@ export default function Dashboard() {
             <TireSizeFixCard />
             <ImageBackfillCard />
             <FixVendorsCard />
+          </div>
+        </section>
+        {/* CUSTOMER TOOLS — full width row */}
+        <section style={styles.translateSection}>
+          <h2 style={styles.sectionHeading}>CUSTOMER TOOLS</h2>
+          <div style={automationGrid}>
+            <ReviewsCard />
           </div>
         </section>
       </main>
