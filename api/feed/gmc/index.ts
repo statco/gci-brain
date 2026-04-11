@@ -16,7 +16,7 @@ const SHOPIFY_DOMAIN   = process.env.SHOPIFY_STORE_DOMAIN!;
 const SHOPIFY_TOKEN    = process.env.SHOPIFY_ADMIN_API_TOKEN!;
 const STOREFRONT_URL   = 'https://gcitires.com'; // canonical storefront
 // GMC google_product_category for tires
-const GOOGLE_CATEGORY  = '3578';
+const GOOGLE_CATEGORY  = 'Vehicles & Parts > Vehicle Parts & Accessories > Vehicle Tires';
 // TSV column order — must match GMC feed spec exactly
 const COLUMNS = [
   'id',
