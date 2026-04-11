@@ -37,6 +37,7 @@ const COLUMNS = [
   'custom_label_1',   // vehicle_type  (e.g. Passenger, SUV, Light Truck)
   'custom_label_2',   // brand tier    (e.g. Cooper, Nexen, Vredestein)
   'identifier_exists', // FALSE — tire GTINs not available in Shopify product data
+  'quantity',          // variant inventory_quantity
 ] as const;
 type Row = Record<typeof COLUMNS[number], string>;
 // ─── Shopify fetch ───────────────────────────────────────────────────────────
@@ -103,12 +104,9 @@ function tagValue(tags: string[], prefix: string): string {
   const match = tags.find(t => t.toLowerCase().startsWith(normalized + ':'));
   return match ? match.slice(prefix.length + 1).trim() : '';
 }
-/** Determine GMC availability string from variant fields */
+/** Determine GMC availability string from variant inventory_quantity */
 function availability(variant: ShopifyVariant): string {
-  if (variant.inventory_management === null) return 'in stock';
-  if (variant.inventory_quantity > 0) return 'in stock';
-  if (variant.inventory_policy === 'continue') return 'in stock';
-  return 'out of stock';
+  return variant.inventory_quantity > 0 ? 'in stock' : 'out of stock';
 }
 /** Format price for GMC: "129.99 CAD" */
 function formatPrice(price: string): string {
@@ -178,6 +176,7 @@ function buildRows(product: ShopifyProduct): string[] {
       custom_label_1:         tsvSanitize(vehicleType),
       custom_label_2:         tsvSanitize(brand),
       identifier_exists:      'FALSE',
+      quantity:               String(variant.inventory_quantity),
     };
     return COLUMNS.map(col => row[col]).join('\t');
   });
