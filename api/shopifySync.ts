@@ -64,7 +64,23 @@ const SHIPPING_BUFFERS: Record<string, number> = {
   light_truck: 50,
   heavy_truck: 65,
 };
+const VENDOR_MAP: Record<string, string> = {
+  'COOPER': 'Cooper',
+  'NEXEN': 'Nexen',
+  'VREDESTEIN': 'Vredestein',
+  'NUPROZONE': 'Nuprozone',
+};
 
+function normalizeVendor(vendor: string): string {
+  return VENDOR_MAP[vendor.toUpperCase()] ??
+    vendor.charAt(0).toUpperCase() + vendor.slice(1).toLowerCase();
+}
+
+/**
+ * Classify tire type from Canada Tire performanceCategory field.
+ * Used to determine shipping buffer for floor price calculation.
+ */
+function classifyTireType(performanceCategory: string, size: string): string {
 /**
  * Classify tire type from Canada Tire performanceCategory field.
  * Used to determine shipping buffer for floor price calculation.
@@ -449,7 +465,7 @@ async function buildPayload(ct: CTTire) {
     product: {
       title,
       body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li></ul>`,
-      vendor:       ct.brand,
+      vendor:       normalizeVendor(ct.brand),
       product_type: 'Tire',
       tags,
       variants: [{
