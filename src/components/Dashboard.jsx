@@ -493,6 +493,139 @@ function TagProductsCard() {
   );
 }
 
+// ─── REMOVE DUPLICATES CARD ───────────────────────────────────────────────────
+
+function RemoveDuplicatesCard() {
+  const [status, setStatus]        = useState('idle'); // 'idle'|'running'|'done'|'error'
+  const [progress, setProgress]    = useState({ deleted: 0, skipped: 0, total: 0 });
+  const [errors, setErrors]        = useState([]);
+  const [previewItems, setPreview] = useState([]);
+
+  const run = async (preview = false) => {
+    setStatus('running');
+    setProgress({ deleted: 0, skipped: 0, total: 0 });
+    setErrors([]);
+    setPreview([]);
+
+    let cursor        = 0;
+    let totalDeleted  = 0;
+    let totalSkipped  = 0;
+    let allErrors     = [];
+    let allPreview    = [];
+
+    try {
+      while (true) {
+        const url = `/api/removeDuplicates?cursor=${cursor}${preview ? '&preview=true' : ''}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        const data = await resp.json();
+
+        totalDeleted += data.deleted ?? 0;
+        totalSkipped += data.skipped ?? 0;
+        allErrors     = [...allErrors, ...(data.errors ?? [])];
+        if (allPreview.length < 20) {
+          allPreview = [...allPreview, ...(data.preview ?? [])].slice(0, 20);
+        }
+
+        setProgress({ deleted: totalDeleted, skipped: totalSkipped, total: data.total ?? 0 });
+        setPreview([...allPreview]);
+
+        if (data.nextCursor == null) break;
+        cursor = data.nextCursor;
+
+        // In preview mode only run the first chunk
+        if (preview) break;
+      }
+
+      setErrors(allErrors);
+      setStatus('done');
+    } catch (err) {
+      setErrors(prev => [...prev, String(err)]);
+      setStatus('error');
+    }
+  };
+
+  const isRunning = status === 'running';
+
+  return (
+    <div style={tsfc.card} className="dash-card">
+      {/* Header row */}
+      <div style={tsfc.top}>
+        <div style={tsfc.titleRow}>
+          <span style={styles.cardIcon}>🗑️</span>
+          <h3 style={styles.cardTitle}>Remove Duplicates</h3>
+        </div>
+        <span style={isRunning ? tsfc.badgeRunning : status === 'done' ? tsfc.badgeDone : tsfc.badgeIdle}>
+          {isRunning ? '⟳ RUNNING' : status === 'done' ? '✓ DONE' : status === 'error' ? '✗ ERROR' : '● READY'}
+        </span>
+      </div>
+
+      <p style={styles.cardDesc}>
+        Detect and permanently delete duplicate products identified by handle suffix (-1, -2, -3, -4).
+        Only deletes when a canonical (no-suffix) version exists and the duplicate holds no more stock.
+      </p>
+
+      {/* Progress bar */}
+      {(isRunning || status === 'done' || status === 'error') && (
+        <div style={tsfc.progressWrap}>
+          <div style={tsfc.progressLabel}>
+            {isRunning
+              ? `Deleted ${progress.deleted} / ${progress.total} — ${progress.skipped} skipped…`
+              : `Deleted ${progress.deleted} / ${progress.total} — ${progress.skipped} skipped${errors.length ? ` — ${errors.length} error(s)` : ''}`
+            }
+          </div>
+          {progress.total > 0 && (
+            <div style={tsfc.barTrack}>
+              <div style={{ ...tsfc.barFill, width: `${Math.round(((progress.deleted + progress.skipped) / progress.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div style={tsfc.btnRow}>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnSecondary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(true)}
+          disabled={isRunning}
+        >
+          PREVIEW
+        </button>
+        <button
+          style={{ ...tsfc.btn, ...tsfc.btnPrimary, ...(isRunning ? tsfc.btnDisabled : {}) }}
+          onClick={() => run(false)}
+          disabled={isRunning}
+        >
+          {isRunning ? 'RUNNING…' : 'RUN ALL'}
+        </button>
+      </div>
+
+      {/* Preview table */}
+      {previewItems.length > 0 && (
+        <div style={tsfc.previewWrap}>
+          <div style={tsfc.previewHeading}>PREVIEW — first {previewItems.length} duplicates to delete</div>
+          <div style={tsfc.previewList}>
+            {previewItems.map((item, i) => (
+              <div key={i} style={tsfc.previewRow}>
+                <span style={tsfc.previewBefore}>{item.duplicateHandle}</span>
+                <span style={tsfc.previewArrow}>→</span>
+                <span style={tsfc.previewAfter}>{item.canonicalHandle} ({item.priceDiff})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Errors */}
+      {errors.length > 0 && (
+        <div style={tsfc.errorList}>
+          {errors.map((e, i) => <div key={i} style={tsfc.errorItem}>⚠ {e}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── IMAGE BACKFILL CARD ──────────────────────────────────────────────────────
 
 function ImageBackfillCard() {
@@ -953,6 +1086,7 @@ export default function Dashboard() {
             <ImageBackfillCard />
             <FixVendorsCard />
             <TagProductsCard />
+            <RemoveDuplicatesCard />
           </div>
         </section>
         {/* CUSTOMER TOOLS */}
