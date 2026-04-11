@@ -36,6 +36,7 @@ const COLUMNS = [
   'custom_label_0',   // season        (e.g. Hiver, Été, 4-Saisons, Tout-Terrain)
   'custom_label_1',   // vehicle_type  (e.g. Passenger, SUV, Light Truck)
   'custom_label_2',   // brand tier    (e.g. Cooper, Nexen, Vredestein)
+  'identifier_exists', // FALSE — tire GTINs not available in Shopify product data
 ] as const;
 type Row = Record<typeof COLUMNS[number], string>;
 // ─── Shopify fetch ───────────────────────────────────────────────────────────
@@ -158,6 +159,7 @@ function buildRows(product: ShopifyProduct): string[] {
       custom_label_0:         tsvSanitize(season),
       custom_label_1:         tsvSanitize(vehicleType),
       custom_label_2:         tsvSanitize(brand),
+      identifier_exists:      'FALSE',
     };
     return COLUMNS.map(col => row[col]).join('\t');
   });
