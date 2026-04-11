@@ -63,13 +63,14 @@ interface ShopifyProduct {
   vendor: string;
   tags: string;
   status: string;
+  product_type: string;
   images: ShopifyImage[];
   variants: ShopifyVariant[];
 }
 async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const products: ShopifyProduct[] = [];
   let url: string | null =
-    `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/products.json?limit=250&status=active&fields=id,title,handle,body_html,vendor,tags,images,variants`;
+    `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/products.json?limit=250&status=active&fields=id,title,handle,body_html,vendor,tags,product_type,images,variants`;
   while (url) {
     console.log(`[feed/gmc] Fetching: ${url} | tokenPrefix: ${SHOPIFY_TOKEN?.slice(0, 10)}`);
     const res = await fetch(url, {
@@ -116,6 +117,23 @@ function formatPrice(price: string): string {
 /** Truncate description to 5000 chars (GMC limit) */
 function truncate(str: string, max = 5000): string {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
+}
+// ─── Non-tire filter ─────────────────────────────────────────────────────────
+const EXCLUDE_VENDORS         = new Set(['nuprozone']);
+const EXCLUDE_TITLE_KEYWORDS  = ['bottle', 'vacuum', 'cleaner', 'massager', 'cervical', 'neck relaxer', 'shoulder'];
+const TIRE_PRODUCT_TYPE_RE    = /tire|tyre|pneu/i;
+const TIRE_TITLE_RE           = /R1[5-9]|R2[0-2]|\bLT\b|tire|tyre/i;
+
+function isTireProduct(product: ShopifyProduct): boolean {
+  const titleLower = product.title.toLowerCase();
+  // Exclusion checks take priority
+  if (EXCLUDE_VENDORS.has(product.vendor.toLowerCase())) return false;
+  if (EXCLUDE_TITLE_KEYWORDS.some(kw => titleLower.includes(kw))) return false;
+  // At least one positive indicator required
+  if (TIRE_PRODUCT_TYPE_RE.test(product.product_type ?? '')) return true;
+  if (product.tags.split(',').some(t => t.trim().toLowerCase().startsWith('season:'))) return true;
+  if (TIRE_TITLE_RE.test(product.title)) return true;
+  return false;
 }
 // ─── Row builder ─────────────────────────────────────────────────────────────
 function buildRows(product: ShopifyProduct): string[] {
@@ -177,6 +195,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const rows: string[] = [header];
     let skipped = 0;
     for (const product of products) {
+      // Skip non-tire accessories and excluded vendors
+      if (!isTireProduct(product)) { skipped++; continue; }
       // Skip products with no variants or zero-price (data quality guard)
       const validVariants = product.variants.filter(v => parseFloat(v.price) > 0);
       if (validVariants.length === 0) { skipped++; continue; }
