@@ -69,7 +69,7 @@ const storeTools = [
   {
     icon: '🏪',
     title: 'Shopify Admin',
-    url: 'https://gcitires.myshopify.com/admin',
+    url: 'https://gcitires-ca.myshopify.com/admin',
     description: 'Store backend',
   },
   {
