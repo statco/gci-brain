@@ -192,7 +192,7 @@ function parseTireSize(raw: string | number): string {
 }
 
 // Handles compact 8-digit CT codes like "2256016/R" → "225/60R16"
-function formatTireSize(rawCode: string | number): string {
+function parseCTSizeCode(rawCode: string | number): string {
   const raw = String(rawCode ?? '');
   const match = raw.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
   if (!match) return parseTireSize(raw);
@@ -362,6 +362,16 @@ function toTitleCase(original: string): string {
   }).join(' ').replace(/\/r(\d)/gi, '/R$1');
 }
 
+// Fixes malformed tire sizes embedded in a title string.
+// e.g. "Brand Model 2256017r" → "Brand Model 225/60R17"
+// e.g. "Brand Model 2256017/R" → "Brand Model 225/60R17"
+function formatTireSize(title: string): string {
+  return title.replace(
+    /(\d{3})(\d{2})(\d{2})\/?r/gi,
+    (_, width, ratio, rim) => `${width}/${ratio}R${rim}`
+  );
+}
+
 // ─── TITLE NORMALIZATION ──────────────────────────────────────────────────────
 
 function normalizeTitle(title: string): string {
@@ -401,7 +411,7 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
 // Safety check: if cost looks wrong (>90% of MSRP or zero), fall back to estimate.
 
 async function buildPayload(ct: CTTire) {
-  const size    = formatTireSize(ct.size);
+  const size    = parseCTSizeCode(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
@@ -418,7 +428,7 @@ async function buildPayload(ct: CTTire) {
   const TARGET_MARGIN = 0.14;
   const floorPrice     = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_MARGIN);
 
-  const title = toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim());
+  const title = formatTireSize(toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()));
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
 
   const tags = [
@@ -782,8 +792,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'backfill-images', ...bfStats });
       }
       case 'attach-image': {
-        // Attach an image to all products matching a title search
-        // Usage: ?action=attach-image&search=COOPER+PROCONTROL&imageUrl=https://...
         const search   = (req.query.search as string || '').trim();
         const imageUrl = (req.query.imageUrl as string || '').trim();
 
@@ -797,7 +805,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let skipped = 0;
         let errors = 0;
 
-        // Find all matching products
         while (true) {
           const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
           const data: any = await shopifyFetch<any>(`/products.json?${q}`);
@@ -843,10 +850,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'fix-all-images': {
-        // Batch fix: find all products with missing images, use curated image map
         const dryRun = (req.query.dryRun ?? 'true') !== 'false';
 
-        // 1. Find all products missing images
         let sinceId = 0;
         const noImageProducts: Array<{ id: number; title: string; modelKey: string }> = [];
         const withImageModels = new Set<string>();
@@ -870,7 +875,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const trulyMissing = noImageProducts.filter(p => !withImageModels.has(p.modelKey));
 
-        // 2. Group by model and match to IMAGE_MAP
         const modelGroups = new Map<string, typeof trulyMissing>();
         for (const p of trulyMissing) {
           if (!modelGroups.has(p.modelKey)) modelGroups.set(p.modelKey, []);
@@ -897,7 +901,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
-        // 3. Execute
         let attached = 0;
         let errors = 0;
         let skippedNoSource = 0;
