@@ -15,6 +15,7 @@
     "@google/generative-ai": "^0.24.1",
     "@react-google-maps/api": "^2.20.8",
     "axios": "^1.7.9",
+    "openai": "^4.57.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
