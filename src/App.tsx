@@ -10,6 +10,7 @@ import FixThemeContent from './components/FixThemeContent';
 import FixRedirects from './components/FixRedirects';
 import FixTitles from './components/FixTitles';
 import ReviewsModeration from './components/ReviewsModeration';
+import MatchEngineChat from './components/MatchEngineChat';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -48,14 +49,14 @@ function TireMatchApp() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
 
-    // ── Language (URL takes priority over localStorage) ──────────────────
+    // ── Language (URL takes priority over localStorage) ──────────────────────────────────────────────
     const langParam = urlParams.get('lang') as Language | null;
     const resolvedLang: Language = (langParam === 'fr' || langParam === 'en') ? langParam : 'en';
     if (langParam === 'fr' || langParam === 'en') {
       setLang(langParam);
     }
 
-    // ── YMM params from the Shopify YMM finder widget ────────────────────
+    // ── YMM params from the Shopify YMM finder widget ────────────────────────────────────────────
     // When all three are present: pre-fill vehicle data and auto-trigger
     // the tire search. Stop at RESULTS — never auto-advance to checkout.
     const yearParam  = urlParams.get('year');
@@ -71,7 +72,7 @@ function TireMatchApp() {
       return; // Skip localStorage restore — stale state is irrelevant here
     }
 
-    // ── Restore persisted state (no YMM params) ──────────────────────────
+    // ── Restore persisted state (no YMM params) ──────────────────────────────────────────────────────
     // Only restore RESULTS, never CHECKOUT or SUCCESS — those states
     // require explicit user action and must not be auto-resumed on load.
     const savedState = localStorage.getItem('gci_app_state_v2');
@@ -172,7 +173,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<TireMatchApp />} />
+        <Route path="/"   element={<MatchEngineChat />} />
+        <Route path="/v1" element={<TireMatchApp />} />
         <Route path="/brain" element={<Dashboard />} />
         <Route path="/installer-application" element={<InstallerApplicationForm />} />
         <Route path="/shopify-fix" element={<ShopifyFixDashboard />} />
