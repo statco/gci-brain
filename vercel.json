@@ -3,7 +3,8 @@
     "api/shopifyFix.js":    { "maxDuration": 60  },
     "api/shopifySync.ts":   { "maxDuration": 300 },
     "api/tagOos.ts":        { "maxDuration": 300 },
-    "api/notifyMe.ts":      { "maxDuration": 15  }
+    "api/notifyMe.ts":      { "maxDuration": 15  },
+    "api/matchEngine.ts":   { "maxDuration": 60  }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
