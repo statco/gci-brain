@@ -141,8 +141,8 @@ export default function MatchEngineChat() {
           const raw = line.slice(6).trim();
           if (raw === '[DONE]') break;
           try {
-            const parsed = const parsed = JSON.parse(raw);
-const content = parsed.choices?.[0]?.delta?.content || '';
+            const parsed = JSON.parse(raw);
+            const content = parsed.choices?.[0]?.delta?.content || '';
             if (content) {
               full += content;
               setStreaming(full);
