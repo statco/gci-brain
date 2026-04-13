@@ -142,9 +142,10 @@ export default function MatchEngineChat() {
           if (raw === '[DONE]') break;
           try {
             const parsed = JSON.parse(raw);
-            const content = parsed.choices?.[0]?.delta?.content || '';
-            if (content) {
-              full += content;
+            // Server sends { content } — surface API errors as readable text
+            const chunk = parsed.content || (parsed.error ? `[Error: ${parsed.error}]` : '');
+            if (chunk) {
+              full += chunk;
               setStreaming(full);
             }
           } catch {
@@ -153,7 +154,7 @@ export default function MatchEngineChat() {
         }
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: full }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: full || '[No response received]' }]);
       setStreaming('');
       setPhase('chat');
     } catch (err) {
