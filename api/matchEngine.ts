@@ -180,10 +180,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const seasonTagMap: Record<string, string> = {
-      'Winter':     'season:Winter',
-      'All-Season': 'season:All-Season',
-      'Summer':     'season:Summer',
-    };
+  'winter':     'season:Winter',
+  'allseason':  'season:All-Season',
+  'summer':     'season:Summer',
+};
 
     const seasonTag = seasonTagMap[tireType] || 'season:All-Season';
     let tires = await fetchInStockTires(seasonTag);
