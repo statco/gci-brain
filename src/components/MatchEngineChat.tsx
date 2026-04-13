@@ -51,7 +51,7 @@ const UI = {
     locationPh: 'e.g. Montreal, QC',
     tireType: 'Tire Type',
     submit: 'Find My Tires',
-    followUpPh: 'Ask a follow-up question…',
+    followUpPh: 'Ask a follow-up question\u2026',
     send: 'Send',
     startOver: 'Start Over',
     winter: 'Winter',
@@ -60,18 +60,18 @@ const UI = {
   },
   fr: {
     title: 'Trouver mes pneus',
-    vehicle: 'Votre véhicule',
+    vehicle: 'Votre v\u00e9hicule',
     vehiclePh: 'ex. Toyota Corolla 2021',
     location: 'Votre localisation',
-    locationPh: 'ex. Montréal, QC',
+    locationPh: 'ex. Montr\u00e9al, QC',
     tireType: 'Type de pneu',
     submit: 'Trouver mes pneus',
-    followUpPh: 'Posez une question de suivi…',
+    followUpPh: 'Posez une question de suivi\u2026',
     send: 'Envoyer',
     startOver: 'Recommencer',
     winter: 'Hiver',
     allSeason: 'Quatre-saisons',
-    summer: 'Été',
+    summer: '\u00c9t\u00e9',
   },
 };
 
@@ -82,7 +82,7 @@ export default function MatchEngineChat() {
   const [location, setLocation] = useState('');
   const [tireType, setTireType] = useState('Winter');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streaming, setStreaming] = useState('');
+  const [streamingText, setStreamingText] = useState('');
   const [followUp, setFollowUp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -100,15 +100,15 @@ export default function MatchEngineChat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streaming]);
+  }, [messages, streamingText]);
 
-  async function streamResponse(text: string, history: Message[]) {
+  async function streamResponse(history: Message[]) {
     setIsLoading(true);
-    setStreaming('');
+    setStreamingText('');
     setPhase('streaming');
 
     try {
-      const resp = await fetch('/api/matchEngine', {
+      const response = await fetch('/api/matchEngine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -120,50 +120,46 @@ export default function MatchEngineChat() {
         }),
       });
 
-      if (!resp.ok || !resp.body) {
-        throw new Error(`HTTP ${resp.status}`);
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const reader = resp.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      let full = '';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const raw = line.slice(6).trim();
           if (raw === '[DONE]') break;
           try {
             const parsed = JSON.parse(raw);
-            // Server sends { content } — surface API errors as readable text
-            const chunk = parsed.content || (parsed.error ? `[Error: ${parsed.error}]` : '');
+            const chunk = parsed.choices?.[0]?.delta?.content ?? '';
             if (chunk) {
-              full += chunk;
-              setStreaming(full);
+              fullText += chunk;
+              setStreamingText(fullText);
             }
-          } catch {
-            // ignore malformed chunk
-          }
+          } catch {}
         }
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: full || '[No response received]' }]);
-      setStreaming('');
+      setMessages(prev => [...prev, { role: 'assistant', content: fullText }]);
+      setStreamingText('');
       setPhase('chat');
     } catch (err) {
       console.error('Stream error:', err);
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: lang === 'fr' ? "Une erreur s'est produite. Veuillez réessayer." : 'An error occurred. Please try again.' },
+        { role: 'assistant', content: lang === 'fr' ? "Une erreur s'est produite. Veuillez r\u00e9essayer." : 'An error occurred. Please try again.' },
       ]);
-      setStreaming('');
+      setStreamingText('');
       setPhase('chat');
     } finally {
       setIsLoading(false);
@@ -175,9 +171,8 @@ export default function MatchEngineChat() {
       role: 'user',
       content: `${vehicle} | ${location} | ${tireType}`,
     };
-    const newHistory = [userMsg];
-    setMessages(newHistory);
-    streamResponse(userMsg.content, []);
+    setMessages([userMsg]);
+    streamResponse([]);
   }
 
   function handleFollowUp() {
@@ -186,13 +181,13 @@ export default function MatchEngineChat() {
     const updatedHistory = [...messages, userMsg];
     setMessages(updatedHistory);
     setFollowUp('');
-    streamResponse(followUp.trim(), updatedHistory);
+    streamResponse(updatedHistory);
   }
 
   function handleStartOver() {
     setPhase('form');
     setMessages([]);
-    setStreaming('');
+    setStreamingText('');
     setFollowUp('');
     setVehicle('');
     setLocation('');
@@ -349,7 +344,7 @@ export default function MatchEngineChat() {
                     backgroundColor: '#1c1c1c', fontSize: 15, lineHeight: 1.65, whiteSpace: 'pre-wrap',
                   }}
                 >
-                  {streaming ? renderText(streaming) : <TypingDots />}
+                  {streamingText ? renderText(streamingText) : <TypingDots />}
                 </div>
               </div>
             )}

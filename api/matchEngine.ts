@@ -26,20 +26,20 @@ const SUV_TRUCK_KEYWORDS = [
 ];
 
 const NORTHERN_QC_LOCATIONS = [
-  'saguenay','chicoutimi','jonquière','alma','roberval','dolbeau',
-  'mistassini','baie-comeau','sept-îles','sept-iles','rimouski',
-  'rivière-du-loup','riviere-du-loup','matane','gaspé','gaspe',
-  'new richmond','bonaventure','chandler','percé','perce',
-  'rouyn-noranda','rouyn','noranda','val-d\'or','amos','malartic',
-  'la sarre','senneterre','lebel-sur-quévillon','chibougamau',
+  'saguenay','chicoutimi','jonqui\u00e8re','alma','roberval','dolbeau',
+  'mistassini','baie-comeau','sept-\u00eeles','sept-iles','rimouski',
+  'rivi\u00e8re-du-loup','riviere-du-loup','matane','gasp\u00e9','gaspe',
+  'new richmond','bonaventure','chandler','perc\u00e9','perce',
+  'rouyn-noranda','rouyn','noranda',"val-d'or",'amos','malartic',
+  'la sarre','senneterre','lebel-sur-qu\u00e9villon','chibougamau',
   'chapais','matagami','radisson','kuujjuaq','chisasibi',
-  'wemindji','eastmain','waskaganish','mistissini','oujé-bougoumou',
+  'wemindji','eastmain','waskaganish','mistissini','ouj\u00e9-bougoumou',
   'whapmagoostui','kangiqsualujjuaq','inukjuak','umiujaq',
   'kuujjuarapik','tasiujaq','aupaluk','kangirsuk','quaqtaq',
   'kangiqsujuaq','salluit','ivujivik','puvirnituq','akulivik',
   'povungnituk','lac-saint-jean','lac saint-jean','abitibi',
-  'témiscamingue','temiscamingue','côte-nord','cote-nord',
-  'nord-du-québec','nord-du-quebec','gaspésie','gaspesie',
+  't\u00e9miscamingue','temiscamingue','c\u00f4te-nord','cote-nord',
+  'nord-du-qu\u00e9bec','nord-du-quebec','gasp\u00e9sie','gaspesie',
   'bas-saint-laurent','bas saint-laurent',
 ];
 
@@ -136,26 +136,26 @@ ${isNorthern ? 'IMPORTANT: This customer is in northern Quebec where winter cond
 ${isHeavy ? 'IMPORTANT: This customer drives a truck or SUV. Only recommend tires with a load index of 108 or higher for safety.' : ''}
 
 Guidelines:
-- Recommend 2–3 best options from the inventory provided
+- Recommend 2\u20133 best options from the inventory provided
 - Highlight key features: tread pattern, wet/dry grip, noise level, warranty
 - Mention price and value proposition
 - Be concise and professional
 - Always prioritize safety
 - If the inventory is limited, be honest and explain the best available option`;
   } else {
-    return `Vous êtes un expert en pneus pour GCI Tires, un détaillant canadien de pneus.
-Votre rôle est de recommander les meilleurs pneus correspondants de notre inventaire actuel en fonction du véhicule et de la localisation du client.
+    return `Vous \u00eates un expert en pneus pour GCI Tires, un d\u00e9taillant canadien de pneus.
+Votre r\u00f4le est de recommander les meilleurs pneus correspondants de notre inventaire actuel en fonction du v\u00e9hicule et de la localisation du client.
 
-${isNorthern ? "IMPORTANT: Ce client se trouve dans le nord du Québec où les conditions hivernales sont extrêmes. Recommandez fortement des pneus d'hiver et mettez en avant les performances par temps froid." : ''}
-${isHeavy ? 'IMPORTANT: Ce client conduit un camion ou un VUS. Recommandez uniquement des pneus avec un indice de charge de 108 ou plus pour la sécurité.' : ''}
+${isNorthern ? "IMPORTANT: Ce client se trouve dans le nord du Qu\u00e9bec o\u00f9 les conditions hivernales sont extr\u00eames. Recommandez fortement des pneus d'hiver et mettez en avant les performances par temps froid." : ''}
+${isHeavy ? 'IMPORTANT: Ce client conduit un camion ou un VUS. Recommandez uniquement des pneus avec un indice de charge de 108 ou plus pour la s\u00e9curit\u00e9.' : ''}
 
 Directives:
-- Recommandez 2–3 meilleures options de l\'inventaire fourni
-- Mettez en avant les caractéristiques clés: sculpture de bande de roulement, adhérence, niveau sonore, garantie
-- Mentionnez le prix et le rapport qualité-prix
+- Recommandez 2\u20133 meilleures options de l\'inventaire fourni
+- Mettez en avant les caract\u00e9ristiques cl\u00e9s: sculpture de bande de roulement, adh\u00e9rence, niveau sonore, garantie
+- Mentionnez le prix et le rapport qualit\u00e9-prix
 - Soyez concis et professionnel
-- Priorisez toujours la sécurité
-- Si l\'inventaire est limité, soyez honnête et expliquez la meilleure option disponible`;
+- Priorisez toujours la s\u00e9curit\u00e9
+- Si l\'inventaire est limit\u00e9, soyez honn\u00eate et expliquez la meilleure option disponible`;
   }
 }
 
@@ -180,10 +180,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const seasonTagMap: Record<string, string> = {
-  'winter':     'season:Winter',
-  'allseason':  'season:All-Season',
-  'summer':     'season:Summer',
-};
+      'Winter':     'season:Winter',
+      'All-Season': 'season:All-Season',
+      'Summer':     'season:Summer',
+    };
 
     const seasonTag = seasonTagMap[tireType] || 'season:All-Season';
     let tires = await fetchInStockTires(seasonTag);
@@ -208,10 +208,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const finalUserMessage = isFollowUp
       ? (isEn
           ? `Here are the in-stock ${tireType} tires for a ${vehicle} (located in ${location}) for your reference:\n\n${inventoryText}\n\nPlease answer the customer's follow-up question in the conversation above.`
-          : `Voici les pneus ${tireType} en stock pour un ${vehicle} (situé à ${location}) pour référence:\n\n${inventoryText}\n\nVeuillez répondre à la question de suivi du client dans la conversation ci-dessus.`)
+          : `Voici les pneus ${tireType} en stock pour un ${vehicle} (situ\u00e9 \u00e0 ${location}) pour r\u00e9f\u00e9rence:\n\n${inventoryText}\n\nVeuillez r\u00e9pondre \u00e0 la question de suivi du client dans la conversation ci-dessus.`)
       : (isEn
-          ? `Please recommend the best 2–3 ${tireType} tire options from our inventory for a ${vehicle} located in ${location}.\n\nAvailable inventory:\n${inventoryText}`
-          : `Veuillez recommander les 2–3 meilleures options de pneus ${tireType} de notre inventaire pour un ${vehicle} situé à ${location}.\n\nInventaire disponible:\n${inventoryText}`);
+          ? `Please recommend the best 2\u20133 ${tireType} tire options from our inventory for a ${vehicle} located in ${location}.\n\nAvailable inventory:\n${inventoryText}`
+          : `Veuillez recommander les 2\u20133 meilleures options de pneus ${tireType} de notre inventaire pour un ${vehicle} situ\u00e9 \u00e0 ${location}.\n\nInventaire disponible:\n${inventoryText}`);
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -230,7 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (res as any).flushHeaders?.();
 
     const stream = await openai.chat.completions.create({
-      model: process.env.AI_MODEL || 'z-ai/glm-4.7-flash',
+      model: process.env.AI_MODEL || 'google/gemini-flash-1.5',
       messages,
       stream: true,
       max_tokens: 1024,
@@ -239,7 +239,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || '';
       if (content) {
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        // Emit OpenAI-compatible SSE format so client can use choices[0].delta.content
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
       }
     }
 
@@ -250,7 +251,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!res.headersSent) {
       res.status(500).json({ error: err.message || 'Internal server error' });
     } else {
-      res.write(`data: ${JSON.stringify({ error: err.message || 'Stream error' })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `[Error: ${err.message}]` } }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
       res.end();
     }
   }
