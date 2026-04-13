@@ -230,7 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (res as any).flushHeaders?.();
 
     const stream = await openai.chat.completions.create({
-      model: 'google/gemini-flash-1.5',
+      model: process.env.AI_MODEL || 'z-ai/glm-4.7-flash',
       messages,
       stream: true,
       max_tokens: 1024,
