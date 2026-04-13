@@ -25,17 +25,17 @@ const SUV_TRUCK_KEYWORDS = [
 ];
 
 const NORTHERN_QC_LOCATIONS = [
-  'saguenay','chicoutimi','jonquière','alma','roberval','dolbeau',
-  'mistassini','baie-comeau','sept-îles','sept-iles','rimouski',
-  'rivière-du-loup','riviere-du-loup','matane','gaspé','gaspe',
-  'new richmond','bonaventure','chandler','percé','perce',
+  'saguenay','chicoutimi','jonqui\u00e8re','alma','roberval','dolbeau',
+  'mistassini','baie-comeau','sept-\u00eeles','sept-iles','rimouski',
+  'rivi\u00e8re-du-loup','riviere-du-loup','matane','gasp\u00e9','gaspe',
+  'new richmond','bonaventure','chandler','perc\u00e9','perce',
   'rouyn-noranda','rouyn','noranda',"val-d'or",'amos','malartic',
-  'la sarre','senneterre','lebel-sur-quévillon','chibougamau',
+  'la sarre','senneterre','lebel-sur-qu\u00e9villon','chibougamau',
   'chapais','matagami','radisson','kuujjuaq','chisasibi',
-  'wemindji','eastmain','waskaganish','mistissini','oujé-bougoumou',
+  'wemindji','eastmain','waskaganish','mistissini','ouj\u00e9-bougoumou',
   'lac-saint-jean','lac saint-jean','abitibi',
-  'témiscamingue','temiscamingue','côte-nord','cote-nord',
-  'nord-du-québec','nord-du-quebec','gaspésie','gaspesie',
+  't\u00e9miscamingue','temiscamingue','c\u00f4te-nord','cote-nord',
+  'nord-du-qu\u00e9bec','nord-du-quebec','gasp\u00e9sie','gaspesie',
   'bas-saint-laurent','bas saint-laurent',
 ];
 
@@ -96,18 +96,18 @@ function buildSystemPrompt(
   const en = lang !== 'fr';
   if (en) return [
     `You are an expert tire consultant for GCI Tires (Canada).`,
-    `Recommend the best 2–3 tires from the inventory below for the customer's vehicle and location.`,
-    northern ? `IMPORTANT: Customer is in northern Quebec — extreme winters. Strongly favour winter tires.` : '',
-    heavy ? `IMPORTANT: Vehicle is a truck/SUV — only recommend tires with load index ≥ 108.` : '',
+    `Recommend the best 2\u20133 tires from the inventory below for the customer's vehicle and location.`,
+    northern ? `IMPORTANT: Customer is in northern Quebec \u2014 extreme winters. Strongly favour winter tires.` : '',
+    heavy ? `IMPORTANT: Vehicle is a truck/SUV \u2014 only recommend tires with load index \u2265 108.` : '',
     `Be concise, professional, and always prioritise safety. Mention price and key features.`,
   ].filter(Boolean).join('\n');
 
   return [
-    `Vous êtes un expert en pneus pour GCI Tires (Canada).`,
-    `Recommandez les 2–3 meilleurs pneus de l'inventaire ci-dessous pour le véhicule et la région du client.`,
-    northern ? `IMPORTANT: Le client est dans le nord du Québec — hivers extrêmes. Favorisez les pneus d'hiver.` : '',
-    heavy ? `IMPORTANT: Véhicule camion/VUS — recommandez uniquement des pneus avec indice de charge ≥ 108.` : '',
-    `Soyez concis, professionnel et priorisez la sécurité. Mentionnez le prix et les caractéristiques.`,
+    `Vous \u00eates un expert en pneus pour GCI Tires (Canada).`,
+    `Recommandez les 2\u20133 meilleurs pneus de l'inventaire ci-dessous pour le v\u00e9hicule et la r\u00e9gion du client.`,
+    northern ? `IMPORTANT: Le client est dans le nord du Qu\u00e9bec \u2014 hivers extr\u00eames. Favorisez les pneus d'hiver.` : '',
+    heavy ? `IMPORTANT: V\u00e9hicule camion/VUS \u2014 recommandez uniquement des pneus avec indice de charge \u2265 108.` : '',
+    `Soyez concis, professionnel et priorisez la s\u00e9curit\u00e9. Mentionnez le prix et les caract\u00e9ristiques.`,
   ].filter(Boolean).join('\n');
 }
 
@@ -124,9 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing vehicle, location, or tireType' });
 
   const tagMap: Record<string, string> = {
-    'Winter': 'season:Winter',
+    'Winter':     'season:Winter',
     'All-Season': 'season:All-Season',
-    'Summer': 'season:Summer',
+    'Summer':     'season:Summer',
   };
 
   try {
@@ -150,10 +150,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userMessage = isFollowUp
       ? (isEn
           ? `In-stock ${tireType} tires for reference:\n${inventoryText}\n\nPlease answer the follow-up question above.`
-          : `Pneus ${tireType} en stock pour référence:\n${inventoryText}\n\nVeuillez répondre à la question de suivi ci-dessus.`)
+          : `Pneus ${tireType} en stock pour r\u00e9f\u00e9rence:\n${inventoryText}\n\nVeuillez r\u00e9pondre \u00e0 la question de suivi ci-dessus.`)
       : (isEn
           ? `Recommend the best ${tireType} tires for a ${vehicle} in ${location}.\n\nInventory:\n${inventoryText}`
-          : `Recommandez les meilleurs pneus ${tireType} pour un ${vehicle} à ${location}.\n\nInventaire:\n${inventoryText}`);
+          : `Recommandez les meilleurs pneus ${tireType} pour un ${vehicle} \u00e0 ${location}.\n\nInventaire:\n${inventoryText}`);
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -161,7 +161,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { role: 'user', content: userMessage },
     ];
 
-    // SSE headers — must be set and flushed before any write
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
