@@ -47,7 +47,7 @@ export interface TireOption {
 async function fetchInStockTires(seasonTag: string): Promise<TireOption[]> {
   const url =
     `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/products.json` +
-    `?limit=30&tag=${encodeURIComponent(seasonTag)}&fields=id,title,tags,variants`;
+    `?limit=30&status=active&tag=${encodeURIComponent(seasonTag)}&fields=id,title,tags,variants`;
 
   const resp = await fetch(url, {
     headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
