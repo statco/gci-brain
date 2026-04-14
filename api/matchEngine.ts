@@ -38,7 +38,6 @@ interface RegionProfile {
   specialConditions: string[];
 }
 
-// All keys use straight ASCII single-quote delimiters only.
 const CITY_PROVINCE: Record<string, Province> = {
   // QC
   'montreal': 'QC', 'montreal-nord': 'QC', 'quebec city': 'QC', 'laval': 'QC',
@@ -331,7 +330,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Model is controlled by the AI_MODEL environment variable in Vercel.
   // Current value: z-ai/glm-4.7-flash (set in Vercel project settings)
-  // DO NOT hardcode the model string below - always use this const.
   const MODEL_ID = process.env.AI_MODEL || 'z-ai/glm-4.7-flash';
 
   const { vehicle, location, tireType, language, conversationHistory } = req.body ?? {};
@@ -376,40 +374,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { role: 'user', content: userMessage },
     ];
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    (res as any).flushHeaders();
-
     const openai = new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey:  AI_API_KEY,
     });
 
-    const stream = await openai.chat.completions.create({
+    // DIAGNOSTIC: non-streaming JSON response to verify full pipeline
+    const completion = await openai.chat.completions.create({
       model:      MODEL_ID,
       messages,
-      stream:     true,
+      stream:     false,
       max_tokens: 1024,
     });
 
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content ?? '';
-      if (content) {
-        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n');
-      }
-    }
-
-    res.write('data: [DONE]\n\n');
-    res.end();
+    const reply = completion.choices[0]?.message?.content ?? '';
+    return res.status(200).json({ reply });
 
   } catch (err: any) {
     console.error('matchEngine error:', err);
-    if (!res.headersSent) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '[Error: ' + err.message + ']' } }] }) + '\n\n');
-    res.write('data: [DONE]\n\n');
-    res.end();
+    return res.status(500).json({ error: err.message });
   }
 }
