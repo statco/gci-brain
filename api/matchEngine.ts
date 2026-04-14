@@ -24,6 +24,12 @@ const SUV_TRUCK_KEYWORDS = [
   'santa fe','santa cruz','sportage','veracruz',
 ];
 
+const SEASON_KEYWORDS: Record<string, string[]> = {
+  winter:    ['winter', 'hiver', 'hivernal', 'snow', 'neige'],
+  allseason: ['all-season', 'all season', 'toutes saisons', 'all-weather'],
+  summer:    ['summer', 'ete', 'performance'],
+};
+
 // -- RegionProfile ------------------------------------------------------------
 
 type Province = 'QC'|'ON'|'BC'|'AB'|'MB'|'SK'|'NS'|'NB'|'NL'|'PE'|'NT'|'YT'|'NU'|'unknown';
@@ -39,7 +45,6 @@ interface RegionProfile {
 }
 
 const CITY_PROVINCE: Record<string, Province> = {
-  // QC
   'montreal': 'QC', 'montreal-nord': 'QC', 'quebec city': 'QC', 'laval': 'QC',
   'gatineau': 'QC', 'longueuil': 'QC', 'sherbrooke': 'QC', 'saguenay': 'QC',
   'chicoutimi': 'QC', 'jonquiere': 'QC', 'alma': 'QC',
@@ -51,29 +56,21 @@ const CITY_PROVINCE: Record<string, Province> = {
   'chibougamau': 'QC', 'chapais': 'QC', 'matagami': 'QC', 'kuujjuaq': 'QC',
   'chisasibi': 'QC', 'abitibi': 'QC', 'trois-rivieres': 'QC',
   'drummondville': 'QC', 'saint-jean-sur-richelieu': 'QC',
-  // ON
   'toronto': 'ON', 'ottawa': 'ON', 'mississauga': 'ON', 'brampton': 'ON',
   'hamilton': 'ON', 'london': 'ON', 'kitchener': 'ON', 'windsor': 'ON',
   'sudbury': 'ON', 'thunder bay': 'ON', 'sault ste marie': 'ON',
   'north bay': 'ON', 'timmins': 'ON', 'barrie': 'ON', 'kingston': 'ON',
-  // BC
   'vancouver': 'BC', 'surrey': 'BC', 'burnaby': 'BC', 'richmond': 'BC',
   'kelowna': 'BC', 'abbotsford': 'BC', 'victoria': 'BC', 'nanaimo': 'BC',
   'kamloops': 'BC', 'prince george': 'BC', 'whistler': 'BC',
   'revelstoke': 'BC', 'fernie': 'BC',
-  // AB
   'calgary': 'AB', 'edmonton': 'AB', 'red deer': 'AB', 'lethbridge': 'AB',
   'medicine hat': 'AB', 'grande prairie': 'AB', 'fort mcmurray': 'AB',
   'banff': 'AB', 'canmore': 'AB',
-  // MB
   'winnipeg': 'MB', 'brandon': 'MB', 'thompson': 'MB',
-  // SK
   'saskatoon': 'SK', 'regina': 'SK', 'prince albert': 'SK', 'moose jaw': 'SK',
-  // NS
   'halifax': 'NS', 'dartmouth': 'NS', 'sydney': 'NS', 'truro': 'NS',
-  // NB
   'moncton': 'NB', 'fredericton': 'NB', 'saint john': 'NB',
-  // NL
   'st. johns': 'NL', 'corner brook': 'NL', 'labrador city': 'NL',
 };
 
@@ -256,32 +253,46 @@ interface TireOption {
   loadIndex: number; price: number; tags: string[];
 }
 
-async function fetchInStockTires(seasonTag: string): Promise<TireOption[]> {
+async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
+  // Fetch without tag filter — filter by season keyword in JS to avoid
+  // strict tag-matching failures when Shopify tag format doesn't match exactly.
   const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json' +
-    '?limit=30&tag=' + encodeURIComponent(seasonTag) + '&fields=id,title,tags,variants';
+    '?limit=50&fields=id,title,tags,variants';
 
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } });
   if (!resp.ok) throw new Error('Shopify ' + resp.status);
 
   const { products } = await resp.json() as { products: ShopifyProduct[] };
 
-  return products
-    .filter(p => p.variants.some(v => v.inventory_quantity > 0))
-    .map(p => {
-      const parts     = p.title.split(' ');
-      const liMatch   = p.tags.match(/loadindex:(\d+)/i);
-      const loadIndex = liMatch ? parseInt(liMatch[1], 10) : 0;
-      const inStock   = p.variants.find(v => v.inventory_quantity > 0)!;
-      return {
-        id:    p.id,
-        brand: parts[0] || '',
-        model: parts.slice(1, -1).join(' '),
-        size:  parts[parts.length - 1] || '',
-        loadIndex,
-        price: parseFloat(inStock.price),
-        tags:  p.tags.split(',').map(t => t.trim()),
-      };
-    });
+  // Filter to in-stock only
+  const inStock = products.filter(p => p.variants.some(v => v.inventory_quantity > 0));
+
+  // Filter by season keywords against title + tags
+  const key = tireType.toLowerCase().replace('-', '').replace(' ', '');
+  const keywords = SEASON_KEYWORDS[key] || SEASON_KEYWORDS['allseason'];
+  const seasonMatched = inStock.filter(p => {
+    const text = (p.title + ' ' + p.tags).toLowerCase();
+    return keywords.some(k => text.includes(k));
+  });
+
+  // Fall back to all in-stock tires if season filter yields nothing
+  const finalProducts = seasonMatched.length > 0 ? seasonMatched : inStock;
+
+  return finalProducts.map(p => {
+    const parts     = p.title.split(' ');
+    const liMatch   = p.tags.match(/loadindex:(\d+)/i);
+    const loadIndex = liMatch ? parseInt(liMatch[1], 10) : 0;
+    const inStockV  = p.variants.find(v => v.inventory_quantity > 0)!;
+    return {
+      id:    p.id,
+      brand: parts[0] || '',
+      model: parts.slice(1, -1).join(' '),
+      size:  parts[parts.length - 1] || '',
+      loadIndex,
+      price: parseFloat(inStockV.price),
+      tags:  p.tags.split(',').map(t => t.trim()),
+    };
+  });
 }
 
 function isHeavyVehicle(v: string): boolean {
@@ -329,25 +340,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST')    return res.status(405).json({ error: 'Method not allowed' });
 
   // Model is controlled by the AI_MODEL environment variable in Vercel.
-  // Current value: z-ai/glm-4.7-flash (set in Vercel project settings)
   const MODEL_ID = process.env.AI_MODEL || 'z-ai/glm-4.7-flash';
 
   const { vehicle, location, tireType, language, conversationHistory } = req.body ?? {};
   if (!vehicle || !location || !tireType)
     return res.status(400).json({ error: 'Missing vehicle, location, or tireType' });
 
-  const tagMap: Record<string, string> = {
-    'Winter':     'season:Winter',
-    'All-Season': 'season:All-Season',
-    'Summer':     'season:Summer',
-  };
-
   try {
-    let tires = await fetchInStockTires(tagMap[tireType] ?? 'season:All-Season');
-    const heavy = isHeavyVehicle(vehicle);
+    let tires = await fetchInStockTires(tireType as string);
+    console.log('[matchEngine] tires fetched:', tires.length);
+
+    if (tires.length === 0) {
+      return res.status(200).json({
+        reply: language === 'fr'
+          ? "Aucun pneu en stock ne correspond a votre recherche pour le moment. Veuillez appeler le magasin pour obtenir de l'aide personnalisee."
+          : 'No matching tires currently in stock for your search. Please call the store for personalized assistance.',
+      });
+    }
+
+    const heavy = isHeavyVehicle(vehicle as string);
     if (heavy) tires = tires.filter(t => t.loadIndex === 0 || t.loadIndex >= 108);
 
-    const regionProfile = getRegionProfile(location);
+    const regionProfile = getRegionProfile(location as string);
     const lang  = language === 'fr' ? 'fr' : 'en';
     const isEn  = lang === 'en';
     const systemPrompt = buildSystemPrompt(vehicle, location, lang, regionProfile, heavy);
@@ -379,7 +393,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       apiKey:  AI_API_KEY,
     });
 
-    // DIAGNOSTIC: non-streaming JSON response to verify full pipeline
+    // DIAGNOSTIC: non-streaming JSON response
     const completion = await openai.chat.completions.create({
       model:      MODEL_ID,
       messages,
