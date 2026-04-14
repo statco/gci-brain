@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 type Language = 'en' | 'fr';
-type Phase = 'form' | 'streaming' | 'chat';
+type Phase = 'form' | 'loading' | 'chat';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -63,7 +63,7 @@ const UI = {
     vehicle: 'Votre v\u00e9hicule',
     vehiclePh: 'ex. Toyota Corolla 2021',
     location: 'Votre localisation',
-    locationPh: 'ex. Montr\u00e9al, QC',
+    locationPh: 'ex. Montreal, QC',
     tireType: 'Type de pneu',
     submit: 'Trouver mes pneus',
     followUpPh: 'Posez une question de suivi\u2026',
@@ -71,7 +71,7 @@ const UI = {
     startOver: 'Recommencer',
     winter: 'Hiver',
     allSeason: 'Quatre-saisons',
-    summer: '\u00c9t\u00e9',
+    summer: 'Ete',
   },
 };
 
@@ -82,7 +82,6 @@ export default function MatchEngineChat() {
   const [location, setLocation] = useState('');
   const [tireType, setTireType] = useState('Winter');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streamingText, setStreamingText] = useState('');
   const [followUp, setFollowUp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -100,12 +99,11 @@ export default function MatchEngineChat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingText]);
+  }, [messages, phase]);
 
-  async function streamResponse(history: Message[]) {
+  async function fetchResponse(history: Message[]) {
     setIsLoading(true);
-    setStreamingText('');
-    setPhase('streaming');
+    setPhase('loading');
 
     try {
       const response = await fetch('/api/matchEngine', {
@@ -120,46 +118,27 @@ export default function MatchEngineChat() {
         }),
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errData.error || 'HTTP ' + response.status);
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullText = '';
+      const data = await response.json();
+      const reply: string = data.reply || '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const raw = line.slice(6).trim();
-          if (raw === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(raw);
-            const chunk = parsed.choices?.[0]?.delta?.content ?? '';
-            if (chunk) {
-              fullText += chunk;
-              setStreamingText(fullText);
-            }
-          } catch {}
-        }
-      }
-
-      setMessages(prev => [...prev, { role: 'assistant', content: fullText }]);
-      setStreamingText('');
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
       setPhase('chat');
-    } catch (err) {
-      console.error('Stream error:', err);
+    } catch (err: any) {
+      console.error('Fetch error:', err);
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: lang === 'fr' ? "Une erreur s'est produite. Veuillez r\u00e9essayer." : 'An error occurred. Please try again.' },
+        {
+          role: 'assistant',
+          content: lang === 'fr'
+            ? "Une erreur s'est produite. Veuillez r\u00e9essayer."
+            : 'An error occurred. Please try again.',
+        },
       ]);
-      setStreamingText('');
       setPhase('chat');
     } finally {
       setIsLoading(false);
@@ -169,10 +148,11 @@ export default function MatchEngineChat() {
   function handleSubmit() {
     const userMsg: Message = {
       role: 'user',
-      content: `${vehicle} | ${location} | ${tireType}`,
+      content: vehicle + ' | ' + location + ' | ' + tireType,
     };
-    setMessages([userMsg]);
-    streamResponse([]);
+    const initial = [userMsg];
+    setMessages(initial);
+    fetchResponse([]);
   }
 
   function handleFollowUp() {
@@ -181,13 +161,12 @@ export default function MatchEngineChat() {
     const updatedHistory = [...messages, userMsg];
     setMessages(updatedHistory);
     setFollowUp('');
-    streamResponse(updatedHistory);
+    fetchResponse(updatedHistory);
   }
 
   function handleStartOver() {
     setPhase('form');
     setMessages([]);
-    setStreamingText('');
     setFollowUp('');
     setVehicle('');
     setLocation('');
@@ -301,8 +280,8 @@ export default function MatchEngineChat() {
           </div>
         )}
 
-        {/* CHAT + STREAMING PHASE */}
-        {(phase === 'streaming' || phase === 'chat') && (
+        {/* LOADING + CHAT PHASE */}
+        {(phase === 'loading' || phase === 'chat') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {messages.map((msg, i) => (
               <div
@@ -333,18 +312,18 @@ export default function MatchEngineChat() {
               </div>
             ))}
 
-            {/* Streaming bubble */}
-            {phase === 'streaming' && (
+            {/* Loading bubble */}
+            {phase === 'loading' && (
               <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                 <div style={{ flexShrink: 0, marginTop: 4 }}>{GCI_CHEVRON}</div>
                 <div
                   style={{
                     maxWidth: '80%', padding: '12px 16px',
                     borderRadius: '4px 18px 18px 18px',
-                    backgroundColor: '#1c1c1c', fontSize: 15, lineHeight: 1.65, whiteSpace: 'pre-wrap',
+                    backgroundColor: '#1c1c1c', fontSize: 15, lineHeight: 1.65,
                   }}
                 >
-                  {streamingText ? renderText(streamingText) : <TypingDots />}
+                  <TypingDots />
                 </div>
               </div>
             )}
