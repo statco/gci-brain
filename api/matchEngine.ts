@@ -326,7 +326,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST')    return res.status(405).json({ error: 'Method not allowed' });
 
-  const MODEL_ID = process.env.AI_MODEL || 'z-ai/glm-4.7-flash';
+  // Temporarily using openai/gpt-4o-mini to isolate whether empty replies
+  // are specific to z-ai/glm-4.7-flash on OpenRouter with stream:false.
+  const MODEL_ID = process.env.AI_MODEL || 'openai/gpt-4o-mini';
 
   const { vehicle, location, tireType, language, conversationHistory } = req.body ?? {};
   if (!vehicle || !location || !tireType)
@@ -386,8 +388,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         stream:     false,
         max_tokens: 800,
       });
-      const reply = completion.choices[0]?.message?.content || '';
+
+      console.log('[matchEngine] raw choice:', JSON.stringify(completion.choices[0]));
+
+      const reply = completion.choices[0]?.message?.content ?? '';
       console.log('[matchEngine] AI reply length:', reply.length);
+
       if (!reply) {
         return res.status(200).json({ reply: 'AI returned empty — tires found: ' + tires.length });
       }
