@@ -209,7 +209,6 @@ function getRegionProfile(location: string): RegionProfile {
 function buildRegionAppend(profile: RegionProfile, lang: string): string {
   const isEn = lang !== 'fr';
   const { winterSeverity, specialConditions, terrain } = profile;
-
   const urgencyEN = [
     '',
     'Mild winter climate - all-season tires may suffice.',
@@ -226,11 +225,9 @@ function buildRegionAppend(profile: RegionProfile, lang: string): string {
     "Hivers severes - des pneus d'hiver dedies sont essentiels.",
     "Hivers extremes - des pneus d'hiver premium sont critiques pour la securite.",
   ];
-
   const urgency = isEn ? urgencyEN[winterSeverity] : urgencyFR[winterSeverity];
-  const topConditions = specialConditions.slice(0, 2);
   const parts: string[] = [urgency];
-
+  const topConditions = specialConditions.slice(0, 2);
   if (topConditions.length) {
     parts.push(isEn
       ? 'Regional factors: ' + topConditions.join('; ') + '.'
@@ -254,8 +251,6 @@ interface TireOption {
 }
 
 async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
-  // Fetch without tag filter — filter by season keyword in JS to avoid
-  // strict tag-matching failures when Shopify tag format doesn't match exactly.
   const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json' +
     '?limit=50&fields=id,title,tags,variants';
 
@@ -264,18 +259,15 @@ async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
 
   const { products } = await resp.json() as { products: ShopifyProduct[] };
 
-  // Filter to in-stock only
   const inStock = products.filter(p => p.variants.some(v => v.inventory_quantity > 0));
 
-  // Filter by season keywords against title + tags
-  const key = tireType.toLowerCase().replace('-', '').replace(' ', '');
+  const key = tireType.toLowerCase().replace(/-/g, '').replace(/\s/g, '');
   const keywords = SEASON_KEYWORDS[key] || SEASON_KEYWORDS['allseason'];
   const seasonMatched = inStock.filter(p => {
     const text = (p.title + ' ' + p.tags).toLowerCase();
     return keywords.some(k => text.includes(k));
   });
 
-  // Fall back to all in-stock tires if season filter yields nothing
   const finalProducts = seasonMatched.length > 0 ? seasonMatched : inStock;
 
   return finalProducts.map(p => {
@@ -301,15 +293,11 @@ function isHeavyVehicle(v: string): boolean {
 }
 
 function buildSystemPrompt(
-  vehicle: string,
-  location: string,
-  lang: string,
-  regionProfile: RegionProfile,
-  heavy: boolean,
+  vehicle: string, location: string, lang: string,
+  regionProfile: RegionProfile, heavy: boolean,
 ): string {
   const isEn = lang !== 'fr';
   const regionAppend = buildRegionAppend(regionProfile, lang);
-
   if (isEn) {
     return [
       'You are an expert tire consultant for GCI Tires (Canada).',
@@ -319,7 +307,6 @@ function buildSystemPrompt(
       'Be concise, professional, and always prioritise safety. Mention price and key features.',
     ].filter(Boolean).join('\n');
   }
-
   return [
     'Vous etes un expert en pneus pour GCI Tires (Canada).',
     "Recommandez les 2-3 meilleurs pneus de l'inventaire ci-dessous pour le vehicule et la region du client.",
@@ -339,7 +326,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST')    return res.status(405).json({ error: 'Method not allowed' });
 
-  // Model is controlled by the AI_MODEL environment variable in Vercel.
   const MODEL_ID = process.env.AI_MODEL || 'z-ai/glm-4.7-flash';
 
   const { vehicle, location, tireType, language, conversationHistory } = req.body ?? {};
@@ -362,8 +348,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (heavy) tires = tires.filter(t => t.loadIndex === 0 || t.loadIndex >= 108);
 
     const regionProfile = getRegionProfile(location as string);
-    const lang  = language === 'fr' ? 'fr' : 'en';
-    const isEn  = lang === 'en';
+    const lang = language === 'fr' ? 'fr' : 'en';
+    const isEn = lang === 'en';
     const systemPrompt = buildSystemPrompt(vehicle, location, lang, regionProfile, heavy);
 
     const inventoryText = tires.length
@@ -393,19 +379,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       apiKey:  AI_API_KEY,
     });
 
-    // DIAGNOSTIC: non-streaming JSON response
-    const completion = await openai.chat.completions.create({
-      model:      MODEL_ID,
-      messages,
-      stream:     false,
-      max_tokens: 1024,
-    });
-
-    const reply = completion.choices[0]?.message?.content ?? '';
-    return res.status(200).json({ reply });
+    try {
+      const completion = await openai.chat.completions.create({
+        model:      MODEL_ID,
+        messages,
+        stream:     false,
+        max_tokens: 800,
+      });
+      const reply = completion.choices[0]?.message?.content || '';
+      console.log('[matchEngine] AI reply length:', reply.length);
+      if (!reply) {
+        return res.status(200).json({ reply: 'AI returned empty — tires found: ' + tires.length });
+      }
+      return res.status(200).json({ reply });
+    } catch (aiError: any) {
+      console.error('[matchEngine] AI call failed:', aiError?.message, aiError?.status);
+      return res.status(200).json({
+        reply: 'AI error: ' + (aiError?.message || 'unknown') + ' | tires: ' + tires.length,
+      });
+    }
 
   } catch (err: any) {
-    console.error('matchEngine error:', err);
+    console.error('[matchEngine] handler error:', err);
     return res.status(500).json({ error: err.message });
   }
 }
