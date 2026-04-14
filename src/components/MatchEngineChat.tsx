@@ -33,12 +33,23 @@ function TypingDots() {
 }
 
 function renderText(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i}>{part.slice(2, -2)}</strong>;
-    }
-    return <span key={i}>{part}</span>;
+  return text.split('\n').flatMap((line, lineIdx, arr) => {
+    // Strip heading markers (###, ##, #)
+    let processed = line.replace(/^#{1,3}\s*/, '');
+    // Replace leading dash bullets with •
+    processed = processed.replace(/^-\s+/, '\u2022 ');
+
+    // Handle **bold** inline
+    const parts = processed.split(/(\*\*[^*]+\*\*)/g);
+    const inline: React.ReactNode[] = parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={lineIdx + '-' + i}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+
+    // Preserve newlines between lines (pre-wrap handles rendering)
+    return lineIdx < arr.length - 1 ? [...inline, '\n'] : inline;
   });
 }
 
