@@ -8,6 +8,16 @@ interface Message {
   content: string;
 }
 
+interface TireCard {
+  id: number;
+  brand: string;
+  model: string;
+  size: string;
+  price: number;
+  image: string;
+  handle: string;
+}
+
 const GCI_CHEVRON = (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 60" width="22" height="30">
     <polygon points="0,15 22,15 22,0 44,30 22,60 22,45 0,45" fill="#B8192E" />
@@ -68,6 +78,7 @@ const UI = {
     winter: 'Winter',
     allSeason: 'All-Season',
     summer: 'Summer',
+    shopNow: 'Shop Now',
   },
   fr: {
     title: 'Trouver mes pneus',
@@ -83,6 +94,7 @@ const UI = {
     winter: 'Hiver',
     allSeason: 'Quatre-saisons',
     summer: 'Ete',
+    shopNow: 'Acheter',
   },
 };
 
@@ -93,6 +105,7 @@ export default function MatchEngineChat() {
   const [location, setLocation] = useState('');
   const [tireType, setTireType] = useState('Winter');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [tireCards, setTireCards] = useState<TireCard[]>([]);
   const [followUp, setFollowUp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -110,7 +123,7 @@ export default function MatchEngineChat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, phase]);
+  }, [messages, tireCards, phase]);
 
   async function fetchResponse(history: Message[]) {
     setIsLoading(true);
@@ -138,6 +151,9 @@ export default function MatchEngineChat() {
       const data = await response.json();
       const reply: string = data.reply || '';
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      if (Array.isArray(data.tires) && data.tires.length > 0) {
+        setTireCards(data.tires);
+      }
       setPhase('chat');
     } catch (err: any) {
       setMessages(prev => [
@@ -161,6 +177,7 @@ export default function MatchEngineChat() {
       content: vehicle + ' | ' + location + ' | ' + tireType,
     };
     setMessages([userMsg]);
+    setTireCards([]);
     fetchResponse([]);
   }
 
@@ -176,6 +193,7 @@ export default function MatchEngineChat() {
   function handleStartOver() {
     setPhase('form');
     setMessages([]);
+    setTireCards([]);
     setFollowUp('');
     setVehicle('');
     setLocation('');
@@ -336,6 +354,93 @@ export default function MatchEngineChat() {
                 </div>
               </div>
             )}
+
+            {/* Tire card row */}
+            {phase === 'chat' && tireCards.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 12,
+                    overflowX: 'auto',
+                    paddingBottom: 8,
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: '#333 transparent',
+                  }}
+                >
+                  {tireCards.map(tire => (
+                    <a
+                      key={tire.id}
+                      href={`https://gcitires.com/products/${tire.handle}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        flexShrink: 0,
+                        width: 160,
+                        backgroundColor: '#161616',
+                        border: '1px solid #2a2a2a',
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        textDecoration: 'none',
+                        color: '#fff',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        transition: 'border-color 0.2s',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = '#B8192E')}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
+                    >
+                      {/* Image */}
+                      <div style={{ width: '100%', height: 120, backgroundColor: '#0e0e0e', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        {tire.image ? (
+                          <img
+                            src={tire.image}
+                            alt={`${tire.brand} ${tire.model}`}
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          />
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="48" height="48" opacity={0.3}>
+                            <circle cx="32" cy="32" r="28" fill="none" stroke="#fff" strokeWidth="4" />
+                            <circle cx="32" cy="32" r="10" fill="none" stroke="#fff" strokeWidth="4" />
+                          </svg>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: '#B8192E', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                          {tire.brand}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.3 }}>
+                          {tire.model}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                          {tire.size}
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: '#fff', marginTop: 4 }}>
+                          ${tire.price.toFixed(2)}
+                        </div>
+                        <div style={{
+                          marginTop: 8,
+                          backgroundColor: '#B8192E',
+                          color: '#fff',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.06em',
+                          textAlign: 'center',
+                          padding: '6px 0',
+                          borderRadius: 6,
+                        }}>
+                          {t.shopNow}
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div ref={bottomRef} />
           </div>
         )}
