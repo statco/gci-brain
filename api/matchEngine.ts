@@ -194,7 +194,7 @@ interface ShopifyProduct { id: number; title: string; tags: string; variants: Sh
 interface TireOption { id: number; brand: string; model: string; size: string; loadIndex: number; price: number; tags: string[]; }
 
 async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
-  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&fields=id,title,tags,variants';
+  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,variants';
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } });
   if (!resp.ok) throw new Error('Shopify ' + resp.status);
   const { products } = await resp.json() as { products: ShopifyProduct[] };
@@ -286,7 +286,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const reply = completion.choices[0]?.message?.content ?? '';
 
       if (!reply) {
-        return res.status(200).json({ reply: 'AI returned empty — tires found: ' + tires.length });
+        return res.status(200).json({ reply: 'AI returned empty \u2014 tires found: ' + tires.length });
       }
       return res.status(200).json({ reply });
     } catch (aiError: any) {
