@@ -26,8 +26,8 @@ const SUV_TRUCK_KEYWORDS = [
 
 const SEASON_KEYWORDS: Record<string, string[]> = {
   winter:    ['winter', 'hiver', 'hivernal', 'snow', 'neige'],
-  allseason: ['all-season', 'all season', 'toutes saisons', 'all-weather'],
-  summer:    ['summer', 'ete', 'performance'],
+  allseason: ['all-season', 'all season', 'toutes saisons', 'all-weather', 'quatre saisons', '4 saisons'],
+  summer:    ['summer', 'ete', 'performance', 'sport'],
 };
 
 type Province = 'QC'|'ON'|'BC'|'AB'|'MB'|'SK'|'NS'|'NB'|'NL'|'PE'|'NT'|'YT'|'NU'|'unknown';
@@ -255,8 +255,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const lang = language === 'fr' ? 'fr' : 'en';
     const systemPrompt = buildSystemPrompt(vehicle, location, lang, regionProfile, heavy);
 
-    console.log('[matchEngine] tire sent to AI:', JSON.stringify(tires[0]));
-
     const tireList = tires.length > 0
       ? JSON.stringify(tires, null, 2)
       : 'No specific tires found in inventory.';
@@ -285,12 +283,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model: MODEL_ID, messages, stream: false, max_tokens: 800,
       });
 
-      console.log('[matchEngine] raw choice:', JSON.stringify(completion.choices[0]));
-      console.log('[matchEngine] AI content:', completion.choices[0]?.message?.content);
-      console.log('[matchEngine] finish_reason:', completion.choices[0]?.finish_reason);
-
       const reply = completion.choices[0]?.message?.content ?? '';
-      console.log('[matchEngine] AI reply length:', reply.length);
 
       if (!reply) {
         return res.status(200).json({ reply: 'AI returned empty — tires found: ' + tires.length });
