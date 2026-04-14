@@ -84,6 +84,7 @@ export default function MatchEngineChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [followUp, setFollowUp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [rawReply, setRawReply] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const t = UI[lang];
 
@@ -124,12 +125,17 @@ export default function MatchEngineChat() {
       }
 
       const data = await response.json();
-      const reply: string = data.reply || '';
+      console.log('API reply:', data);
+      if (!data.reply) { alert('No reply in data: ' + JSON.stringify(data)); }
 
+      setRawReply(data.reply || JSON.stringify(data));
+
+      const reply: string = data.reply || '';
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
       setPhase('chat');
     } catch (err: any) {
       console.error('Fetch error:', err);
+      setRawReply('ERROR: ' + err.message);
       setMessages(prev => [
         ...prev,
         {
@@ -168,6 +174,7 @@ export default function MatchEngineChat() {
     setPhase('form');
     setMessages([]);
     setFollowUp('');
+    setRawReply('');
     setVehicle('');
     setLocation('');
     setTireType('Winter');
@@ -328,6 +335,14 @@ export default function MatchEngineChat() {
               </div>
             )}
             <div ref={bottomRef} />
+          </div>
+        )}
+
+        {/* RAW API RESPONSE — diagnostic, always visible when present */}
+        {rawReply && (
+          <div style={{ color: 'lime', padding: '16px', fontSize: '12px',
+                        wordBreak: 'break-all', background: '#111', marginTop: 24 }}>
+            RAW: {rawReply}
           </div>
         )}
       </div>
