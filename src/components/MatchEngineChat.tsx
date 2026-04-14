@@ -106,6 +106,7 @@ export default function MatchEngineChat() {
     setPhase('loading');
 
     try {
+      console.log('[MatchEngine] submitting tireType:', tireType);
       const response = await fetch('/api/matchEngine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
