@@ -18,38 +18,134 @@ interface TireCard {
   handle: string;
 }
 
+interface CardState {
+  qty: number;
+  install: boolean;
+}
+
+const LOADING_STEPS: Record<Language, string[]> = {
+  en: [
+    'Consulting expert databases\u2026',
+    'Verifying fitment\u2026',
+    'Checking GCI inventory\u2026',
+  ],
+  fr: [
+    'Consultation des bases de donn\u00e9es\u2026',
+    'V\u00e9rification de la compatibilit\u00e9\u2026',
+    "V\u00e9rification de l\u2019inventaire GCI\u2026",
+  ],
+};
+
+const INSTALL_PRICE = 15;
+
 const GCI_CHEVRON = (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 60" width="22" height="30">
     <polygon points="0,15 22,15 22,0 44,30 22,60 22,45 0,45" fill="#B8192E" />
   </svg>
 );
 
-function TypingDots() {
+function LoadingSteps({ lang }: { lang: Language }) {
+  const [activeStep, setActiveStep] = useState(0);
+  const steps = LOADING_STEPS[lang];
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setActiveStep(1), 800);
+    const t2 = setTimeout(() => setActiveStep(2), 1600);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
   return (
-    <div style={{ display: 'flex', gap: 4, padding: '10px 0' }}>
-      {[0, 1, 2].map(i => (
-        <span
-          key={i}
-          className="animate-bounce"
-          style={{
-            width: 8, height: 8, borderRadius: '50%',
-            backgroundColor: '#B8192E', display: 'inline-block',
-            animationDelay: `${i * 0.15}s`,
-          }}
-        />
-      ))}
+    <div
+      style={{
+        backgroundColor: '#161616',
+        border: '1px solid #2a2a2a',
+        borderRadius: 14,
+        padding: '16px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+        maxWidth: '80%',
+      }}
+    >
+      {steps.map((step, i) => {
+        const isDone = i < activeStep;
+        const isActive = i === activeStep;
+        return (
+          <div
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              opacity: i <= activeStep ? 1 : 0.28,
+              transition: 'opacity 0.45s ease',
+            }}
+          >
+            <div
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: '50%',
+                flexShrink: 0,
+                backgroundColor: isDone ? '#16a34a' : isActive ? '#B8192E' : '#232323',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background-color 0.45s ease',
+              }}
+            >
+              {isDone ? (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <polyline
+                    points="2,6 5,9 10,3"
+                    stroke="#fff"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : isActive ? (
+                <div
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    backgroundColor: '#fff',
+                    animation: 'gciBlink 1s ease-in-out infinite',
+                  }}
+                />
+              ) : (
+                <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#444' }} />
+              )}
+            </div>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: isActive ? 600 : 400,
+                color: i <= activeStep ? '#fff' : '#555',
+                transition: 'color 0.45s ease',
+              }}
+            >
+              {step}
+            </span>
+          </div>
+        );
+      })}
+
+      <style>{`
+        @keyframes gciBlink {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%       { opacity: 0.4; transform: scale(0.75); }
+        }
+      `}</style>
     </div>
   );
 }
 
 function renderText(text: string) {
   return text.split('\n').flatMap((line, lineIdx, arr) => {
-    // Strip heading markers (###, ##, #)
     let processed = line.replace(/^#{1,3}\s*/, '');
-    // Replace leading dash bullets with •
     processed = processed.replace(/^-\s+/, '\u2022 ');
-
-    // Handle **bold** inline
     const parts = processed.split(/(\*\*[^*]+\*\*)/g);
     const inline: React.ReactNode[] = parts.map((part, i) => {
       if (part.startsWith('**') && part.endsWith('**')) {
@@ -57,8 +153,6 @@ function renderText(text: string) {
       }
       return part;
     });
-
-    // Preserve newlines between lines (pre-wrap handles rendering)
     return lineIdx < arr.length - 1 ? [...inline, '\n'] : inline;
   });
 }
@@ -78,7 +172,11 @@ const UI = {
     winter: 'Winter',
     allSeason: 'All-Season',
     summer: 'Summer',
-    shopNow: 'Shop Now',
+    verified: 'GCI VERIFIED',
+    installation: 'Add Installation',
+    perTire: '/tire',
+    total: 'Total',
+    selectBook: 'SELECT & BOOK',
   },
   fr: {
     title: 'Trouver mes pneus',
@@ -94,7 +192,11 @@ const UI = {
     winter: 'Hiver',
     allSeason: 'Quatre-saisons',
     summer: 'Ete',
-    shopNow: 'Acheter',
+    verified: 'GCI CERTIFI\u00c9',
+    installation: 'Ajouter l\u2019installation',
+    perTire: '/pneu',
+    total: 'Total',
+    selectBook: 'S\u00c9LECTIONNER',
   },
 };
 
@@ -106,6 +208,7 @@ export default function MatchEngineChat() {
   const [tireType, setTireType] = useState('Winter');
   const [messages, setMessages] = useState<Message[]>([]);
   const [tireCards, setTireCards] = useState<TireCard[]>([]);
+  const [cardStates, setCardStates] = useState<Record<number, CardState>>({});
   const [followUp, setFollowUp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -124,6 +227,18 @@ export default function MatchEngineChat() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, tireCards, phase]);
+
+  // Initialise card states whenever a new set of tires arrives
+  useEffect(() => {
+    if (tireCards.length === 0) return;
+    const initial: Record<number, CardState> = {};
+    tireCards.forEach(tire => { initial[tire.id] = { qty: 4, install: false }; });
+    setCardStates(initial);
+  }, [tireCards]);
+
+  function updateCard(id: number, patch: Partial<CardState>) {
+    setCardStates(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }
 
   async function fetchResponse(history: Message[]) {
     setIsLoading(true);
@@ -178,6 +293,7 @@ export default function MatchEngineChat() {
     };
     setMessages([userMsg]);
     setTireCards([]);
+    setCardStates({});
     fetchResponse([]);
   }
 
@@ -194,6 +310,7 @@ export default function MatchEngineChat() {
     setPhase('form');
     setMessages([]);
     setTireCards([]);
+    setCardStates({});
     setFollowUp('');
     setVehicle('');
     setLocation('');
@@ -339,19 +456,11 @@ export default function MatchEngineChat() {
               </div>
             ))}
 
-            {/* Loading bubble */}
+            {/* 3-step loading card */}
             {phase === 'loading' && (
               <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                 <div style={{ flexShrink: 0, marginTop: 4 }}>{GCI_CHEVRON}</div>
-                <div
-                  style={{
-                    maxWidth: '80%', padding: '12px 16px',
-                    borderRadius: '4px 18px 18px 18px',
-                    backgroundColor: '#1c1c1c', fontSize: 15, lineHeight: 1.65,
-                  }}
-                >
-                  <TypingDots />
-                </div>
+                <LoadingSteps lang={lang} />
               </div>
             )}
 
@@ -361,82 +470,166 @@ export default function MatchEngineChat() {
                 <div
                   style={{
                     display: 'flex',
-                    gap: 12,
+                    gap: 14,
                     overflowX: 'auto',
-                    paddingBottom: 8,
+                    paddingBottom: 10,
                     scrollbarWidth: 'thin',
                     scrollbarColor: '#333 transparent',
                   }}
                 >
-                  {tireCards.map(tire => (
-                    <a
-                      key={tire.id}
-                      href={`https://gcitires.com/products/${tire.handle}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        flexShrink: 0,
-                        width: 160,
-                        backgroundColor: '#161616',
-                        border: '1px solid #2a2a2a',
-                        borderRadius: 12,
-                        overflow: 'hidden',
-                        textDecoration: 'none',
-                        color: '#fff',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        transition: 'border-color 0.2s',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.borderColor = '#B8192E')}
-                      onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
-                    >
-                      {/* Image */}
-                      <div style={{ width: '100%', height: 120, backgroundColor: '#0e0e0e', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                        {tire.image ? (
-                          <img
-                            src={tire.image}
-                            alt={`${tire.brand} ${tire.model}`}
-                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                          />
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="48" height="48" opacity={0.3}>
-                            <circle cx="32" cy="32" r="28" fill="none" stroke="#fff" strokeWidth="4" />
-                            <circle cx="32" cy="32" r="10" fill="none" stroke="#fff" strokeWidth="4" />
-                          </svg>
-                        )}
-                      </div>
+                  {tireCards.map(tire => {
+                    const cs = cardStates[tire.id] ?? { qty: 4, install: false };
+                    const totalPrice = cs.qty * tire.price + (cs.install ? cs.qty * INSTALL_PRICE : 0);
+                    const bookUrl = `https://gcitires.com/products/${tire.handle}?qty=${cs.qty}`;
 
-                      {/* Info */}
-                      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                        <div style={{ fontSize: 11, fontWeight: 800, color: '#B8192E', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                          {tire.brand}
-                        </div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.3 }}>
-                          {tire.model}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-                          {tire.size}
-                        </div>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: '#fff', marginTop: 4 }}>
-                          ${tire.price.toFixed(2)}
-                        </div>
+                    return (
+                      <div
+                        key={tire.id}
+                        style={{
+                          flexShrink: 0,
+                          width: 200,
+                          backgroundColor: '#161616',
+                          border: '1px solid #2a2a2a',
+                          borderRadius: 14,
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }}
+                      >
+                        {/* GCI VERIFIED badge */}
                         <div style={{
-                          marginTop: 8,
-                          backgroundColor: '#B8192E',
-                          color: '#fff',
-                          fontSize: 11,
-                          fontWeight: 800,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.06em',
-                          textAlign: 'center',
-                          padding: '6px 0',
-                          borderRadius: 6,
+                          backgroundColor: '#0d1f0d',
+                          borderBottom: '1px solid #1a2e1a',
+                          padding: '5px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
                         }}>
-                          {t.shopNow}
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                            <circle cx="6.5" cy="6.5" r="6.5" fill="#16a34a" />
+                            <polyline points="3.5,6.5 5.5,8.5 9.5,4.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: '#4ade80', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
+                            {t.verified}
+                          </span>
+                        </div>
+
+                        {/* Image */}
+                        <div style={{ width: '100%', height: 120, backgroundColor: '#0e0e0e', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                          {tire.image ? (
+                            <img
+                              src={tire.image}
+                              alt={`${tire.brand} ${tire.model}`}
+                              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                            />
+                          ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="48" height="48" opacity={0.25}>
+                              <circle cx="32" cy="32" r="28" fill="none" stroke="#fff" strokeWidth="4" />
+                              <circle cx="32" cy="32" r="10" fill="none" stroke="#fff" strokeWidth="4" />
+                            </svg>
+                          )}
+                        </div>
+
+                        {/* Info + controls */}
+                        <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: '#B8192E', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                              {tire.brand}
+                            </div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.3, marginTop: 2 }}>
+                              {tire.model}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                              {tire.size}
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: 13, color: '#aaa' }}>
+                            <span style={{ color: '#fff', fontWeight: 700 }}>${tire.price.toFixed(2)}</span>
+                            <span style={{ fontSize: 11 }}> / tire</span>
+                          </div>
+
+                          {/* Quantity selector */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                              onClick={() => updateCard(tire.id, { qty: Math.max(1, cs.qty - 1) })}
+                              style={{
+                                width: 26, height: 26, borderRadius: 6,
+                                backgroundColor: '#232323', border: '1px solid #333',
+                                color: '#fff', fontSize: 16, fontWeight: 700,
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                lineHeight: 1, padding: 0,
+                              }}
+                            >−</button>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: '#fff', minWidth: 20, textAlign: 'center' }}>
+                              {cs.qty}
+                            </span>
+                            <button
+                              onClick={() => updateCard(tire.id, { qty: Math.min(8, cs.qty + 1) })}
+                              style={{
+                                width: 26, height: 26, borderRadius: 6,
+                                backgroundColor: '#232323', border: '1px solid #333',
+                                color: '#fff', fontSize: 16, fontWeight: 700,
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                lineHeight: 1, padding: 0,
+                              }}
+                            >+</button>
+                          </div>
+
+                          {/* Installation checkbox */}
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={cs.install}
+                              onChange={e => updateCard(tire.id, { install: e.target.checked })}
+                              style={{ marginTop: 2, accentColor: '#B8192E', cursor: 'pointer' }}
+                            />
+                            <span style={{ fontSize: 11, color: '#aaa', lineHeight: 1.4 }}>
+                              {t.installation}
+                              <span style={{ color: '#B8192E', fontWeight: 700 }}> +${INSTALL_PRICE.toFixed(2)}{t.perTire}</span>
+                            </span>
+                          </label>
+
+                          {/* Total */}
+                          <div style={{
+                            backgroundColor: '#0e0e0e',
+                            border: '1px solid #232323',
+                            borderRadius: 8,
+                            padding: '7px 10px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}>
+                            <span style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t.total}</span>
+                            <span style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>${totalPrice.toFixed(2)}</span>
+                          </div>
+
+                          {/* SELECT & BOOK button */}
+                          <a
+                            href={bookUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'block',
+                              backgroundColor: '#B8192E',
+                              color: '#fff',
+                              textDecoration: 'none',
+                              textAlign: 'center',
+                              fontSize: 11,
+                              fontWeight: 800,
+                              letterSpacing: '0.07em',
+                              textTransform: 'uppercase',
+                              padding: '9px 0',
+                              borderRadius: 8,
+                              marginTop: 2,
+                            }}
+                          >
+                            {t.selectBook}
+                          </a>
                         </div>
                       </div>
-                    </a>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
