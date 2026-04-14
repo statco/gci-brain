@@ -40,7 +40,7 @@ interface RegionProfile {
 
 const CITY_PROVINCE: Record<string, Province> = {
   // QC
-  'montreal':'QC','montréal':'QC','quebec city':'QC','québec':'QC','laval':'QC',
+  'montreal':'QC',’montréal’:'QC','quebec city':'QC','québec':'QC','laval':'QC',
   'gatineau':'QC','longueuil':'QC','sherbrooke':'QC','saguenay':'QC',
   'chicoutimi':'QC','jonquière':'QC','jonquiere':'QC','alma':'QC',
   'roberval':'QC','dolbeau':'QC','mistassini':'QC','baie-comeau':'QC',
@@ -323,6 +323,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST')    return res.status(405).json({ error: 'Method not allowed' });
 
+  // ─── AI MODEL CONFIG ──────────────────────────────────────────────────────────────────────────
+  // Model is controlled by the AI_MODEL environment variable in Vercel.
+  // Current value: z-ai/glm-4.7-flash (set in Vercel project settings)
+  // DO NOT hardcode the model string below — always use this const.
+  const AI_MODEL = process.env.AI_MODEL || 'z-ai/glm-4.7-flash';
+
   const { vehicle, location, tireType, language, conversationHistory } = req.body ?? {};
   if (!vehicle || !location || !tireType)
     return res.status(400).json({ error: 'Missing vehicle, location, or tireType' });
@@ -376,7 +382,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const stream = await openai.chat.completions.create({
-      model:      'zhipu-ai/glm-4-flash',
+      model:      AI_MODEL,
       messages,
       stream:     true,
       max_tokens: 1024,
