@@ -25,7 +25,7 @@ const SUV_TRUCK_KEYWORDS = [
 ];
 
 const SEASON_KEYWORDS: Record<string, string[]> = {
-  winter:    ['winter', 'hiver', 'hivernal', 'snow', 'neige'],
+  winter:    ['winter', 'hiver', 'hivernal', 'snow', 'neige', 'studded', 'studless', 'pneu hiver'],
   allseason: ['all-season', 'all season', 'toutes saisons', 'all-weather', 'quatre saisons', '4 saisons'],
   summer:    ['summer', 'ete', 'performance', 'sport'],
 };
@@ -190,25 +190,36 @@ function buildRegionAppend(profile: RegionProfile, lang: string): string {
 }
 
 interface ShopifyVariant { id: number; price: string; inventory_quantity: number; }
-interface ShopifyProduct { id: number; title: string; tags: string; variants: ShopifyVariant[]; }
-interface TireOption { id: number; brand: string; model: string; size: string; loadIndex: number; price: number; tags: string[]; }
+interface ShopifyProduct { id: number; title: string; tags: string; product_type: string; variants: ShopifyVariant[]; }
+interface TireOption { id: number; brand: string; model: string; size: string; productType: string; loadIndex: number; price: number; tags: string[]; }
 
 async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
-  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,variants';
+  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,product_type,variants';
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } });
   if (!resp.ok) throw new Error('Shopify ' + resp.status);
   const { products } = await resp.json() as { products: ShopifyProduct[] };
   const inStock = products.filter(p => p.variants.some(v => v.inventory_quantity > 0));
   const key = tireType.toLowerCase().replace(/-/g, '').replace(/\s/g, '');
   const keywords = SEASON_KEYWORDS[key] || SEASON_KEYWORDS['allseason'];
-  const matched = inStock.filter(p => keywords.some(k => (p.title + ' ' + p.tags).toLowerCase().includes(k)));
+  // Search title, tags, AND product_type so "Winter Tires" product type is matched
+  const matched = inStock.filter(p =>
+    keywords.some(k => (p.title + ' ' + p.tags + ' ' + p.product_type).toLowerCase().includes(k))
+  );
   const final = matched.length > 0 ? matched : inStock;
   return final.map(p => {
     const parts = p.title.split(' ');
     const liMatch = p.tags.match(/loadindex:(\d+)/i);
     const inStockV = p.variants.find(v => v.inventory_quantity > 0)!;
-    return { id: p.id, brand: parts[0] || '', model: parts.slice(1, -1).join(' '), size: parts[parts.length - 1] || '',
-      loadIndex: liMatch ? parseInt(liMatch[1], 10) : 0, price: parseFloat(inStockV.price), tags: p.tags.split(',').map(t => t.trim()) };
+    return {
+      id: p.id,
+      brand: parts[0] || '',
+      model: parts.slice(1, -1).join(' '),
+      size: parts[parts.length - 1] || '',
+      productType: p.product_type || '',
+      loadIndex: liMatch ? parseInt(liMatch[1], 10) : 0,
+      price: parseFloat(inStockV.price),
+      tags: p.tags.split(',').map(t => t.trim()),
+    };
   });
 }
 
@@ -220,8 +231,8 @@ function isHeavyVehicle(v: string): boolean {
 function buildSystemPrompt(vehicle: string, location: string, lang: string, regionProfile: RegionProfile, heavy: boolean): string {
   const isEn = lang !== 'fr';
   const ra = buildRegionAppend(regionProfile, lang);
-  if (isEn) return ['You are an expert tire consultant for GCI Tires (Canada).','Recommend the best tires from the inventory for the customer vehicle and location.',ra,heavy?'IMPORTANT: Vehicle is a truck/SUV - only recommend tires with load index >= 108.':'','Be concise and professional. Mention price and key features.'].filter(Boolean).join('\n');
-  return ['Vous etes un expert en pneus pour GCI Tires (Canada).',"Recommandez les meilleurs pneus de l'inventaire pour le vehicule et la region du client.",ra,heavy?'IMPORTANT: Vehicule camion/VUS - recommandez uniquement des pneus avec indice de charge >= 108.':'','Soyez concis et professionnel. Mentionnez le prix et les caracteristiques.'].filter(Boolean).join('\n');
+  if (isEn) return ['You are an expert tire consultant for GCI Tires (Canada).','Recommend the best tires from the inventory for the customer vehicle and location. Each tire includes a productType field indicating its season category (e.g. "Winter Tires", "All-Season Tires").',ra,heavy?'IMPORTANT: Vehicle is a truck/SUV - only recommend tires with load index >= 108.':'','Be concise and professional. Mention price and key features.'].filter(Boolean).join('\n');
+  return ['Vous etes un expert en pneus pour GCI Tires (Canada).',"Recommandez les meilleurs pneus de l'inventaire pour le vehicule et la region du client. Chaque pneu inclut un champ productType indiquant sa categorie de saison (ex. \"Winter Tires\", \"All-Season Tires\").",ra,heavy?'IMPORTANT: Vehicule camion/VUS - recommandez uniquement des pneus avec indice de charge >= 108.':'','Soyez concis et professionnel. Mentionnez le prix et les caracteristiques.'].filter(Boolean).join('\n');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
