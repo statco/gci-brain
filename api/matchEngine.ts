@@ -190,18 +190,18 @@ function buildRegionAppend(profile: RegionProfile, lang: string): string {
 }
 
 interface ShopifyVariant { id: number; price: string; inventory_quantity: number; }
-interface ShopifyProduct { id: number; title: string; tags: string; product_type: string; variants: ShopifyVariant[]; }
-interface TireOption { id: number; brand: string; model: string; size: string; productType: string; loadIndex: number; price: number; tags: string[]; }
+interface ShopifyImage  { src: string; }
+interface ShopifyProduct { id: number; title: string; tags: string; product_type: string; handle: string; images: ShopifyImage[]; variants: ShopifyVariant[]; }
+interface TireOption { id: number; brand: string; model: string; size: string; productType: string; handle: string; loadIndex: number; price: number; image: string; tags: string[]; }
 
 async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
-  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,product_type,variants';
+  const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,product_type,handle,images,variants';
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } });
   if (!resp.ok) throw new Error('Shopify ' + resp.status);
   const { products } = await resp.json() as { products: ShopifyProduct[] };
   const inStock = products.filter(p => p.variants.some(v => v.inventory_quantity > 0));
   const key = tireType.toLowerCase().replace(/-/g, '').replace(/\s/g, '');
   const keywords = SEASON_KEYWORDS[key] || SEASON_KEYWORDS['allseason'];
-  // Search title, tags, AND product_type so "Winter Tires" product type is matched
   const matched = inStock.filter(p =>
     keywords.some(k => (p.title + ' ' + p.tags + ' ' + p.product_type).toLowerCase().includes(k))
   );
@@ -216,8 +216,10 @@ async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
       model: parts.slice(1, -1).join(' '),
       size: parts[parts.length - 1] || '',
       productType: p.product_type || '',
+      handle: p.handle || '',
       loadIndex: liMatch ? parseInt(liMatch[1], 10) : 0,
       price: parseFloat(inStockV.price),
+      image: (p.images && p.images[0]) ? p.images[0].src : '',
       tags: p.tags.split(',').map(t => t.trim()),
     };
   });
@@ -256,6 +258,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         reply: language === 'fr'
           ? "Aucun pneu en stock pour le moment. Veuillez appeler le magasin pour obtenir de l'aide."
           : 'No tires currently in stock for your search. Please call the store for personalized assistance.',
+        tires: [],
       });
     }
 
@@ -266,8 +269,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const lang = language === 'fr' ? 'fr' : 'en';
     const systemPrompt = buildSystemPrompt(vehicle, location, lang, regionProfile, heavy);
 
-    const tireList = tires.length > 0
-      ? JSON.stringify(tires, null, 2)
+    // Slim payload for AI — exclude image URL to save tokens
+    const tireListForAI = tires.map(({ id, brand, model, size, productType, loadIndex, price, tags }) =>
+      ({ id, brand, model, size, productType, loadIndex, price, tags })
+    );
+    const tireList = tireListForAI.length > 0
+      ? JSON.stringify(tireListForAI, null, 2)
       : 'No specific tires found in inventory.';
 
     const isFollowUp = Array.isArray(conversationHistory) && conversationHistory.length > 0;
@@ -297,12 +304,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const reply = completion.choices[0]?.message?.content ?? '';
 
       if (!reply) {
-        return res.status(200).json({ reply: 'AI returned empty \u2014 tires found: ' + tires.length });
+        return res.status(200).json({ reply: 'AI returned empty \u2014 tires found: ' + tires.length, tires });
       }
-      return res.status(200).json({ reply });
+      return res.status(200).json({ reply, tires });
     } catch (aiError: any) {
       console.error('[matchEngine] AI call failed:', aiError?.message, aiError?.status);
-      return res.status(200).json({ reply: 'AI error: ' + (aiError?.message || 'unknown') + ' | tires: ' + tires.length });
+      return res.status(200).json({ reply: 'AI error: ' + (aiError?.message || 'unknown') + ' | tires: ' + tires.length, tires: [] });
     }
 
   } catch (err: any) {
