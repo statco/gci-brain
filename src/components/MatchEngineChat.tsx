@@ -126,7 +126,6 @@ export default function MatchEngineChat() {
 
       const data = await response.json();
       console.log('API reply:', data);
-      if (!data.reply) { alert('No reply in data: ' + JSON.stringify(data)); }
 
       setRawReply(data.reply || JSON.stringify(data));
 
@@ -156,8 +155,7 @@ export default function MatchEngineChat() {
       role: 'user',
       content: vehicle + ' | ' + location + ' | ' + tireType,
     };
-    const initial = [userMsg];
-    setMessages(initial);
+    setMessages([userMsg]);
     fetchResponse([]);
   }
 
@@ -335,14 +333,6 @@ export default function MatchEngineChat() {
               </div>
             )}
             <div ref={bottomRef} />
-          </div>
-        )}
-
-        {/* RAW API RESPONSE — diagnostic, always visible when present */}
-        {rawReply && (
-          <div style={{ color: 'lime', padding: '16px', fontSize: '12px',
-                        wordBreak: 'break-all', background: '#111', marginTop: 24 }}>
-            RAW: {rawReply}
           </div>
         )}
       </div>
