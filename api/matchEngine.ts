@@ -9,6 +9,50 @@ const SHOPIFY_TOKEN =
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 
+// ── Fitment helpers ──────────────────────────────────────────────────────────
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'http://localhost:3000';
+
+function normalizeTireSize(s: string): string {
+  return s.replace(/^(P|LT|ST)/i, '').trim();
+}
+
+function parseVehicle(vehicle: string): { year: string; make: string; model: string } | null {
+  const yearMatch = vehicle.match(/\b(\d{4})\b/);
+  if (!yearMatch) return null;
+  const year = yearMatch[1];
+  const rest  = vehicle.replace(year, '').trim().split(/\s+/).filter(Boolean);
+  const make  = rest[0] || '';
+  const model = rest.slice(1).join(' ') || '';
+  return { year, make, model };
+}
+
+async function getOemSizes(vehicle: string | { year?: string; make?: string; model?: string }): Promise<string[]> {
+  try {
+    let year: string, make: string, model: string;
+    if (typeof vehicle === 'object' && vehicle.year && vehicle.make && vehicle.model) {
+      ({ year, make, model } = vehicle as { year: string; make: string; model: string });
+    } else {
+      const parsed = parseVehicle(vehicle as string);
+      if (!parsed) return [];
+      ({ year, make, model } = parsed);
+    }
+    const res = await fetch(`${BASE_URL}/api/fitmentCheck`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ make, model, year }),
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.sizes) ? json.sizes : [];
+  } catch (err) {
+    console.error('[matchEngine] fitmentCheck failed (graceful degradation):', err);
+    return [];
+  }
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 const SUV_TRUCK_KEYWORDS = [
   'truck','pickup','f-150','f150','silverado','ram','sierra','tundra',
   'tacoma','ranger','colorado','canyon','frontier','ridgeline','titan',
@@ -181,18 +225,18 @@ function getRegionProfile(location: string): RegionProfile {
 function buildRegionAppend(profile: RegionProfile, lang: string): string {
   const isEn = lang !== 'fr';
   const urgencyEN = ['','Mild winter climate - all-season tires may suffice.','Moderate winters - winter tires recommended for safety.','Harsh winters - winter tires strongly recommended.','Severe winters - dedicated winter tires are essential.','Extreme winters - premium winter tires are critical for safety.'];
-  const urgencyFR = ['',"Climat hivernal doux - les pneus toutes-saisons peuvent suffire.","Hivers moderes - pneus d'hiver recommandes pour la securite.","Hivers rigoureux - pneus d'hiver fortement recommandes.","Hivers severes - des pneus d'hiver dedies sont essentiels.","Hivers extremes - des pneus d'hiver premium sont critiques pour la securite."];
+  const urgencyFR = ['','Climat hivernal doux - les pneus toutes-saisons peuvent suffire.','Hivers moderes - pneus d\'hiver recommandes pour la securite.','Hivers rigoureux - pneus d\'hiver fortement recommandes.','Hivers severes - des pneus d\'hiver dedies sont essentiels.','Hivers extremes - des pneus d\'hiver premium sont critiques pour la securite.'];
   const parts = [isEn ? urgencyEN[profile.winterSeverity] : urgencyFR[profile.winterSeverity]];
   const top = profile.specialConditions.slice(0, 2);
   if (top.length) parts.push(isEn ? 'Regional factors: ' + top.join('; ') + '.' : 'Facteurs regionaux: ' + top.join('; ') + '.');
-  if (profile.terrain === 'mountain') parts.push(isEn ? 'Mountain terrain: prioritise tires with excellent grip on slopes and icy conditions.' : "Terrain montagneux: priorisez les pneus avec excellente adherence.");
+  if (profile.terrain === 'mountain') parts.push(isEn ? 'Mountain terrain: prioritise tires with excellent grip on slopes and icy conditions.' : 'Terrain montagneux: priorisez les pneus avec excellente adherence.');
   return parts.join(' ');
 }
 
 interface ShopifyVariant { id: number; price: string; inventory_quantity: number; }
 interface ShopifyImage  { src: string; }
 interface ShopifyProduct { id: number; title: string; tags: string; product_type: string; handle: string; images: ShopifyImage[]; variants: ShopifyVariant[]; }
-interface TireOption { id: number; brand: string; model: string; size: string; productType: string; handle: string; loadIndex: number; price: number; image: string; tags: string[]; }
+interface TireOption { id: number; brand: string; model: string; size: string; productType: string; handle: string; loadIndex: number; price: number; image: string; tags: string[]; fitmentVerified?: boolean; }
 
 async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
   const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,product_type,handle,images,variants';
@@ -230,11 +274,35 @@ function isHeavyVehicle(v: string): boolean {
   return SUV_TRUCK_KEYWORDS.some(k => lc.includes(k));
 }
 
-function buildSystemPrompt(vehicle: string, location: string, lang: string, regionProfile: RegionProfile, heavy: boolean): string {
+function buildSystemPrompt(
+  vehicle: string,
+  location: string,
+  lang: string,
+  regionProfile: RegionProfile,
+  heavy: boolean,
+  oemSizes: string[],
+): string {
   const isEn = lang !== 'fr';
   const ra = buildRegionAppend(regionProfile, lang);
-  if (isEn) return ['You are an expert tire consultant for GCI Tires (Canada).','Recommend the best tires from the inventory for the customer vehicle and location. Each tire includes a productType field indicating its season category (e.g. "Winter Tires", "All-Season Tires").',ra,heavy?'IMPORTANT: Vehicle is a truck/SUV - only recommend tires with load index >= 108.':'','Be concise and professional. Mention price and key features.'].filter(Boolean).join('\n');
-  return ['Vous etes un expert en pneus pour GCI Tires (Canada).',"Recommandez les meilleurs pneus de l'inventaire pour le vehicule et la region du client. Chaque pneu inclut un champ productType indiquant sa categorie de saison (ex. \"Winter Tires\", \"All-Season Tires\").",ra,heavy?'IMPORTANT: Vehicule camion/VUS - recommandez uniquement des pneus avec indice de charge >= 108.':'','Soyez concis et professionnel. Mentionnez le prix et les caracteristiques.'].filter(Boolean).join('\n');
+  const fitmentLine = oemSizes.length > 0
+    ? `OEM tire sizes for this vehicle: ${oemSizes.join(', ')}. Only recommend tires that match these exact sizes. Never recommend a tire with a different size.`
+    : '';
+  if (isEn) return [
+    'You are an expert tire consultant for GCI Tires (Canada).',
+    'Recommend the best tires from the inventory for the customer vehicle and location. Each tire includes a productType field indicating its season category (e.g. "Winter Tires", "All-Season Tires").',
+    ra,
+    fitmentLine,
+    heavy ? 'IMPORTANT: Vehicle is a truck/SUV - only recommend tires with load index >= 108.' : '',
+    'Be concise and professional. Mention price and key features.',
+  ].filter(Boolean).join('\n');
+  return [
+    'Vous etes un expert en pneus pour GCI Tires (Canada).',
+    `Recommandez les meilleurs pneus de l'inventaire pour le vehicule et la region du client. Chaque pneu inclut un champ productType indiquant sa categorie de saison (ex. "Winter Tires", "All-Season Tires").`,
+    ra,
+    fitmentLine,
+    heavy ? 'IMPORTANT: Vehicule camion/VUS - recommandez uniquement des pneus avec indice de charge >= 108.' : '',
+    'Soyez concis et professionnel. Mentionnez le prix et les caracteristiques.',
+  ].filter(Boolean).join('\n');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -253,6 +321,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let tires = await fetchInStockTires(tireType as string);
     console.log('[matchEngine] tires fetched:', tires.length);
 
+    // ── Steps 2–5: Fitment verification ────────────────────────────────────
+    const oemSizes = await getOemSizes(vehicle);
+    let fitmentFiltered = false;
+
+    if (oemSizes.length > 0) {
+      const filtered = tires.filter(t =>
+        oemSizes.some(s => normalizeTireSize(s) === normalizeTireSize(t.size))
+      );
+      if (filtered.length > 0) {
+        tires = filtered;
+        fitmentFiltered = true;
+        console.log('[matchEngine] fitment-filtered tires:', tires.length, '| OEM sizes:', oemSizes);
+      } else {
+        // OEM sizes known but none in stock — fall back to full inventory
+        console.log('[matchEngine] fitment filter yielded 0 results, falling back to all tires | OEM sizes:', oemSizes);
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     if (tires.length === 0) {
       return res.status(200).json({
         reply: language === 'fr'
@@ -267,7 +354,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const regionProfile = getRegionProfile(location as string);
     const lang = language === 'fr' ? 'fr' : 'en';
-    const systemPrompt = buildSystemPrompt(vehicle, location, lang, regionProfile, heavy);
+    const systemPrompt = buildSystemPrompt(vehicle as string, location as string, lang, regionProfile, heavy, oemSizes);
 
     // Slim payload for AI — exclude image URL to save tokens
     const tireListForAI = tires.map(({ id, brand, model, size, productType, loadIndex, price, tags }) =>
@@ -306,7 +393,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!reply) {
         return res.status(200).json({ reply: 'AI returned empty \u2014 tires found: ' + tires.length, tires });
       }
-      return res.status(200).json({ reply, tires });
+
+      // Step 5 — mark fitmentVerified on each tire
+      const tiresWithFitment = tires.map(t => ({
+        ...t,
+        fitmentVerified: fitmentFiltered
+          ? oemSizes.some(s => normalizeTireSize(s) === normalizeTireSize(t.size))
+          : false,
+      }));
+
+      return res.status(200).json({ reply, tires: tiresWithFitment });
     } catch (aiError: any) {
       console.error('[matchEngine] AI call failed:', aiError?.message, aiError?.status);
       return res.status(200).json({ reply: 'AI error: ' + (aiError?.message || 'unknown') + ' | tires: ' + tires.length, tires: [] });
