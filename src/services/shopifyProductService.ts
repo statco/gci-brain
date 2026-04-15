@@ -179,6 +179,7 @@ export async function fetchProductsByTag(tag: string = 'ai-match') {
                 }
               }
             }
+            description
             variants(first: 1) {
               edges {
                 node {
@@ -328,6 +329,17 @@ function extractLoadIndexFromTags(tags: string[]): { loadIndex: string; speedRat
   return { loadIndex, speedRating };
 }
 
+// Parse load index from Shopify product description HTML.
+// The sync writes "Load Index: 110" and "Speed Rating: T" as list items.
+function extractLoadIndexFromDescription(description: string): { loadIndex: string; speedRating: string } {
+  const li = description.match(/Load Index:\s*(\d{2,3})/i);
+  const sr = description.match(/Speed Rating:\s*([A-Z])/i);
+  return {
+    loadIndex:   li ? li[1] : '',
+    speedRating: sr ? sr[1] : '',
+  };
+}
+
 // Parse load index and speed rating from a tire title/name string.
 // e.g. "265/60R18 110T" → { loadIndex: '110', speedRating: 'T' }
 function extractLoadIndexFromTitle(title: string): { loadIndex: string; speedRating: string } {
@@ -343,17 +355,19 @@ function transformShopifyProducts(edges: any[]) {
     const shopifyImage = product.images.edges[0]?.node.url || '';
     const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
 
-    // 1. Try tags first (always available, no Storefront API permissions needed)
+    // 1. Parse from description (written by sync into body_html — always available)
+    const { loadIndex: descLI, speedRating: descSR } = extractLoadIndexFromDescription(product.description || '');
+    // 2. Try tags (written by earlier sync runs)
     const { loadIndex: tagLI, speedRating: tagSR } = extractLoadIndexFromTags(product.tags || []);
-    // 2. Fall back to metafields (canada_tire namespace — requires storefront access enabled)
+    // 3. Try metafields (requires storefront access to be enabled in Shopify Admin)
     const metafields = product.metafields || [];
     const getMeta = (key: string) => metafields.find((m: any) => m?.key === key)?.value || '';
     const metaLI = getMeta('load_index');
     const metaSR = getMeta('speed_rating');
-    // 3. Last resort: parse from title
+    // 4. Last resort: parse from title
     const { loadIndex: titleLI, speedRating: titleSR } = extractLoadIndexFromTitle(product.title);
-    const resolvedLI = tagLI || metaLI || titleLI || '94';
-    const resolvedSR = tagSR || metaSR || titleSR || 'H';
+    const resolvedLI = descLI || tagLI || metaLI || titleLI || '94';
+    const resolvedSR = descSR || tagSR || metaSR || titleSR || 'H';
 
     return {
       id: product.id.split('/').pop(),
