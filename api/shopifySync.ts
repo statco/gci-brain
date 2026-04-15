@@ -465,6 +465,8 @@ async function buildPayload(ct: CTTire) {
     classifiedSeason,
     vehicleType,
     classifiedBrand,
+    ctLoadIndex   ? `loadindex:${ctLoadIndex}`   : null,
+    ctSpeedRating ? `speedrating:${ctSpeedRating}` : null,
   ].filter((t): t is string => typeof t === 'string' && t.length > 0)
     .filter((t, i, arr) => arr.indexOf(t) === i)   // deduplicate
     .join(', ');
