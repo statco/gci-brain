@@ -194,6 +194,24 @@ const TireCard: React.FC<TireCardProps> = ({
           <p className="text-sm text-slate-500 mb-4 line-clamp-2 leading-relaxed">{tire.description}</p>
         )}
 
+        {/* Load Index & Speed Rating */}
+        {(tire.loadIndex || tire.speedRating) && (
+          <div className="flex items-center gap-3 mb-4">
+            {tire.loadIndex && tire.loadIndex !== '94' && (
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Load Index</span>
+                <span className="text-xs font-bold text-slate-700">{tire.loadIndex}</span>
+              </div>
+            )}
+            {tire.speedRating && tire.speedRating !== 'H' && (
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Speed</span>
+                <span className="text-xs font-bold text-slate-700">{tire.speedRating}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Features */}
         {tire.features && tire.features.length > 0 && (
           <ul className="text-xs text-slate-600 space-y-2 mb-4 flex-1">
