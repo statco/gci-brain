@@ -38,8 +38,10 @@ function TireMatchApp() {
   const [activeModal, setActiveModal] = useState<'reviews' | 'compare' | 'favorites' | null>(null);
   const [reviewTire, setReviewTire] = useState<TireProduct | null>(null);
   const [lang, setLang] = useState<Language>('en');
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
-  // ✅ Initialize Google Maps Loader
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
     libraries: LIBRARIES,
@@ -48,16 +50,12 @@ function TireMatchApp() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
 
-    // ── Language (URL takes priority over localStorage) ──────────────────
     const langParam = urlParams.get('lang') as Language | null;
     const resolvedLang: Language = (langParam === 'fr' || langParam === 'en') ? langParam : 'en';
     if (langParam === 'fr' || langParam === 'en') {
       setLang(langParam);
     }
 
-    // ── YMM params from the Shopify YMM finder widget ────────────────────
-    // When all three are present: pre-fill vehicle data and auto-trigger
-    // the tire search. Stop at RESULTS — never auto-advance to checkout.
     const yearParam  = urlParams.get('year');
     const makeParam  = urlParams.get('make');
     const modelParam = urlParams.get('model');
@@ -65,15 +63,10 @@ function TireMatchApp() {
     if (yearParam && makeParam && modelParam) {
       const vehicle: VehicleInput = { year: yearParam, make: makeParam, model: modelParam };
       const request = `Vehicle: ${yearParam} ${makeParam} ${modelParam}`;
-      // Pass resolvedLang so the correct language is used before the lang
-      // state update has re-rendered the component.
       startProcessing(request, vehicle, resolvedLang);
-      return; // Skip localStorage restore — stale state is irrelevant here
+      return;
     }
 
-    // ── Restore persisted state (no YMM params) ──────────────────────────
-    // Only restore RESULTS, never CHECKOUT or SUCCESS — those states
-    // require explicit user action and must not be auto-resumed on load.
     const savedState = localStorage.getItem('gci_app_state_v2');
     if (savedState) {
       try {
@@ -94,6 +87,8 @@ function TireMatchApp() {
   const startProcessing = async (request: string, vehicle?: VehicleInput, langOverride?: Language) => {
     const activeLang = langOverride ?? lang;
     setAppState(AppStates.PROCESSING);
+    setChatMessages([]);
+    setChatInput('');
     setLogs([
       { stage: ProcessingStages.ANALYZING, message: activeLang === 'en' ? "Consulting expert databases..." : "Consultation des bases d'experts...", status: 'active' },
       { stage: ProcessingStages.VALIDATING, message: activeLang === 'en' ? "Verifying fitment..." : "Vérification...", status: 'pending' },
@@ -113,6 +108,35 @@ function TireMatchApp() {
     setAppState(AppStates.IDLE);
     setRecommendations([]);
     setSelectedTire(null);
+    setChatMessages([]);
+    setChatInput('');
+  };
+
+  const sendChat = async () => {
+    const q = chatInput.trim();
+    if (!q || isChatLoading) return;
+    const updated = [...chatMessages, { role: 'user' as const, content: q }];
+    setChatMessages(updated);
+    setChatInput('');
+    setIsChatLoading(true);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          tires: recommendations,
+          conversationHistory: chatMessages,
+          language: lang,
+        }),
+      });
+      const data = await res.json();
+      setChatMessages([...updated, { role: 'assistant', content: data.reply || '...' }]);
+    } catch {
+      setChatMessages([...updated, { role: 'assistant', content: lang === 'fr' ? 'Désolé, une erreur est survenue.' : 'Sorry, something went wrong.' }]);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
 
   return (
@@ -138,25 +162,82 @@ function TireMatchApp() {
         {appState === AppStates.IDLE && <InputForm onSubmit={(req, veh) => startProcessing(req, veh)} isLoading={false} lang={lang} setLang={setLang} />}
         {appState === AppStates.PROCESSING && <ProcessingOverlay logs={logs} />}
         {appState === AppStates.RESULTS && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-10">
-            {recommendations.map((tire) => (
-              <TireCard 
-                key={tire.id} 
-                tire={tire} 
-                onSelect={(t, q, inst, tot) => { setSelectedTire({tire:t, quantity:q, withInstallation:inst, total:tot}); setAppState(AppStates.CHECKOUT); }}
-                lang={lang}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-10">
+              {recommendations.map((tire) => (
+                <TireCard
+                  key={tire.id}
+                  tire={tire}
+                  onSelect={(t, q, inst, tot) => { setSelectedTire({tire:t, quantity:q, withInstallation:inst, total:tot}); setAppState(AppStates.CHECKOUT); }}
+                  lang={lang}
+                />
+              ))}
+            </div>
+
+            {recommendations.length > 0 && (
+              <div style={{ maxWidth: 720, margin: '48px auto 0', borderTop: '1px solid #e2e8f0', paddingTop: 28 }}>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: '#94a3b8', marginBottom: 16, textTransform: 'uppercase' }}>
+                  {lang === 'fr' ? 'Questions sur ces pneus ?' : 'Questions about these tires?'}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+                  {chatMessages.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                      <div style={{
+                        maxWidth: '80%', padding: '10px 14px',
+                        borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                        backgroundColor: m.role === 'user' ? '#B8192E' : '#1e293b',
+                        color: '#fff', fontSize: 14, lineHeight: 1.6,
+                      }}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {isChatLoading && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                      <div style={{ padding: '10px 14px', borderRadius: '16px 16px 16px 4px', backgroundColor: '#1e293b', color: '#94a3b8', fontSize: 14 }}>
+                        {lang === 'fr' ? 'En train de répondre...' : 'Thinking...'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && sendChat()}
+                    placeholder={lang === 'fr' ? 'Posez une question sur ces pneus...' : 'Ask a question about these tires...'}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: 8,
+                      border: '1px solid #e2e8f0', fontSize: 14, outline: 'none',
+                      backgroundColor: '#fff', color: '#0f172a',
+                    }}
+                  />
+                  <button
+                    onClick={sendChat}
+                    disabled={!chatInput.trim() || isChatLoading}
+                    style={{
+                      padding: '10px 20px', borderRadius: 8, border: 'none',
+                      backgroundColor: chatInput.trim() && !isChatLoading ? '#B8192E' : '#cbd5e1',
+                      color: '#fff', fontWeight: 700, fontSize: 14,
+                      cursor: chatInput.trim() && !isChatLoading ? 'pointer' : 'not-allowed',
+                      transition: 'background-color 0.2s',
+                    }}
+                  >
+                    {lang === 'fr' ? 'Envoyer' : 'Send'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
         {appState === AppStates.CHECKOUT && selectedTire && (
-          <CheckoutModal 
-            tire={selectedTire.tire} 
-            quantity={selectedTire.quantity} 
-            withInstallation={selectedTire.withInstallation} 
+          <CheckoutModal
+            tire={selectedTire.tire}
+            quantity={selectedTire.quantity}
+            withInstallation={selectedTire.withInstallation}
             total={selectedTire.total}
-            onConfirm={() => setAppState(AppStates.SUCCESS)} 
-            onCancel={() => setAppState(AppStates.RESULTS)} 
+            onConfirm={() => setAppState(AppStates.SUCCESS)}
+            onCancel={() => setAppState(AppStates.RESULTS)}
             lang={lang}
           />
         )}
