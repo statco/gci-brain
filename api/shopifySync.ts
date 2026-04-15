@@ -495,22 +495,21 @@ async function buildPayload(ct: CTTire) {
         option1:              size,
       }],
       options: [{ name: 'Size' }],
-      metafields: [
-        { namespace:'canada_tire', key:'cost',             value:(parseFloat(ct.cost)||0).toFixed(2), type:'number_decimal' },
-        { namespace:'canada_tire', key:'part_number',      value:ct.partNumber,                       type:'single_line_text_field' },
-        { namespace:'gci',         key:'net_cost',          value:netCost.toFixed(2),                  type:'number_decimal' },
-        { namespace:'gci',         key:'floor_price',       value:floorPrice.toFixed(2),               type:'number_decimal' },
-        { namespace:'gci',         key:'shipping_buffer',   value:shippingBuffer.toFixed(2),           type:'number_decimal' },
-        { namespace:'gci',         key:'tire_type',         value:tireType,                            type:'single_line_text_field' },
-        { namespace:'gci',         key:'performance_category', value:ct.performanceCategory || 'Standard', type:'single_line_text_field' },
-        ...(() => {
-          const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
-          const fields = [];
-          if (loadIndex)   fields.push({ namespace:'canada_tire', key:'load_index',   value:loadIndex,   type:'single_line_text_field' });
-          if (speedRating) fields.push({ namespace:'canada_tire', key:'speed_rating', value:speedRating, type:'single_line_text_field' });
-          return fields;
-        })(),
-      ],
+      metafields: (() => {
+        const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+        const fields: Array<{ namespace: string; key: string; value: string; type: string }> = [
+          { namespace:'canada_tire', key:'cost',                 value:(parseFloat(ct.cost)||0).toFixed(2),   type:'number_decimal' },
+          { namespace:'canada_tire', key:'part_number',          value:ct.partNumber,                         type:'single_line_text_field' },
+          { namespace:'gci',         key:'net_cost',              value:netCost.toFixed(2),                    type:'number_decimal' },
+          { namespace:'gci',         key:'floor_price',           value:floorPrice.toFixed(2),                 type:'number_decimal' },
+          { namespace:'gci',         key:'shipping_buffer',       value:shippingBuffer.toFixed(2),             type:'number_decimal' },
+          { namespace:'gci',         key:'tire_type',             value:tireType,                              type:'single_line_text_field' },
+          { namespace:'gci',         key:'performance_category',  value:ct.performanceCategory || 'Standard',  type:'single_line_text_field' },
+        ];
+        if (loadIndex)   fields.push({ namespace:'canada_tire', key:'load_index',   value:loadIndex,   type:'single_line_text_field' });
+        if (speedRating) fields.push({ namespace:'canada_tire', key:'speed_rating', value:speedRating, type:'single_line_text_field' });
+        return fields;
+      })(),
     },
   };
 }
