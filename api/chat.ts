@@ -6,8 +6,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const GEMINI_API_KEY  = process.env.VITE_GEMINI_API_KEY  || '';
-const DEEPSEEK_API_KEY = process.env.VITE_DEEPSEEK_API_KEY || '';
+const GEMINI_API_KEY  = process.env.VITE_GEMINI_API_KEY  || process.env.GEMINI_API_KEY  || '';
+const DEEPSEEK_API_KEY = process.env.VITE_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY || '';
 
 async function callGemini(systemPrompt: string, messages: {role: string; content: string}[]): Promise<string> {
   const contents = messages.map(m => ({
