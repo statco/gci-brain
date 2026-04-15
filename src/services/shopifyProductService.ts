@@ -190,6 +190,13 @@ export async function fetchProductsByTag(tag: string = 'ai-match') {
                 }
               }
             }
+            metafields(identifiers: [
+              {namespace: "canada_tire", key: "load_index"}
+              {namespace: "canada_tire", key: "speed_rating"}
+            ]) {
+              key
+              value
+            }
           }
         }
       }
@@ -307,12 +314,29 @@ export async function fetchProductsByType(productType: string = 'Tires') {
 /**
  * Transform Shopify products to TireProduct format
  */
+// Parse load index and speed rating from a tire title/name string.
+// e.g. "265/60R18 110T" → { loadIndex: '110', speedRating: 'T' }
+function extractLoadIndexFromTitle(title: string): { loadIndex: string; speedRating: string } {
+  const match = title.match(/\d{3}\/\d{2}R\d{2}\s+(\d{2,3})([A-Z])/);
+  if (match) return { loadIndex: match[1], speedRating: match[2] };
+  return { loadIndex: '94', speedRating: 'H' }; // safe defaults
+}
+
 function transformShopifyProducts(edges: any[]) {
   return edges.map((edge: any) => {
     const product = edge.node;
     const variant = product.variants.edges[0]?.node;
     const shopifyImage = product.images.edges[0]?.node.url || '';
     const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
+
+    // Read metafields if present (populated after sync update)
+    const metafields = product.metafields || [];
+    const getMeta = (key: string) => metafields.find((m: any) => m?.key === key)?.value || '';
+    const metaLoadIndex   = getMeta('load_index');
+    const metaSpeedRating = getMeta('speed_rating');
+
+    // Fall back to title parsing if metafields not yet populated
+    const { loadIndex: parsedLI, speedRating: parsedSR } = extractLoadIndexFromTitle(product.title);
 
     return {
       id: product.id.split('/').pop(),
@@ -322,15 +346,15 @@ function transformShopifyProducts(edges: any[]) {
       size: extractSizeFromTitle(product.title),
       season: extractSeasonFromTags(product.tags || []),
       pricePerUnit: parseFloat(variant?.priceV2.amount || '0'),
-      rating: 4.5, // Default
-      reviews: 0, // Default
+      rating: 4.5,
+      reviews: 0,
       imageUrl,
       description: product.description || '',
       features: extractFeaturesFromDescription(product.description),
       inStock: variant?.availableForSale || false,
       warranty: '6-year limited',
-      speedRating: 'H',
-      loadIndex: '94',
+      speedRating: metaSpeedRating || parsedSR,
+      loadIndex: metaLoadIndex || parsedLI,
       shopifyVariantId: variant?.id || '',
       shopifyHandle: product.handle,
       shopifyProductId: product.id
