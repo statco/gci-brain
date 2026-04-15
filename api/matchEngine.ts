@@ -364,7 +364,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Season short-circuit: requested type not in stock ───────────────────
     // Skip AI entirely to prevent hallucination — return a deterministic message.
-    if (seasonFallback && !Array.isArray(conversationHistory)) {
+    if (seasonFallback && !(Array.isArray(conversationHistory) && conversationHistory.length > 0)) {
       const reply = language === 'fr'
         ? `Nous n'avons pas de pneus de type "${tireType}" en stock pour le moment. Voici les pneus disponibles dans notre inventaire — veuillez choisir parmi ceux-ci ou appeler le magasin pour plus d'options.`
         : `We currently don't have "${tireType}" tires in stock. Here are the tires available in our inventory — please choose from these or call the store for more options.`;
