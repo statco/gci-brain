@@ -455,6 +455,9 @@ async function buildPayload(ct: CTTire) {
   const title = formatTireSize(toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()));
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
 
+  // Parse load index + speed rating before tags and metafields
+  const { loadIndex: ctLoadIndex, speedRating: ctSpeedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+
   const tags = [
     SYNC_TAG,
     `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
@@ -470,9 +473,6 @@ async function buildPayload(ct: CTTire) {
   ].filter((t): t is string => typeof t === 'string' && t.length > 0)
     .filter((t, i, arr) => arr.indexOf(t) === i)   // deduplicate
     .join(', ');
-
-  // Parse load index + speed rating BEFORE the return — no IIFE inside object literal
-  const { loadIndex: ctLoadIndex, speedRating: ctSpeedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
   const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [
     { namespace:'canada_tire', key:'cost',                value:(parseFloat(ct.cost)||0).toFixed(2),  type:'number_decimal' },
     { namespace:'canada_tire', key:'part_number',         value:ct.partNumber,                        type:'single_line_text_field' },
