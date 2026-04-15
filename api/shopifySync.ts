@@ -81,11 +81,6 @@ function normalizeVendor(vendor: string): string {
  * Used to determine shipping buffer for floor price calculation.
  */
 function classifyTireType(performanceCategory: string, size: string): string {
-/**
- * Classify tire type from Canada Tire performanceCategory field.
- * Used to determine shipping buffer for floor price calculation.
- */
-function classifyTireType(performanceCategory: string, size: string): string {
   const cat = (performanceCategory || '').toLowerCase();
   const s   = (size || '').toString();
 
