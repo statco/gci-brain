@@ -18,11 +18,14 @@ function normalizeTireSize(s: string): string {
   return s.replace(/^(P|LT|ST)/i, '').trim();
 }
 
+// Common chassis/trim suffixes that Wheel Size API doesn't recognise
+const CHASSIS_SUFFIXES = /\b(WK2?|KL|XJ|WJ|ZJ|MK|KK|KA|JK|JL|JT|P38|L322|L405|W204|W205|W212|W213|X3[0-9]|F[0-9]{2}|E[0-9]{2}|G[0-9]{2})\b/gi;
+
 function parseVehicle(vehicle: string): { year: string; make: string; model: string } | null {
   const yearMatch = vehicle.match(/\b(\d{4})\b/);
   if (!yearMatch) return null;
   const year = yearMatch[1];
-  const rest  = vehicle.replace(year, '').trim().split(/\s+/).filter(Boolean);
+  const rest  = vehicle.replace(year, '').replace(CHASSIS_SUFFIXES, '').trim().split(/\s+/).filter(Boolean);
   const make  = rest[0] || '';
   const model = rest.slice(1).join(' ') || '';
   return { year, make, model };
@@ -238,7 +241,7 @@ interface ShopifyImage  { src: string; }
 interface ShopifyProduct { id: number; title: string; tags: string; product_type: string; handle: string; images: ShopifyImage[]; variants: ShopifyVariant[]; }
 interface TireOption { id: number; brand: string; model: string; size: string; productType: string; handle: string; loadIndex: number; price: number; image: string; tags: string[]; fitmentVerified?: boolean; }
 
-async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
+async function fetchInStockTires(tireType: string): Promise<{ tires: TireOption[]; seasonFallback: boolean }> {
   const url = 'https://' + SHOPIFY_DOMAIN + '/admin/api/2024-01/products.json?limit=50&status=active&fields=id,title,tags,product_type,handle,images,variants';
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } });
   if (!resp.ok) throw new Error('Shopify ' + resp.status);
@@ -249,8 +252,9 @@ async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
   const matched = inStock.filter(p =>
     keywords.some(k => (p.title + ' ' + p.tags + ' ' + p.product_type).toLowerCase().includes(k))
   );
-  const final = matched.length > 0 ? matched : inStock;
-  return final.map(p => {
+  const seasonFallback = matched.length === 0;
+  const final = seasonFallback ? inStock : matched;
+  return { seasonFallback, tires: final.map(p => {
     const parts = p.title.split(' ');
     const liMatch = p.tags.match(/loadindex:(\d+)/i);
     const inStockV = p.variants.find(v => v.inventory_quantity > 0)!;
@@ -266,7 +270,7 @@ async function fetchInStockTires(tireType: string): Promise<TireOption[]> {
       image: (p.images && p.images[0]) ? p.images[0].src : '',
       tags: p.tags.split(',').map(t => t.trim()),
     };
-  });
+  }) };
 }
 
 function isHeavyVehicle(v: string): boolean {
@@ -318,7 +322,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing vehicle, location, or tireType' });
 
   try {
-    let tires = await fetchInStockTires(tireType as string);
+    let { tires, seasonFallback } = await fetchInStockTires(tireType as string);
     console.log('[matchEngine] tires fetched:', tires.length);
 
     // ── Steps 2–5: Fitment verification ────────────────────────────────────
@@ -368,10 +372,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userMessage = lang === 'fr'
       ? 'Vehicule: ' + vehicle + '. Lieu: ' + location +
         '. Type de pneu recherche: ' + tireType +
+        (seasonFallback ? ' NOTE: Aucun pneu ' + tireType + ' n\'est en stock actuellement. Informez clairement le client que les pneus ' + tireType + ' ne sont pas disponibles. Ne presentez PAS d\'autres types de pneus comme des pneus ' + tireType + '.' : '') +
         '. Voici ce que nous avons en stock: ' + tireList +
         '. Meme si le choix est limite, donnez votre meilleure recommandation basee sur ce qui est disponible.'
       : 'Vehicle: ' + vehicle + '. Location: ' + location +
         '. Looking for: ' + tireType + ' tires.' +
+        (seasonFallback ? ' NOTE: No ' + tireType + ' tires are currently in stock. Clearly inform the customer that ' + tireType + ' tires are unavailable. Do NOT present other tire types as ' + tireType + ' tires. Show what is available as alternatives only.' : '') +
         ' Here is what we have in stock: ' + tireList +
         ' Even if selection is limited, give your best recommendation based on what is available.';
 
