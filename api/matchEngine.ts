@@ -362,6 +362,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // ── Season short-circuit: requested type not in stock ───────────────────
+    // Skip AI entirely to prevent hallucination — return a deterministic message.
+    if (seasonFallback && !Array.isArray(conversationHistory)) {
+      const reply = language === 'fr'
+        ? `Nous n'avons pas de pneus de type "${tireType}" en stock pour le moment. Voici les pneus disponibles dans notre inventaire — veuillez choisir parmi ceux-ci ou appeler le magasin pour plus d'options.`
+        : `We currently don't have "${tireType}" tires in stock. Here are the tires available in our inventory — please choose from these or call the store for more options.`;
+      const tiresOut = tires.map(t => ({ ...t, fitmentVerified: false }));
+      return res.status(200).json({ reply, tires: tiresOut, seasonFallback: true });
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const heavy = isHeavyVehicle(vehicle as string);
     if (heavy) tires = tires.filter(t => t.loadIndex === 0 || t.loadIndex >= 108);
 
