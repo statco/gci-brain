@@ -488,7 +488,7 @@ async function buildPayload(ct: CTTire) {
   return {
     product: {
       title,
-      body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li></ul>`,
+      body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li>${ctLoadIndex?`<li>Load Index: ${ctLoadIndex}</li>`:''}${ctSpeedRating?`<li>Speed Rating: ${ctSpeedRating}</li>`:''}</ul>`,
       vendor:       normalizeVendor(ct.brand),
       product_type: 'Tire',
       tags,
@@ -610,9 +610,6 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const newPrice = msrp.toFixed(2);
     const priceChanged = newPrice !== ex.price;
 
-    // Parse load index for metafield update
-    const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
-
     if (!priceChanged && mode === 'daily') {
       // Price unchanged — still write real cost + update inventory + backfill image + metafields
       try {
@@ -622,15 +619,6 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             variant: { id: ex.variantId, cost: netCost.toFixed(2) },
           }),
         });
-        // Write load index + speed rating as metafields (non-fatal)
-        if (upLI) await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
-          method: 'POST',
-          body: JSON.stringify({ metafield: { namespace:'canada_tire', key:'load_index',   value:upLI, type:'single_line_text_field' } }),
-        }).catch(() => {});
-        if (upSR) await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
-          method: 'POST',
-          body: JSON.stringify({ metafield: { namespace:'canada_tire', key:'speed_rating', value:upSR, type:'single_line_text_field' } }),
-        }).catch(() => {});
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
         if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
@@ -650,15 +638,6 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           },
         }),
       });
-      // Write load index + speed rating as metafields (non-fatal)
-      if (upLI) await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
-        method: 'POST',
-        body: JSON.stringify({ metafield: { namespace:'canada_tire', key:'load_index',   value:upLI, type:'single_line_text_field' } }),
-      }).catch(() => {});
-      if (upSR) await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
-        method: 'POST',
-        body: JSON.stringify({ metafield: { namespace:'canada_tire', key:'speed_rating', value:upSR, type:'single_line_text_field' } }),
-      }).catch(() => {});
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
