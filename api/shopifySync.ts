@@ -215,6 +215,19 @@ function parseCTSizeCode(rawCode: string | number): string {
   return `${match[1]}/${match[2]}R${match[3]}`;
 }
 
+// ─── LOAD INDEX / SPEED RATING PARSER ───────────────────────────────────────
+// Extracts load index and speed rating from the CT product name field.
+// CT name format: "265/60R18 110T NEXEN ROADIAN ATX (3PMS) (ALL-WEATHER)"
+// Returns { loadIndex: '110', speedRating: 'T' } or nulls if not found.
+
+function parseLoadIndexAndSpeedRating(name: string): { loadIndex: string | null; speedRating: string | null } {
+  // Match a 2-3 digit load index followed by a single uppercase speed rating letter
+  // immediately after the tire size (e.g. "265/60R18 110T" or "225/55R18 98H")
+  const match = name.match(/\d{3}\/\d{2}R\d{2}\s+(\d{2,3})([A-Z])/);
+  if (match) return { loadIndex: match[1], speedRating: match[2] };
+  return { loadIndex: null, speedRating: null };
+}
+
 // ─── SHOPIFY HELPERS ──────────────────────────────────────────────────────────
 
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
@@ -490,6 +503,13 @@ async function buildPayload(ct: CTTire) {
         { namespace:'gci',         key:'shipping_buffer',   value:shippingBuffer.toFixed(2),           type:'number_decimal' },
         { namespace:'gci',         key:'tire_type',         value:tireType,                            type:'single_line_text_field' },
         { namespace:'gci',         key:'performance_category', value:ct.performanceCategory || 'Standard', type:'single_line_text_field' },
+        ...(() => {
+          const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+          const fields = [];
+          if (loadIndex)   fields.push({ namespace:'canada_tire', key:'load_index',   value:loadIndex,   type:'single_line_text_field' });
+          if (speedRating) fields.push({ namespace:'canada_tire', key:'speed_rating', value:speedRating, type:'single_line_text_field' });
+          return fields;
+        })(),
       ],
     },
   };
