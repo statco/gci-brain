@@ -38,16 +38,25 @@ async function getOemSizes(vehicle: string | { year?: string; make?: string; mod
       ({ year, make, model } = vehicle as { year: string; make: string; model: string });
     } else {
       const parsed = parseVehicle(vehicle as string);
-      if (!parsed) return [];
+      if (!parsed) {
+        console.log('[fitment] parseVehicle returned null for:', vehicle);
+        return [];
+      }
       ({ year, make, model } = parsed);
     }
+    console.log(`[fitment] calling fitmentCheck — make:${make} model:${model} year:${year} BASE_URL:${BASE_URL}`);
     const res = await fetch(`${BASE_URL}/api/fitmentCheck`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ make, model, year }),
     });
-    if (!res.ok) return [];
+    console.log(`[fitment] fitmentCheck status: ${res.status}`);
+    if (!res.ok) {
+      console.log('[fitment] fitmentCheck non-ok, body:', await res.text().catch(() => '(unreadable)'));
+      return [];
+    }
     const json = await res.json();
+    console.log('[fitment] fitmentCheck sizes:', json.sizes);
     return Array.isArray(json.sizes) ? json.sizes : [];
   } catch (err) {
     console.error('[matchEngine] fitmentCheck failed (graceful degradation):', err);
