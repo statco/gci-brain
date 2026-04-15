@@ -610,8 +610,13 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const newPrice = msrp.toFixed(2);
     const priceChanged = newPrice !== ex.price;
 
+    // Build load index tags for this product
+    const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
+    const liTag = upLI   ? `loadindex:${upLI}`   : null;
+    const srTag = upSR   ? `speedrating:${upSR}` : null;
+
     if (!priceChanged && mode === 'daily') {
-      // Price unchanged — still write real cost + update inventory + backfill image
+      // Price unchanged — still write real cost + update inventory + backfill image + tags
       try {
         await shopifyFetch(`/variants/${ex.variantId}.json`, {
           method: 'PUT',
@@ -619,6 +624,15 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             variant: { id: ex.variantId, cost: netCost.toFixed(2) },
           }),
         });
+        // Write loadindex/speedrating tags to the product
+        if (liTag || srTag) {
+          await shopifyFetch(`/products/${ex.productId}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              product: { id: ex.productId, tags: [liTag, srTag].filter(Boolean).join(', ') },
+            }),
+          }).catch(() => {}); // non-fatal
+        }
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
         if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
@@ -634,10 +648,19 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           variant: {
             id:               ex.variantId,
             ...(priceChanged ? { price: newPrice, compare_at_price: newPrice } : {}),
-            cost:             netCost.toFixed(2),      // Always write real CT cost
+            cost:             netCost.toFixed(2),
           },
         }),
       });
+      // Write loadindex/speedrating tags to the product
+      if (liTag || srTag) {
+        await shopifyFetch(`/products/${ex.productId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            product: { id: ex.productId, tags: [liTag, srTag].filter(Boolean).join(', ') },
+          }),
+        }).catch(() => {}); // non-fatal
+      }
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
