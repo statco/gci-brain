@@ -314,12 +314,26 @@ export async function fetchProductsByType(productType: string = 'Tires') {
 /**
  * Transform Shopify products to TireProduct format
  */
+// Parse load index and speed rating from Shopify tags (e.g. "loadindex:110", "speedrating:T")
+// Tags are always available via Storefront API — no metafield permissions needed.
+function extractLoadIndexFromTags(tags: string[]): { loadIndex: string; speedRating: string } {
+  let loadIndex = '';
+  let speedRating = '';
+  for (const tag of tags) {
+    const li = tag.match(/^loadindex:(\d{2,3})$/i);
+    if (li) loadIndex = li[1];
+    const sr = tag.match(/^speedrating:([A-Z])$/i);
+    if (sr) speedRating = sr[1].toUpperCase();
+  }
+  return { loadIndex, speedRating };
+}
+
 // Parse load index and speed rating from a tire title/name string.
 // e.g. "265/60R18 110T" → { loadIndex: '110', speedRating: 'T' }
 function extractLoadIndexFromTitle(title: string): { loadIndex: string; speedRating: string } {
   const match = title.match(/\d{3}\/\d{2}R\d{2}\s+(\d{2,3})([A-Z])/);
   if (match) return { loadIndex: match[1], speedRating: match[2] };
-  return { loadIndex: '94', speedRating: 'H' }; // safe defaults
+  return { loadIndex: '', speedRating: '' };
 }
 
 function transformShopifyProducts(edges: any[]) {
@@ -329,14 +343,17 @@ function transformShopifyProducts(edges: any[]) {
     const shopifyImage = product.images.edges[0]?.node.url || '';
     const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
 
-    // Read metafields if present (populated after sync update)
+    // 1. Try tags first (always available, no Storefront API permissions needed)
+    const { loadIndex: tagLI, speedRating: tagSR } = extractLoadIndexFromTags(product.tags || []);
+    // 2. Fall back to metafields (canada_tire namespace — requires storefront access enabled)
     const metafields = product.metafields || [];
     const getMeta = (key: string) => metafields.find((m: any) => m?.key === key)?.value || '';
-    const metaLoadIndex   = getMeta('load_index');
-    const metaSpeedRating = getMeta('speed_rating');
-
-    // Fall back to title parsing if metafields not yet populated
-    const { loadIndex: parsedLI, speedRating: parsedSR } = extractLoadIndexFromTitle(product.title);
+    const metaLI = getMeta('load_index');
+    const metaSR = getMeta('speed_rating');
+    // 3. Last resort: parse from title
+    const { loadIndex: titleLI, speedRating: titleSR } = extractLoadIndexFromTitle(product.title);
+    const resolvedLI = tagLI || metaLI || titleLI || '94';
+    const resolvedSR = tagSR || metaSR || titleSR || 'H';
 
     return {
       id: product.id.split('/').pop(),
@@ -353,8 +370,8 @@ function transformShopifyProducts(edges: any[]) {
       features: extractFeaturesFromDescription(product.description),
       inStock: variant?.availableForSale || false,
       warranty: '6-year limited',
-      speedRating: metaSpeedRating || parsedSR,
-      loadIndex: metaLoadIndex || parsedLI,
+      speedRating: resolvedSR,
+      loadIndex: resolvedLI,
       shopifyVariantId: variant?.id || '',
       shopifyHandle: product.handle,
       shopifyProductId: product.id
