@@ -1069,11 +1069,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         for (const ct of ctTires) {
           const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
           if (!loadIndex) continue;
-          // Convert compact size to standard for lookup key
-          const std = parseCTSizeCode(ct.size);
+          // ct.size is raw 7 digits (e.g. "2656018") — convert to standard "265/60R18"
+          const rawSz = String(ct.size || '');
+          const szM = rawSz.match(/^(\d{3})(\d{2})(\d{2})$/);
+          const std = szM ? `${szM[1]}/${szM[2]}R${szM[3]}` : parseCTSizeCode(ct.size);
           if (!sizeMap.has(std)) sizeMap.set(std, { loadIndex, speedRating: speedRating || '' });
         }
-        console.log(`[fill-missing] CT size map: ${sizeMap.size} entries`);
 
         // 2. Fetch all ct-sync products without loadindex tag
         const missing: Array<{ id: number; title: string; tags: string }> = [];
