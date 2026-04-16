@@ -1059,6 +1059,86 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           detail: duplicateGroups,
         });
       }
+      case 'fill-missing-loadindex': {
+        // Find all ct-sync products missing loadindex tag, match by size to CT data, fill in tags
+        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
+
+        // 1. Fetch all CT tires and build a size→{loadIndex,speedRating} map
+        const ctTires = await fetchAllCTTires();
+        const sizeMap = new Map<string, { loadIndex: string; speedRating: string }>();
+        for (const ct of ctTires) {
+          const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+          if (!loadIndex) continue;
+          // Convert compact size to standard for lookup key
+          const std = parseCTSizeCode(ct.size);
+          if (!sizeMap.has(std)) sizeMap.set(std, { loadIndex, speedRating: speedRating || '' });
+        }
+        console.log(`[fill-missing] CT size map: ${sizeMap.size} entries`);
+
+        // 2. Fetch all ct-sync products without loadindex tag
+        const missing: Array<{ id: number; title: string; tags: string }> = [];
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,tags`;
+        while (nextUrl) {
+          const r: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            if (!(p.tags || '').includes('loadindex:')) {
+              missing.push({ id: p.id, title: p.title, tags: p.tags });
+            }
+          }
+          const link: string | null = r.headers.get('link');
+          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = m ? m[1] : null;
+        }
+        console.log(`[fill-missing] Products without loadindex: ${missing.length}`);
+
+        // 3. For each, extract size from title and look up CT map
+        const toFix: Array<{ id: number; title: string; size: string; loadIndex: string; speedRating: string; currentTags: string }> = [];
+        for (const p of missing) {
+          // Extract standard size from title: e.g. "265/60R18" pattern
+          const sizeMatch = p.title.match(/(\d{3}\/\d{2}R\d{2})/i);
+          if (!sizeMatch) continue;
+          const size = sizeMatch[1];
+          const ctData = sizeMap.get(size);
+          if (!ctData) continue;
+          toFix.push({ id: p.id, title: p.title, size, loadIndex: ctData.loadIndex, speedRating: ctData.speedRating, currentTags: p.tags });
+        }
+
+        if (dryRun) {
+          return res.status(200).json({
+            success: true, mode: 'fill-missing-loadindex', dryRun: true,
+            totalMissing: missing.length,
+            canFix: toFix.length,
+            sample: toFix.slice(0, 10).map(p => ({ title: p.title, size: p.size, willAdd: `loadindex:${p.loadIndex}, speedrating:${p.speedRating}` })),
+          });
+        }
+
+        // 4. Write tags
+        let fixed = 0, errors = 0;
+        for (const p of toFix) {
+          try {
+            const updatedTags = [p.currentTags, `loadindex:${p.loadIndex}`, p.speedRating ? `speedrating:${p.speedRating}` : '']
+              .filter(Boolean).join(', ');
+            await shopifyFetch(`/products/${p.id}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ product: { id: p.id, tags: updatedTags } }),
+            });
+            fixed++;
+            await delay(300);
+          } catch (e: any) {
+            console.error(`[fill-missing] Failed ${p.id}:`, e.message);
+            errors++;
+          }
+        }
+        return res.status(200).json({
+          success: true, mode: 'fill-missing-loadindex', dryRun: false,
+          totalMissing: missing.length, canFix: toFix.length, fixed, errors,
+        });
+      }
+
       case 'check-tags': {
         // Look up a product by title fragment and return its current Shopify tags
         const search = (req.query.search as string || 'Procontrol').trim();
