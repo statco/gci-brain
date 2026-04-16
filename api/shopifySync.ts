@@ -613,6 +613,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
     // Append loadindex/speedrating to existing tags without overwriting anything
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
+    console.log(`[sync-debug] name="${ct.name}" → LI:${upLI} SR:${upSR}`);
     const existingTagStr = ex.tags || '';
     let updatedTags = existingTagStr;
     if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
