@@ -1107,11 +1107,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           toFix.push({ id: p.id, title: p.title, size, loadIndex: ctData.loadIndex, speedRating: ctData.speedRating, currentTags: p.tags });
         }
 
+        // Debug: check a few sizes
+        const sampleMissing = missing.slice(0, 5).map(p => {
+          const m = p.title.match(/(\d{3}\/\d{2}R\d{2})/i);
+          const sz = m ? m[1] : 'NO_MATCH';
+          return { title: p.title, extractedSize: sz, inMap: sizeMap.has(sz), mapSample: [...sizeMap.keys()].slice(0, 3) };
+        });
+
         if (dryRun) {
           return res.status(200).json({
             success: true, mode: 'fill-missing-loadindex', dryRun: true,
             totalMissing: missing.length,
             canFix: toFix.length,
+            sizeMapEntries: sizeMap.size,
+            sizeMapSample: [...sizeMap.entries()].slice(0, 5).map(([k,v]) => ({ size: k, ...v })),
+            missingProductSample: sampleMissing,
             sample: toFix.slice(0, 10).map(p => ({ title: p.title, size: p.size, willAdd: `loadindex:${p.loadIndex}, speedrating:${p.speedRating}` })),
           });
         }
