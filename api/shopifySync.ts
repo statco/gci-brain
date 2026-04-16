@@ -1085,7 +1085,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       case 'dedup': {
 
-        const dryRun = !(req.body as any)?.confirm;
+        const dryRun = !(req.body as any)?.confirm && req.query.confirm !== 'true';
         const allById = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
         let nextUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
