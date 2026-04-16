@@ -987,11 +987,130 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           results,
         });
       }
+      case 'find-orphans': {
+        // Cross-reference Shopify ct-sync products vs CT API part numbers.
+        // Orphans = products in Shopify with no matching CT part number.
+        const ctTires = await fetchAllCTTires();
+        const ctPartNumbers = new Set(ctTires.map(t => t.partNumber));
+
+        // Fetch all Shopify ct-sync products with their SKUs
+        const orphans: Array<{ id: number; title: string; handle: string; sku: string; tags: string }> = [];
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,handle,variants,tags`;
+        while (nextUrl) {
+          const r: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          if (!r.ok) throw new Error(`Shopify ${r.status}`);
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            const sku = p.variants?.[0]?.sku || '';
+            if (sku && !ctPartNumbers.has(sku)) {
+              orphans.push({ id: p.id, title: p.title, handle: p.handle || '', sku, tags: p.tags || '' });
+            }
+          }
+          const link: string | null = r.headers.get('link');
+          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = m ? m[1] : null;
+        }
+
+        // Categorise by reason
+        const soldOut = orphans.filter(p => p.tags.includes('sold-out'));
+        const trulyOrphaned = orphans.filter(p => !p.tags.includes('sold-out'));
+
+        return res.status(200).json({
+          success: true, mode: 'find-orphans',
+          ctProducts: ctPartNumbers.size,
+          totalOrphans: orphans.length,
+          soldOutOrphans: soldOut.length,
+          trulyOrphaned: trulyOrphaned.length,
+          sample: trulyOrphaned.slice(0, 20).map(p => ({ id: p.id, title: p.title, sku: p.sku })),
+        });
+      }
+
+      case 'archive-orphans': {
+        // Archive Shopify products with no CT match + create redirects to collection.
+        // Archives preserve order history; products become unavailable but URLs redirect.
+        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
+        const limit = parseInt(req.query.limit as string || '100', 10);
+
+        const ctTires = await fetchAllCTTires();
+        const ctPartNumbers = new Set(ctTires.map(t => t.partNumber));
+
+        const orphans: Array<{ id: number; title: string; handle: string; sku: string; tags: string }> = [];
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,handle,variants,tags`;
+        while (nextUrl) {
+          const r: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          if (!r.ok) throw new Error(`Shopify ${r.status}`);
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            const sku = p.variants?.[0]?.sku || '';
+            // Only archive products with no CT match AND not zero-stock active products
+            // (zero-stock ones may return — orphans have truly gone from CT catalog)
+            if (sku && !ctPartNumbers.has(sku)) {
+              orphans.push({ id: p.id, title: p.title, handle: p.handle || '', sku, tags: p.tags || '' });
+            }
+          }
+          const link: string | null = r.headers.get('link');
+          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = m ? m[1] : null;
+        }
+
+        const chunk = orphans.slice(0, limit);
+
+        if (dryRun) {
+          return res.status(200).json({
+            success: true, mode: 'archive-orphans', dryRun: true,
+            totalOrphans: orphans.length,
+            willArchive: chunk.length,
+            sample: chunk.slice(0, 10).map(p => ({ title: p.title, sku: p.sku, redirectTarget: '/collections/all' })),
+          });
+        }
+
+        let archived = 0, redirected = 0, errors = 0;
+        for (const p of chunk) {
+          try {
+            // 1. Create redirect BEFORE archiving
+            if (p.handle) {
+              await shopifyFetch('/redirects.json', {
+                method: 'POST',
+                body: JSON.stringify({ redirect: {
+                  path: `/products/${p.handle}`,
+                  target: '/collections/all',
+                }}),
+              }).catch(() => {}); // non-fatal if redirect already exists
+              redirected++;
+            }
+            // 2. Archive the product (preserves order history, removes from storefront)
+            await shopifyFetch(`/products/${p.id}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ product: { id: p.id, status: 'archived' } }),
+            });
+            archived++;
+            await delay(300);
+          } catch (e: any) {
+            console.error(`[archive-orphans] Failed ${p.id} "${p.title}":`, e.message);
+            errors++;
+          }
+        }
+
+        return res.status(200).json({
+          success: true, mode: 'archive-orphans', dryRun: false,
+          totalOrphans: orphans.length,
+          archived, redirected, errors,
+          remaining: orphans.length - chunk.length,
+          nextOffset: orphans.length > limit ? limit : null,
+        });
+      }
+
       case 'dedup': {
         const dryRun = !(req.body as any)?.confirm;
-        const allById = new Map<number, { id: number; title: string; imageCount: number }>();
+        const allById = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
         let nextUrl: string | null =
-          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,handle,images`;
         let safetyLimit = 20;
         while (nextUrl && safetyLimit-- > 0) {
           const res: Response = await fetch(nextUrl, {
@@ -1003,51 +1122,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!res.ok) throw new Error(`Shopify ${res.status} paginating products`);
           const data: any = await res.json();
           for (const p of (data.products || [])) {
-            allById.set(p.id, { id: p.id, title: p.title, imageCount: p.images?.length || 0 });
+            allById.set(p.id, { id: p.id, title: p.title, handle: p.handle || '', imageCount: p.images?.length || 0 });
           }
           const link: string | null = res.headers.get('link');
           const nextMatch: RegExpMatchArray | null = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
           nextUrl = nextMatch ? nextMatch[1] : null;
         }
 
-        const byTitle = new Map<string, Array<{ id: number; title: string; imageCount: number }>>();
+        const byTitle = new Map<string, Array<{ id: number; title: string; handle: string; imageCount: number }>>();
         for (const p of allById.values()) {
           const key = p.title.trim().toUpperCase();
           if (!byTitle.has(key)) byTitle.set(key, []);
           byTitle.get(key)!.push(p);
         }
 
-        const duplicateGroups: Array<{ title: string; keep: number; delete: number[] }> = [];
+        const duplicateGroups: Array<{ title: string; keep: number; keepHandle: string; delete: number[]; deleteHandles: string[] }> = [];
         for (const [title, group] of byTitle.entries()) {
-          const seen = new Map<number, { id: number; title: string; imageCount: number }>();
+          const seen = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
           for (const p of group) seen.set(p.id, p);
           const unique = [...seen.values()];
           if (unique.length < 2) continue;
-          unique.sort((a, b) => b.imageCount - a.imageCount || a.id - b.id);
+          // Keep: most images first, then NEWEST (highest ID = most recently synced with correct tags)
+          unique.sort((a, b) => b.imageCount - a.imageCount || b.id - a.id);
           const keepId = unique[0].id;
-          const deleteIds = [...new Set(unique.slice(1).map(p => p.id))].filter(id => id !== keepId);
-          if (deleteIds.length === 0) continue;
-          duplicateGroups.push({ title, keep: keepId, delete: deleteIds });
+          const keepHandle = unique[0].handle;
+          const toRemove = unique.slice(1).filter(p => p.id !== keepId);
+          if (toRemove.length === 0) continue;
+          duplicateGroups.push({
+            title,
+            keep: keepId,
+            keepHandle,
+            delete: toRemove.map(p => p.id),
+            deleteHandles: toRemove.map(p => p.handle),
+          });
         }
 
         const toDelete = duplicateGroups.flatMap(g => g.delete);
 
         if (!dryRun) {
-          let deleted = 0, failed = 0;
-          for (const id of toDelete) {
-            try {
-              await shopifyFetch(`/products/${id}.json`, { method: 'DELETE' });
-              deleted++;
-            } catch (err) {
-              console.error(`[dedup] Failed to delete product ${id}:`, err);
-              failed++;
+          let deleted = 0, redirected = 0, failed = 0;
+          for (const g of duplicateGroups) {
+            for (let i = 0; i < g.delete.length; i++) {
+              const id = g.delete[i];
+              const handle = g.deleteHandles[i];
+              try {
+                // Create redirect BEFORE deleting so the URL stays valid
+                if (handle && g.keepHandle) {
+                  await shopifyFetch('/redirects.json', {
+                    method: 'POST',
+                    body: JSON.stringify({ redirect: {
+                      path: `/products/${handle}`,
+                      target: `/products/${g.keepHandle}`,
+                    }}),
+                  }).catch(() => {}); // non-fatal if redirect already exists
+                  redirected++;
+                }
+                await shopifyFetch(`/products/${id}.json`, { method: 'DELETE' });
+                deleted++;
+              } catch (err) {
+                console.error(`[dedup] Failed to delete product ${id}:`, err);
+                failed++;
+              }
+              await delay(300);
             }
-            await new Promise(r => setTimeout(r, 250));
           }
           return res.status(200).json({
             success: true, mode: 'dedup', dryRun: false,
             duplicateGroups: duplicateGroups.length,
-            deleted, failed,
+            deleted, redirected, failed,
             detail: duplicateGroups,
           });
         }
@@ -1062,6 +1204,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'fill-missing-loadindex': {
         // Find all ct-sync products missing loadindex tag, match by size to CT data, fill in tags
         const dryRun = (req.query.dryRun ?? 'true') !== 'false';
+        const fillOffset = parseInt(req.query.offset as string || '0', 10);
+        const fillLimit  = parseInt(req.query.limit  as string || '200', 10);
 
         // 1. Fetch all CT tires and build a size→{loadIndex,speedRating} map
         const ctTires = await fetchAllCTTires();
@@ -1129,7 +1273,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 4. Write tags
         let fixed = 0, errors = 0;
-        for (const p of toFix) {
+        const toFixChunk = toFix.slice(fillOffset, fillOffset + fillLimit);
+        let fixed = 0, errors = 0;
+        for (const p of toFixChunk) {
           try {
             const updatedTags = [p.currentTags, `loadindex:${p.loadIndex}`, p.speedRating ? `speedrating:${p.speedRating}` : '']
               .filter(Boolean).join(', ');
@@ -1147,6 +1293,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true, mode: 'fill-missing-loadindex', dryRun: false,
           totalMissing: missing.length, canFix: toFix.length, fixed, errors,
+          offset: fillOffset, limit: fillLimit,
+          nextOffset: (fillOffset + fillLimit < toFix.length) ? fillOffset + fillLimit : null,
+          done: (fillOffset + fillLimit >= toFix.length),
         });
       }
 
