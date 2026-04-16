@@ -242,19 +242,20 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
   return res.json() as Promise<T>;
 }
 
-interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; hasImages:boolean; }
+interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; hasImages:boolean; tags:string; }
 
 async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
   const map = new Map<string,ExistingProduct>();
   let sinceId = 0;
   while (true) {
-    const q = `tag=${SYNC_TAG}&limit=250&fields=id,variants,images${sinceId?`&since_id=${sinceId}`:''}`;
+    const q = `tag=${SYNC_TAG}&limit=250&fields=id,variants,images,tags${sinceId?`&since_id=${sinceId}`:''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products = data.products || [];
     for (const p of products) {
       const hasImages = Array.isArray(p.images) && p.images.length > 0;
+      const existingTags: string = p.tags || '';
       for (const v of p.variants) {
-        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages });
+        if (v.sku) map.set(v.sku, { productId:p.id, variantId:v.id, inventoryItemId:v.inventory_item_id, price:v.price, hasImages, tags:existingTags });
       }
     }
     if (products.length < 250) break;
@@ -610,8 +611,16 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const newPrice = msrp.toFixed(2);
     const priceChanged = newPrice !== ex.price;
 
+    // Append loadindex/speedrating to existing tags without overwriting anything
+    const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
+    const existingTagStr = ex.tags || '';
+    let updatedTags = existingTagStr;
+    if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
+    if (upSR && !existingTagStr.includes('speedrating:')) updatedTags = [updatedTags, `speedrating:${upSR}`].filter(Boolean).join(', ');
+    const tagsChanged = updatedTags !== existingTagStr;
+
     if (!priceChanged && mode === 'daily') {
-      // Price unchanged — still write real cost + update inventory + backfill image + metafields
+      // Price unchanged — still write real cost + update inventory + backfill image + append tags
       try {
         await shopifyFetch(`/variants/${ex.variantId}.json`, {
           method: 'PUT',
@@ -619,6 +628,10 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             variant: { id: ex.variantId, cost: netCost.toFixed(2) },
           }),
         });
+        if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
+        }).catch(() => {});
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
         if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
@@ -638,6 +651,10 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           },
         }),
       });
+      if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
+      }).catch(() => {});
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
