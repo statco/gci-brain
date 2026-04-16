@@ -216,10 +216,14 @@ function parseCTSizeCode(rawCode: string | number): string {
 // Returns { loadIndex: '110', speedRating: 'T' } or nulls if not found.
 
 function parseLoadIndexAndSpeedRating(name: string): { loadIndex: string | null; speedRating: string | null } {
-  // Match a 2-3 digit load index followed by a single uppercase speed rating letter
-  // immediately after the tire size (e.g. "265/60R18 110T" or "225/55R18 98H")
-  const match = name.match(/\d{3}\/\d{2}R\d{2}\s+(\d{2,3})([A-Z])/);
-  if (match) return { loadIndex: match[1], speedRating: match[2] };
+  // CT name format: "2356014 RWL 96T COOPER..." or "2356014 96T COOPER..."
+  // Compact size (7 digits) optionally followed by letters/spaces, then load index + speed rating
+  // Also handles standard format: "265/60R18 110T ..."
+  const compactMatch = name.match(/^\d{7}(?:\s+[A-Z]+)?\s+(\d{2,3})([A-Z])\b/);
+  if (compactMatch) return { loadIndex: compactMatch[1], speedRating: compactMatch[2] };
+  // Fallback: standard size format "265/60R18 110T"
+  const standardMatch = name.match(/\d{3}\/\d{2}R\d{2}\s+(\d{2,3})([A-Z])\b/);
+  if (standardMatch) return { loadIndex: standardMatch[1], speedRating: standardMatch[2] };
   return { loadIndex: null, speedRating: null };
 }
 
@@ -613,7 +617,6 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
     // Append loadindex/speedrating to existing tags without overwriting anything
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
-    console.log(`[sync-debug] name="${ct.name}" → LI:${upLI} SR:${upSR}`);
     const existingTagStr = ex.tags || '';
     let updatedTags = existingTagStr;
     if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
