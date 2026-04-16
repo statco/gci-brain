@@ -1056,6 +1056,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           detail: duplicateGroups,
         });
       }
+      case 'debug-ct-names': {
+        // Fetch first 5 CT products and return their name field to verify regex match
+        const ctSample = await fetchAllCTTires();
+        const sample = ctSample.slice(0, 10).map(ct => {
+          const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+          return {
+            name: ct.name,
+            brand: ct.brand,
+            model: ct.model,
+            size: ct.size,
+            parsedLoadIndex: loadIndex,
+            parsedSpeedRating: speedRating,
+          };
+        });
+        return res.status(200).json({ success: true, mode: 'debug-ct-names', sample });
+      }
+
       case 'repair-tags': {
         // Find products whose tags were overwritten by the bad sync (only have loadindex/speedrating)
         // and restore their full tag sets from title parsing.
