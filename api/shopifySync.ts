@@ -1055,6 +1055,102 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           detail: duplicateGroups,
         });
       }
+      case 'repair-tags': {
+        // Find products whose tags were overwritten by the bad sync (only have loadindex/speedrating)
+        // and restore their full tag sets from title parsing.
+        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
+        const repairOffset = parseInt(req.query.offset as string || '0', 10);
+        const repairLimit  = parseInt(req.query.limit  as string || '100', 10);
+
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?status=active&limit=250&fields=id,title,tags,product_type`;
+        const orphaned: Array<{ id: number; title: string; tags: string }> = [];
+
+        while (nextUrl) {
+          const res: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          if (res.status === 429) { await delay(2000); continue; }
+          if (!res.ok) throw new Error(`Shopify ${res.status}`);
+          const data: any = await res.json();
+          for (const p of (data.products || [])) {
+            // Orphaned products have tags that consist ONLY of loadindex/speedrating values
+            const tagArr: string[] = (p.tags || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+            const nonLiSr = tagArr.filter((t: string) => !t.startsWith('loadindex:') && !t.startsWith('speedrating:'));
+            if (nonLiSr.length === 0 && tagArr.length > 0) {
+              orphaned.push({ id: p.id, title: p.title, tags: p.tags });
+            }
+          }
+          const link: string | null = res.headers.get('link');
+          const nextMatch = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = nextMatch ? nextMatch[1] : null;
+        }
+
+        const chunk = orphaned.slice(repairOffset, repairOffset + repairLimit);
+        const nextOffset = repairOffset + repairLimit;
+        const done = nextOffset >= orphaned.length;
+
+        if (dryRun) {
+          return res.status(200).json({
+            success: true, mode: 'repair-tags', dryRun: true,
+            totalOrphaned: orphaned.length,
+            showing: chunk.length,
+            orphaned: chunk.map(p => ({ id: p.id, title: p.title, currentTags: p.tags })),
+          });
+        }
+
+        let repaired = 0, errors = 0;
+        for (const p of chunk) {
+          try {
+            // Reconstruct full tag set from title
+            const parts = p.title.trim().split(' ');
+            const size  = parts[parts.length - 1] || '';
+            const brand = parts[0] || '';
+            const brandTag = `brand-${brand.toLowerCase().replace(/\s+/g, '-')}`;
+
+            // Determine season from existing loadindex tag or product type
+            const existingTags = p.tags || '';
+            const isWinter = p.title.toLowerCase().includes('winter') ||
+                             p.title.toLowerCase().includes('snow') ||
+                             p.title.toLowerCase().includes('blizzak') ||
+                             p.title.toLowerCase().includes('ice');
+            const seasonTag = isWinter ? 'winter' : 'all-season';
+
+            // Rebuild full tag string (preserve existing loadindex/speedrating)
+            const liTag = existingTags.split(',').map((t: string) => t.trim()).find((t: string) => t.startsWith('loadindex:')) || '';
+            const srTag = existingTags.split(',').map((t: string) => t.trim()).find((t: string) => t.startsWith('speedrating:')) || '';
+
+            const restoredTags = [
+              SYNC_TAG,
+              'ai-match',
+              brandTag,
+              seasonTag,
+              size,
+              liTag,
+              srTag,
+            ].filter(Boolean).join(', ');
+
+            await shopifyFetch(`/products/${p.id}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ product: { id: p.id, tags: restoredTags } }),
+            });
+            repaired++;
+            await delay(250);
+          } catch (e: any) {
+            console.error(`[repair-tags] Failed ${p.id} "${p.title}":`, e.message);
+            errors++;
+          }
+        }
+
+        return res.status(200).json({
+          success: true, mode: 'repair-tags', dryRun: false,
+          totalOrphaned: orphaned.length,
+          repaired, errors,
+          nextOffset: done ? null : nextOffset,
+          done,
+        });
+      }
+
       case 'daily-sync':
       default: {
         const updateOffset    = parseInt(req.query.updateOffset as string || '0', 10);
