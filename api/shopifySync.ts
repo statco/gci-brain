@@ -1178,11 +1178,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ctSample = await fetchAllCTTires();
         const sample = ctSample.slice(0, 10).map(ct => {
           const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
+          const convertedSize = parseCTSizeCode(ct.size);
           return {
             name: ct.name,
             brand: ct.brand,
             model: ct.model,
-            size: ct.size,
+            rawSize: ct.size,
+            convertedSize,
             parsedLoadIndex: loadIndex,
             parsedSpeedRating: speedRating,
           };
