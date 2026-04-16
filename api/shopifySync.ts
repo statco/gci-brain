@@ -318,7 +318,7 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
   const allProducts: Array<{ id: number; title: string; images: any[] }> = [];
 
   while (true) {
-    const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,images${sinceId ? `&since_id=${sinceId}` : ''}`;
+    const q = `tag=${SYNC_TAG}&limit=250&fields=id,title,handle,images${sinceId ? `&since_id=${sinceId}` : ''}`;
     const data: any = await shopifyFetch<any>(`/products.json?${q}`);
     const products = data.products || [];
     allProducts.push(...products);
@@ -988,17 +988,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'find-orphans': {
-        // Cross-reference Shopify ct-sync products vs CT API part numbers.
-        // Orphans = products in Shopify with no matching CT part number.
         const ctTires = await fetchAllCTTires();
-        const ctPartNumbers = new Set(ctTires.map(t => t.partNumber));
-
-        // Fetch all Shopify ct-sync products with their SKUs
+        const ctPartNumbers = new Set(ctTires.map((t: any) => t.partNumber));
         const orphans: Array<{ id: number; title: string; handle: string; sku: string; tags: string }> = [];
-        let nextUrl: string | null =
+        let foUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,handle,variants,tags`;
-        while (nextUrl) {
-          const r: Response = await fetch(nextUrl, {
+        while (foUrl) {
+          const r: Response = await fetch(foUrl, {
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
           });
           if (!r.ok) throw new Error(`Shopify ${r.status}`);
@@ -1009,15 +1005,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               orphans.push({ id: p.id, title: p.title, handle: p.handle || '', sku, tags: p.tags || '' });
             }
           }
-          const link: string | null = r.headers.get('link');
-          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
-          nextUrl = m ? m[1] : null;
+          const lnk: string | null = r.headers.get('link');
+          const lm = lnk ? lnk.match(/<([^>]+)>;\s*rel="next"/) : null;
+          foUrl = lm ? lm[1] : null;
         }
-
-        // Categorise by reason
         const soldOut = orphans.filter(p => p.tags.includes('sold-out'));
         const trulyOrphaned = orphans.filter(p => !p.tags.includes('sold-out'));
-
         return res.status(200).json({
           success: true, mode: 'find-orphans',
           ctProducts: ctPartNumbers.size,
@@ -1029,88 +1022,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       case 'archive-orphans': {
-        // Archive Shopify products with no CT match + create redirects to collection.
-        // Archives preserve order history; products become unavailable but URLs redirect.
-        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
-        const limit = parseInt(req.query.limit as string || '100', 10);
-
-        const ctTires = await fetchAllCTTires();
-        const ctPartNumbers = new Set(ctTires.map(t => t.partNumber));
-
-        const orphans: Array<{ id: number; title: string; handle: string; sku: string; tags: string }> = [];
-        let nextUrl: string | null =
+        const dryRun2 = (req.query.dryRun ?? 'true') !== 'false';
+        const aoLimit = parseInt(req.query.limit as string || '100', 10);
+        const ctTires2 = await fetchAllCTTires();
+        const ctPNs = new Set(ctTires2.map((t: any) => t.partNumber));
+        const aoOrphans: Array<{ id: number; title: string; handle: string; sku: string }> = [];
+        let aoUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,handle,variants,tags`;
-        while (nextUrl) {
-          const r: Response = await fetch(nextUrl, {
+        while (aoUrl) {
+          const r: Response = await fetch(aoUrl, {
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
           });
           if (!r.ok) throw new Error(`Shopify ${r.status}`);
           const data: any = await r.json();
           for (const p of (data.products || [])) {
             const sku = p.variants?.[0]?.sku || '';
-            // Only archive products with no CT match AND not zero-stock active products
-            // (zero-stock ones may return — orphans have truly gone from CT catalog)
-            if (sku && !ctPartNumbers.has(sku)) {
-              orphans.push({ id: p.id, title: p.title, handle: p.handle || '', sku, tags: p.tags || '' });
+            if (sku && !ctPNs.has(sku)) {
+              aoOrphans.push({ id: p.id, title: p.title, handle: p.handle || '', sku });
             }
           }
-          const link: string | null = r.headers.get('link');
-          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
-          nextUrl = m ? m[1] : null;
+          const lnk: string | null = r.headers.get('link');
+          const lm = lnk ? lnk.match(/<([^>]+)>;\s*rel="next"/) : null;
+          aoUrl = lm ? lm[1] : null;
         }
-
-        const chunk = orphans.slice(0, limit);
-
-        if (dryRun) {
+        const aoChunk = aoOrphans.slice(0, aoLimit);
+        if (dryRun2) {
           return res.status(200).json({
             success: true, mode: 'archive-orphans', dryRun: true,
-            totalOrphans: orphans.length,
-            willArchive: chunk.length,
-            sample: chunk.slice(0, 10).map(p => ({ title: p.title, sku: p.sku, redirectTarget: '/collections/all' })),
+            totalOrphans: aoOrphans.length,
+            willArchive: aoChunk.length,
+            sample: aoChunk.slice(0, 10).map(p => ({ title: p.title, sku: p.sku })),
           });
         }
-
-        let archived = 0, redirected = 0, errors = 0;
-        for (const p of chunk) {
+        let aoArchived = 0; let aoRedirected = 0; let aoErrors = 0;
+        for (const p of aoChunk) {
           try {
-            // 1. Create redirect BEFORE archiving
             if (p.handle) {
               await shopifyFetch('/redirects.json', {
                 method: 'POST',
-                body: JSON.stringify({ redirect: {
-                  path: `/products/${p.handle}`,
-                  target: '/collections/all',
-                }}),
-              }).catch(() => {}); // non-fatal if redirect already exists
-              redirected++;
+                body: JSON.stringify({ redirect: { path: `/products/${p.handle}`, target: '/collections/all' } }),
+              }).catch(() => {});
+              aoRedirected++;
             }
-            // 2. Archive the product (preserves order history, removes from storefront)
             await shopifyFetch(`/products/${p.id}.json`, {
               method: 'PUT',
               body: JSON.stringify({ product: { id: p.id, status: 'archived' } }),
             });
-            archived++;
+            aoArchived++;
             await delay(300);
           } catch (e: any) {
-            console.error(`[archive-orphans] Failed ${p.id} "${p.title}":`, e.message);
-            errors++;
+            console.error('[archive-orphans] Failed', p.id, e.message);
+            aoErrors++;
           }
         }
-
         return res.status(200).json({
           success: true, mode: 'archive-orphans', dryRun: false,
-          totalOrphans: orphans.length,
-          archived, redirected, errors,
-          remaining: orphans.length - chunk.length,
-          nextOffset: orphans.length > limit ? limit : null,
+          totalOrphans: aoOrphans.length,
+          archived: aoArchived, redirected: aoRedirected, errors: aoErrors,
+          remaining: aoOrphans.length - aoChunk.length,
         });
       }
 
       case 'dedup': {
+
         const dryRun = !(req.body as any)?.confirm;
         const allById = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
         let nextUrl: string | null =
-          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,handle,images`;
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
         let safetyLimit = 20;
         while (nextUrl && safetyLimit-- > 0) {
           const res: Response = await fetch(nextUrl, {
@@ -1136,45 +1114,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           byTitle.get(key)!.push(p);
         }
 
-        const duplicateGroups: Array<{ title: string; keep: number; keepHandle: string; delete: number[]; deleteHandles: string[] }> = [];
+        const duplicateGroups: Array<{ title: string; keep: number; delete: number[] }> = [];
         for (const [title, group] of byTitle.entries()) {
           const seen = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
           for (const p of group) seen.set(p.id, p);
           const unique = [...seen.values()];
           if (unique.length < 2) continue;
-          // Keep: most images first, then NEWEST (highest ID = most recently synced with correct tags)
-          unique.sort((a, b) => b.imageCount - a.imageCount || b.id - a.id);
+          unique.sort((a, b) => b.imageCount - a.imageCount || b.id - a.id); // keep newest
           const keepId = unique[0].id;
-          const keepHandle = unique[0].handle;
-          const toRemove = unique.slice(1).filter(p => p.id !== keepId);
-          if (toRemove.length === 0) continue;
-          duplicateGroups.push({
-            title,
-            keep: keepId,
-            keepHandle,
-            delete: toRemove.map(p => p.id),
-            deleteHandles: toRemove.map(p => p.handle),
-          });
+          const deleteIds = [...new Set(unique.slice(1).map(p => p.id))].filter(id => id !== keepId);
+          if (deleteIds.length === 0) continue;
+          duplicateGroups.push({ title, keep: keepId, delete: deleteIds });
         }
 
         const toDelete = duplicateGroups.flatMap(g => g.delete);
 
         if (!dryRun) {
-          let deleted = 0, redirected = 0, failed = 0;
+          let deleted = 0, failed = 0, redirected = 0;
           for (const g of duplicateGroups) {
-            for (let i = 0; i < g.delete.length; i++) {
-              const id = g.delete[i];
-              const handle = g.deleteHandles[i];
+            const keepProduct = allById.get(g.keep);
+            const keepHandle = keepProduct?.handle || '';
+            for (const id of g.delete) {
               try {
-                // Create redirect BEFORE deleting so the URL stays valid
-                if (handle && g.keepHandle) {
+                const delProduct = allById.get(id);
+                const delHandle = delProduct?.handle || '';
+                if (delHandle && keepHandle) {
                   await shopifyFetch('/redirects.json', {
                     method: 'POST',
-                    body: JSON.stringify({ redirect: {
-                      path: `/products/${handle}`,
-                      target: `/products/${g.keepHandle}`,
-                    }}),
-                  }).catch(() => {}); // non-fatal if redirect already exists
+                    body: JSON.stringify({ redirect: { path: `/products/${delHandle}`, target: `/products/${keepHandle}` } }),
+                  }).catch(() => {});
                   redirected++;
                 }
                 await shopifyFetch(`/products/${id}.json`, { method: 'DELETE' });
@@ -1201,104 +1169,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           detail: duplicateGroups,
         });
       }
-      case 'fill-missing-loadindex': {
-        // Find all ct-sync products missing loadindex tag, match by size to CT data, fill in tags
-        const dryRun = (req.query.dryRun ?? 'true') !== 'false';
-        const fillOffset = parseInt(req.query.offset as string || '0', 10);
-        const fillLimit  = parseInt(req.query.limit  as string || '200', 10);
-
-        // 1. Fetch all CT tires and build a size→{loadIndex,speedRating} map
-        const ctTires = await fetchAllCTTires();
-        const sizeMap = new Map<string, { loadIndex: string; speedRating: string }>();
-        for (const ct of ctTires) {
-          const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
-          if (!loadIndex) continue;
-          // ct.size is raw 7 digits (e.g. "2656018") — convert to standard "265/60R18"
-          const rawSz = String(ct.size || '');
-          const szM = rawSz.match(/^(\d{3})(\d{2})(\d{2})$/);
-          const std = szM ? `${szM[1]}/${szM[2]}R${szM[3]}` : parseCTSizeCode(ct.size);
-          if (!sizeMap.has(std)) sizeMap.set(std, { loadIndex, speedRating: speedRating || '' });
-        }
-
-        // 2. Fetch all ct-sync products without loadindex tag
-        const missing: Array<{ id: number; title: string; tags: string }> = [];
-        let nextUrl: string | null =
-          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,tags`;
-        while (nextUrl) {
-          const r: Response = await fetch(nextUrl, {
-            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
-          });
-          const data: any = await r.json();
-          for (const p of (data.products || [])) {
-            if (!(p.tags || '').includes('loadindex:')) {
-              missing.push({ id: p.id, title: p.title, tags: p.tags });
-            }
-          }
-          const link: string | null = r.headers.get('link');
-          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
-          nextUrl = m ? m[1] : null;
-        }
-        console.log(`[fill-missing] Products without loadindex: ${missing.length}`);
-
-        // 3. For each, extract size from title and look up CT map
-        const toFix: Array<{ id: number; title: string; size: string; loadIndex: string; speedRating: string; currentTags: string }> = [];
-        for (const p of missing) {
-          // Extract standard size from title: e.g. "265/60R18" pattern
-          const sizeMatch = p.title.match(/(\d{3}\/\d{2}R\d{2})/i);
-          if (!sizeMatch) continue;
-          const size = sizeMatch[1];
-          const ctData = sizeMap.get(size);
-          if (!ctData) continue;
-          toFix.push({ id: p.id, title: p.title, size, loadIndex: ctData.loadIndex, speedRating: ctData.speedRating, currentTags: p.tags });
-        }
-
-        // Debug: check a few sizes
-        const sampleMissing = missing.slice(0, 5).map(p => {
-          const m = p.title.match(/(\d{3}\/\d{2}R\d{2})/i);
-          const sz = m ? m[1] : 'NO_MATCH';
-          return { title: p.title, extractedSize: sz, inMap: sizeMap.has(sz), mapSample: [...sizeMap.keys()].slice(0, 3) };
-        });
-
-        if (dryRun) {
-          return res.status(200).json({
-            success: true, mode: 'fill-missing-loadindex', dryRun: true,
-            totalMissing: missing.length,
-            canFix: toFix.length,
-            sizeMapEntries: sizeMap.size,
-            sizeMapSample: [...sizeMap.entries()].slice(0, 5).map(([k,v]) => ({ size: k, ...v })),
-            missingProductSample: sampleMissing,
-            sample: toFix.slice(0, 10).map(p => ({ title: p.title, size: p.size, willAdd: `loadindex:${p.loadIndex}, speedrating:${p.speedRating}` })),
-          });
-        }
-
-        // 4. Write tags
-        let fixed = 0, errors = 0;
-        const toFixChunk = toFix.slice(fillOffset, fillOffset + fillLimit);
-        let fixed = 0, errors = 0;
-        for (const p of toFixChunk) {
-          try {
-            const updatedTags = [p.currentTags, `loadindex:${p.loadIndex}`, p.speedRating ? `speedrating:${p.speedRating}` : '']
-              .filter(Boolean).join(', ');
-            await shopifyFetch(`/products/${p.id}.json`, {
-              method: 'PUT',
-              body: JSON.stringify({ product: { id: p.id, tags: updatedTags } }),
-            });
-            fixed++;
-            await delay(300);
-          } catch (e: any) {
-            console.error(`[fill-missing] Failed ${p.id}:`, e.message);
-            errors++;
-          }
-        }
-        return res.status(200).json({
-          success: true, mode: 'fill-missing-loadindex', dryRun: false,
-          totalMissing: missing.length, canFix: toFix.length, fixed, errors,
-          offset: fillOffset, limit: fillLimit,
-          nextOffset: (fillOffset + fillLimit < toFix.length) ? fillOffset + fillLimit : null,
-          done: (fillOffset + fillLimit >= toFix.length),
-        });
-      }
-
       case 'check-tags': {
         // Look up a product by title fragment and return its current Shopify tags
         const search = (req.query.search as string || 'Procontrol').trim();
@@ -1328,13 +1198,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ctSample = await fetchAllCTTires();
         const sample = ctSample.slice(0, 10).map(ct => {
           const { loadIndex, speedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
-          const convertedSize = parseCTSizeCode(ct.size);
           return {
             name: ct.name,
             brand: ct.brand,
             model: ct.model,
-            rawSize: ct.size,
-            convertedSize,
+            size: ct.size,
             parsedLoadIndex: loadIndex,
             parsedSpeedRating: speedRating,
           };
