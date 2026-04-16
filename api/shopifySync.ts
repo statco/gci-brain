@@ -1059,6 +1059,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           detail: duplicateGroups,
         });
       }
+      case 'check-tags': {
+        // Look up a product by title fragment and return its current Shopify tags
+        const search = (req.query.search as string || 'Procontrol').trim();
+        let found: Array<{id:number; title:string; tags:string}> = [];
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?status=active&limit=250&fields=id,title,tags`;
+        while (nextUrl && found.length === 0) {
+          const r: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type':'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            if (p.title.toLowerCase().includes(search.toLowerCase())) {
+              found.push({ id: p.id, title: p.title, tags: p.tags });
+              if (found.length >= 3) break;
+            }
+          }
+          const link: string | null = r.headers.get('link');
+          const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = m ? m[1] : null;
+        }
+        return res.status(200).json({ success: true, mode: 'check-tags', search, found });
+      }
+
       case 'debug-ct-names': {
         // Fetch first 5 CT products and return their name field to verify regex match
         const ctSample = await fetchAllCTTires();
