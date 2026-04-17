@@ -25,16 +25,17 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 // ─── SEASON / VEHICLE LABEL MAPS (French) ────────────────────────────────────
 const SEASON_LABELS: Record<string, string> = {
-  'winter':      'hiver',
-  'all-season':  'quatre saisons',
-  'all-weather': 'toutes saisons',
-  'all-terrain': 'tout-terrain',
-  'summer':      'été',
+  'winter':      'Winter',
+  'all-season':  'All-Season',
+  'all-weather': 'All-Weather',
+  'all-terrain': 'All-Terrain',
+  'summer':      'Summer',
 };
 const VEHICLE_LABELS: Record<string, string> = {
-  'passenger':   'voiture',
-  'suv':         'VUS',
-  'light-truck': 'camion léger',
+  'passenger':   'passenger car',
+  'suv':         'SUV/crossover',
+  'light-truck': 'light truck',
+  'light_truck': 'light truck',
 };
 const SEASON_TAGS  = Object.keys(SEASON_LABELS);
 const VEHICLE_TAGS = Object.keys(VEHICLE_LABELS);
@@ -49,19 +50,19 @@ async function generateAiCopy(
 ): Promise<{ description: string; metaDescription: string } | null> {
   if (!ANTHROPIC_API_KEY) return null;
 
-  const s = SEASON_LABELS[season]  || 'toutes saisons';
-  const v = VEHICLE_LABELS[vehicle] || 'voiture';
+  const s = SEASON_LABELS[season]  || 'All-Season';
+  const v = VEHICLE_LABELS[vehicle] || 'passenger car';
 
-  const prompt = `Tu es un rédacteur e-commerce spécialisé en pneus. Génère du contenu en français pour ce produit.
+  const prompt = `You are an e-commerce copywriter specializing in tires for the Canadian market. Generate English content for this tire product.
 
-Produit : ${productTitle}
-Type : pneu ${s} pour ${v}
-Marché : Québec
+Product: ${productTitle}
+Type: ${s} tire for ${v}
+Market: Canada (Quebec and all provinces)
 
-Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte supplémentaire :
+Respond ONLY with a valid JSON object, no markdown, no extra text:
 {
-  "description": "<p>2 à 3 phrases HTML décrivant le pneu de façon convaincante. Mentionne la saison, le type de véhicule, et les conditions routières québécoises. Naturel, pas de superlatifs creux.</p>",
-  "metaDescription": "Phrase d'accroche SEO max 155 caractères. Commence par Achetez le [titre]."
+  "description": "<p>2-3 HTML sentences describing the tire compellingly. Mention season, vehicle type, and Canadian driving conditions. Natural tone, no hollow superlatives.</p>",
+  "metaDescription": "SEO meta max 155 chars. Start: Shop the [title] at GCI Tires. [Vehicle cap] fitment. Free shipping across Canada."
 }`;
 
   try {
@@ -106,32 +107,70 @@ const parsed = JSON.parse(clean);
 // ─── STATIC FALLBACKS ─────────────────────────────────────────────────────────
 
 function metaDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
-  const s = SEASON_LABELS[season]  || 'toutes saisons';
-  const v = VEHICLE_LABELS[vehicle] || 'voiture';
-  return `Achetez le ${productTitle} chez GCI Tires. Pneu ${s} pour ${v}. Livraison rapide au Québec. Prix compétitifs.`;
+  // English GMC-compliant meta: max 155 chars
+  const s = SEASON_LABELS[season]  || 'All-Season';
+  const v = VEHICLE_LABELS[vehicle] || 'passenger car';
+  const vCap = v.charAt(0).toUpperCase() + v.slice(1);
+  return `Shop the ${productTitle} at GCI Tires. ${vCap} fitment. Free shipping across Canada.`.slice(0, 155);
 }
 
 function productDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
-  const s = SEASON_LABELS[season]  || 'toutes saisons';
-  const v = VEHICLE_LABELS[vehicle] || 'voiture';
-  return `<p>Le ${productTitle} est un pneu ${s} conçu pour ${v}. Idéal pour les conditions ${s} au Québec. Disponible chez GCI Tires avec livraison rapide et prix compétitifs.</p>`;
+  // Keep existing body_html unchanged — only SEO fields are updated by this script
+  return '';
 }
 
 // ─── REMAINING STATIC HELPERS ─────────────────────────────────────────────────
 
-function seoTitle(productTitle: string): string {
-  return `${productTitle} | Pneus GCI`;
+// Extract load index and speed rating from tags
+function extractLoadIndex(tags: string): { li: string; sr: string } {
+  const tagArr = tags.split(',').map(t => t.trim());
+  const li = tagArr.find(t => t.startsWith('loadindex:'))?.slice(10) || '';
+  const sr = tagArr.find(t => t.startsWith('speedrating:'))?.slice(12) || '';
+  return { li, sr };
+}
+function seoTitle(productTitle: string, tags: string = ''): string {
+  // Template: [Title] – [LI][SR] | GCI Tires (max 60 chars)
+  const { li, sr } = extractLoadIndex(tags);
+  const suffix = (li && sr) ? ` – ${li}${sr}` : '';
+  const base   = `${productTitle}${suffix} | GCI Tires`;
+  if (base.length <= 60) return base;
+  // Drop load/speed rating if too long
+  const shorter = `${productTitle} | GCI Tires`;
+  if (shorter.length <= 60) return shorter;
+  // Truncate title
+  const maxTitle = 60 - ' | GCI Tires'.length;
+  return `${productTitle.slice(0, maxTitle)} | GCI Tires`;
 }
 function imageAlt(productTitle: string, season: string, vehicle: string): string {
-  const s = SEASON_LABELS[season]  || '';
-  const v = VEHICLE_LABELS[vehicle] || '';
-  return `${productTitle} - pneu ${s} ${v}`.trim();
+  // English image alts for GMC compliance
+  const s = season.replace('all-season', 'All-Season').replace('winter', 'Winter')
+                   .replace('summer', 'Summer').replace('all-weather', 'All-Weather')
+                   .replace('all-terrain', 'All-Terrain');
+  const v = vehicle === 'passenger' ? 'passenger car'
+          : vehicle === 'suv' ? 'SUV'
+          : vehicle === 'light_truck' || vehicle === 'light-truck' ? 'light truck'
+          : 'tire';
+  return `${productTitle} ${s} ${v} tire`.trim();
 }
 // ─── TAG DETECTION ────────────────────────────────────────────────────────────
 function detectFromTags(tags: string): { season: string; vehicle: string } {
   const tagList = tags.split(',').map(t => t.trim().toLowerCase());
-  const season  = tagList.find(t => SEASON_TAGS.includes(t))  || '';
-  const vehicle = tagList.find(t => VEHICLE_TAGS.includes(t)) || '';
+  // Match bare tags (e.g. "all-season") OR prefixed (e.g. "season:all-season")
+  let season = tagList.find(t => SEASON_TAGS.includes(t)) || '';
+  if (!season) {
+    const prefixed = tagList.find(t => t.startsWith('season:'));
+    if (prefixed) season = prefixed.slice(7).trim();
+  }
+  // Match bare vehicle tags OR vehicle_type:X prefixed
+  const VEHICLE_BARE = ['passenger', 'suv', 'light_truck', 'light-truck'];
+  let vehicle = tagList.find(t => VEHICLE_BARE.includes(t)) || '';
+  if (!vehicle) {
+    const prefixed = tagList.find(t => t.startsWith('vehicle_type:'));
+    if (prefixed) {
+      const val = prefixed.slice(13).toLowerCase();
+      vehicle = val === 'suv' ? 'suv' : val.includes('truck') ? 'light_truck' : 'passenger';
+    }
+  }
   return { season, vehicle };
 }
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -238,7 +277,7 @@ async function processProduct(
 ): Promise<{ change: ChangeRecord; error: string | null }> {
   const { season, vehicle } = detectFromTags(product.tags);
 
-  const newSeoTitle = seoTitle(product.title);
+  const newSeoTitle = seoTitle(product.title, product.tags);
   const newAlt      = imageAlt(product.title, season, vehicle);
 
   // ── AI copy (with static fallback) ────────────────────────────────────────
