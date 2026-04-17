@@ -1,16 +1,9 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Dashboard from './components/Dashboard';
-import InstallerApplicationForm from './components/InstallerApplicationForm';
-import ShopifyFixDashboard from './components/ShopifyFixDashboard';
+import ShopifySync from './components/ShopifySync';
 import UpdateCollectionSeo from './components/UpdateCollectionSeo';
-import FixFrenchContent from './components/FixFrenchContent';
-import FixProductDescriptions from './components/FixProductDescriptions';
-import FixAltTags from './components/FixAltTags';
-import FixThemeContent from './components/FixThemeContent';
 import FixRedirects from './components/FixRedirects';
-import FixTitles from './components/FixTitles';
 import UpdateSeo from './components/UpdateSeo';
-import ReviewsModeration from './components/ReviewsModeration';
 import React, { useState, useEffect } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import InputForm from './components/InputForm';
@@ -256,17 +249,10 @@ function App() {
       <Routes>
         <Route path="/" element={<TireMatchApp />} />
         <Route path="/brain" element={<Dashboard />} />
-        <Route path="/installer-application" element={<InstallerApplicationForm />} />
-        <Route path="/shopify-fix" element={<ShopifyFixDashboard />} />
+        <Route path="/sync" element={<ShopifySync />} />
         <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
-        <Route path="/fix-french" element={<FixFrenchContent />} />
-        <Route path="/fix-descriptions" element={<FixProductDescriptions />} />
-        <Route path="/fix-alt-tags" element={<FixAltTags />} />
-        <Route path="/fix-theme" element={<FixThemeContent />} />
         <Route path="/fix-redirects" element={<FixRedirects />} />
-        <Route path="/fix-titles" element={<FixTitles />} />
         <Route path="/update-seo" element={<UpdateSeo />} />
-        <Route path="/reviews" element={<ReviewsModeration />} />
       </Routes>
     </BrowserRouter>
   );
