@@ -51,6 +51,12 @@ const catalogTools = [
     route: '/fix-titles',
     description: 'Convert ALL CAPS product titles to Title Case',
   },
+  {
+    icon: '🔍',
+    title: 'Update SEO',
+    route: '/update-seo',
+    description: 'Bulk-write English SEO titles & meta descriptions to all products — GMC compliant',
+  },
 ];
 
 const storeTools = [
