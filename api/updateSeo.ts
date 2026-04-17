@@ -39,7 +39,13 @@ const VEHICLE_LABELS: Record<string, string> = {
 };
 const SEASON_TAGS  = Object.keys(SEASON_LABELS);
 const VEHICLE_TAGS = Object.keys(VEHICLE_LABELS);
-const NON_TIRE_TITLES = ['installation', 'service', 'balancing', 'mounting'];
+// Products to skip — non-tire items and excluded keywords
+const NON_TIRE_TITLES    = ['installation', 'service', 'balancing', 'mounting'];
+const EXCLUDE_KEYWORDS   = ['bottle', 'vacuum', 'cleaner', 'massager', 'cervical', 'neck relaxer',
+                            'shoulder relaxer', 'nuproz', 'nuprozone', 'appliance', 'wireless cleaning'];
+const EXCLUDED_VENDORS   = new Set(['nuprozone']);
+// Tire products must have at least one of these signals
+const TIRE_SIGNALS_RE    = /R1[5-9]|R2[0-2]|\bLT\b|tire|tyre|\d{3}\/\d{2}R/i;
 
 // ─── AI COPY GENERATION ───────────────────────────────────────────────────────
 
@@ -413,7 +419,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const changes: ChangeRecord[] = [];
   for (const product of chunk) {
     const titleLower = product.title.toLowerCase();
-    if (NON_TIRE_TITLES.some(kw => titleLower.includes(kw))) {
+    // Skip non-tire products: excluded keywords, vendors, or no tire signal
+    const isExcludedKeyword = EXCLUDE_KEYWORDS.some(kw => titleLower.includes(kw));
+    const isExcludedVendor  = EXCLUDED_VENDORS.has((product.vendor || '').toLowerCase());
+    const hasTireSignal     = TIRE_SIGNALS_RE.test(product.title) ||
+                              product.tags.toLowerCase().includes('ct-sync') ||
+                              product.tags.toLowerCase().includes('ai-match');
+    if (NON_TIRE_TITLES.some(kw => titleLower.includes(kw)) || isExcludedKeyword || isExcludedVendor || !hasTireSignal) {
       skipped++;
       continue;
     }
