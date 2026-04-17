@@ -144,9 +144,15 @@ function buildDescription(product: ShopifyProduct, season: string, vehicle: { la
   const raw = (product.body_html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
   // Detect if the body_html contains the raw sync format (ALL CAPS or stock info)
-  const isRawSync = raw.startsWith('COOPER') || raw.startsWith('NEXEN') || raw.startsWith('VREDESTEIN') ||
-                    raw.startsWith('NITTO') || raw.includes('Stock:') || raw.includes('Part #:') ||
-                    raw.includes('nearest:') || raw === raw.toUpperCase().slice(0, 20) + raw.slice(20);
+  // Detect content that should be replaced: raw sync data OR French content
+  const FRENCH_INDICATORS = ['pneu', 'québécois', 'adhérence', 'voiture', ' est un ', 'pour les ',
+    'conçu pour', 'idéal pour', 'roulement', 'traction', 'saison', 'livraison', 'Achetez'];
+  const rawLower = raw.toLowerCase();
+  const isFrench = FRENCH_INDICATORS.some(w => rawLower.includes(w));
+  const isRawSync = isFrench ||
+    raw.startsWith('COOPER') || raw.startsWith('NEXEN') || raw.startsWith('VREDESTEIN') ||
+    raw.startsWith('NITTO') || raw.includes('Stock:') || raw.includes('Part #:') ||
+    raw.includes('nearest:');
 
   if (!isRawSync && raw.length > 50 && !raw.includes('Stock:') && !raw.includes('nearest:')) {
     // Use the existing AI-generated description — truncate to 5000 chars
