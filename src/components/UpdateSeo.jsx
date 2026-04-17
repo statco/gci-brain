@@ -1,400 +1,454 @@
-import { useState, useRef, useEffect } from "react";
+console.log('updateSeo module loaded');
+// api/updateSeo.ts
+// ============================================================
+// Shopify SEO Updater — bulk-set SEO title, meta description,
+// and image alt tags for all products using existing title + tags.
+//
+// GET /api/updateSeo                          — first chunk (chunkSize=10)
+// GET /api/updateSeo?dry=true                 — preview (no saves)
+// GET /api/updateSeo?offset=10&chunkSize=10   — next batch
+// GET /api/updateSeo?productId=123456789      — single product
+// ============================================================
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+export const config = { maxDuration: 300 };
+// ─── SHOPIFY CONFIG ───────────────────────────────────────────────────────────
+const SHOPIFY = {
+  domain:     process.env.SHOPIFY_STORE_DOMAIN       || '',
+  token:      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
+  apiVersion: '2024-01',
+  get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
+};
 
-// ─── Stat Card ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, color }) {
-  const accent = color ?? "#9ca3af";
-  return (
-    <div style={{
-      background: `${accent}11`,
-      border: `1px solid ${accent}33`,
-      borderRadius: 10,
-      padding: "14px 18px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 4,
-    }}>
-      <span style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "monospace" }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 28, fontWeight: 700, color: accent, fontFamily: "'DM Mono', monospace", lineHeight: 1 }}>
-        {value ?? 0}
-      </span>
-    </div>
-  );
+// ─── ANTHROPIC CONFIG ─────────────────────────────────────────────────────────
+
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+
+// ─── SEASON / VEHICLE LABEL MAPS (French) ────────────────────────────────────
+const SEASON_LABELS: Record<string, string> = {
+  'winter':      'Winter',
+  'all-season':  'All-Season',
+  'all-weather': 'All-Weather',
+  'all-terrain': 'All-Terrain',
+  'summer':      'Summer',
+};
+const VEHICLE_LABELS: Record<string, string> = {
+  'passenger':   'passenger car',
+  'suv':         'SUV/crossover',
+  'light-truck': 'light truck',
+  'light_truck': 'light truck',
+};
+const SEASON_TAGS  = Object.keys(SEASON_LABELS);
+const VEHICLE_TAGS = Object.keys(VEHICLE_LABELS);
+// Products to skip — non-tire items and excluded keywords
+const NON_TIRE_TITLES    = ['installation', 'service', 'balancing', 'mounting'];
+const EXCLUDE_KEYWORDS   = ['bottle', 'vacuum', 'cleaner', 'massager', 'cervical', 'neck relaxer',
+                            'shoulder relaxer', 'nuproz', 'nuprozone', 'appliance', 'wireless cleaning'];
+const EXCLUDED_VENDORS   = new Set(['nuprozone']);
+// Tire products must have at least one of these signals
+const TIRE_SIGNALS_RE    = /R1[5-9]|R2[0-2]|\bLT\b|tire|tyre|\d{3}\/\d{2}R/i;
+
+// ─── AI COPY GENERATION ───────────────────────────────────────────────────────
+
+async function generateAiCopy(
+  productTitle: string,
+  season: string,
+  vehicle: string,
+): Promise<{ description: string; metaDescription: string } | null> {
+  if (!ANTHROPIC_API_KEY) return null;
+
+  const s = SEASON_LABELS[season]  || 'All-Season';
+  const v = VEHICLE_LABELS[vehicle] || 'passenger car';
+
+  const prompt = `You are an e-commerce copywriter specializing in tires for the Canadian market. Generate English content for this tire product.
+
+Product: ${productTitle}
+Type: ${s} tire for ${v}
+Market: Canada (Quebec and all provinces)
+
+Respond ONLY with a valid JSON object, no markdown, no extra text:
+{
+  "description": "<p>2-3 HTML sentences describing the tire compellingly. Mention season, vehicle type, and Canadian driving conditions. Natural tone, no hollow superlatives.</p>",
+  "metaDescription": "SEO meta max 155 chars. Start: Shop the [title] at GCI Tires. [Vehicle cap] fitment. Free shipping across Canada."
+}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'x-api-key':       ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        messages:   [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!res.ok) {
+      console.error(`  ⚠️  Anthropic ${res.status} for "${productTitle}"`);
+      return null;
+    }
+
+    const data: any = await res.json();
+    const raw = data?.content?.[0]?.text?.trim() || '';
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+const parsed = JSON.parse(clean);
+
+    if (!parsed.description || !parsed.metaDescription) return null;
+
+    // Hard-cap metaDescription at 155 chars
+    if (parsed.metaDescription.length > 155) {
+      parsed.metaDescription = parsed.metaDescription.slice(0, 152) + '…';
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error(`  ⚠️  generateAiCopy failed for "${productTitle}": ${String(err)}`);
+    return null;
+  }
 }
 
-// ─── Log Line ─────────────────────────────────────────────────────────────────
-function LogLine({ line, index }) {
-  const isError   = line.includes("❌") || line.includes("error");
-  const isDone    = line.includes("✅ Done") || line.includes("✅ All") || line.includes("complete");
-  const isHeader  = line.startsWith("▶") || line.startsWith("📦") || line.startsWith("🔍") || line.startsWith("📊");
-  const isUpdated = line.includes("[updated]") || line.includes("✅");
-  const isSkipped = line.includes("[skipped]") || line.includes("[dry-run]");
-  const isSep     = line.includes("──────");
-  const isAI      = line.includes("[ai]");
+// ─── STATIC FALLBACKS ─────────────────────────────────────────────────────────
 
-  const color = isError   ? "#f87171"
-    : isDone    ? "#34d399"
-    : isHeader  ? "#fbbf24"
-    : isUpdated ? "#34d399"
-    : isSkipped ? "#9ca3af"
-    : isAI      ? "#a78bfa"
-    : isSep     ? "#333"
-    : "#9ca3af";
-
-  return (
-    <div style={{
-      fontFamily: "'DM Mono', 'Courier New', monospace",
-      fontSize: 12,
-      color,
-      lineHeight: 1.7,
-      opacity: isHeader ? 1 : 0.88,
-      fontWeight: isHeader || isDone ? 600 : 400,
-      borderLeft: isUpdated || isSkipped ? `2px solid ${color}33` : "none",
-      paddingLeft: isUpdated || isSkipped ? 8 : 0,
-    }}>
-      {line}
-    </div>
-  );
+function metaDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
+  // English GMC-compliant meta: max 155 chars
+  const s = SEASON_LABELS[season]  || 'All-Season';
+  const v = VEHICLE_LABELS[vehicle] || 'passenger car';
+  const vCap = v.charAt(0).toUpperCase() + v.slice(1);
+  return `Shop the ${productTitle} at GCI Tires. ${vCap} fitment. Free shipping across Canada.`.slice(0, 155);
 }
 
-// ─── Preview Row ──────────────────────────────────────────────────────────────
-function PreviewRow({ item }) {
-  return (
-    <div style={{
-      borderBottom: "1px solid #1f2937",
-      padding: "10px 0",
-      fontSize: 12,
-      fontFamily: "monospace",
-    }}>
-      <div style={{ color: "#f9fafb", marginBottom: 4, fontWeight: 600 }}>
-        {item.title}
-      </div>
-      <div style={{ color: "#60a5fa", marginBottom: 2 }}>
-        SEO: {item.seoTitle}
-      </div>
-      <div style={{ color: "#9ca3af" }}>
-        Meta: {item.metaDescription}
-      </div>
-      {item.aiGenerated && (
-        <div style={{ color: "#a78bfa", fontSize: 11, marginTop: 2 }}>✦ AI generated</div>
-      )}
-    </div>
-  );
+function productDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
+  // Keep existing body_html unchanged — only SEO fields are updated by this script
+  return '';
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-export default function UpdateSeo() {
-  const [chunkSize,      setChunkSize]      = useState(15);
-  const [offset,         setOffset]         = useState(0);
-  const [dryRun,         setDryRun]         = useState(true);
-  const [autoContinue,   setAutoContinue]   = useState(false);
-  const [running,        setRunning]        = useState(false);
-  const [isAutoRunning,  setIsAutoRunning]  = useState(false);
-  const [log,            setLog]            = useState([]);
-  const [preview,        setPreview]        = useState([]);
-  const [cumulative,     setCumulative]     = useState({ updated: 0, skipped: 0, errors: 0, aiGenerated: 0 });
-  const [lastSummary,    setLastSummary]    = useState(null);
-  const [nextOffset,     setNextOffset]     = useState(null);
-  const [done,           setDone]           = useState(false);
-  const logRef           = useRef(null);
-  const stopRef          = useRef(false);
+// ─── REMAINING STATIC HELPERS ─────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
-
-  const addLog = (line) => setLog(l => [...l, line]);
-
-  async function runUpdate() {
-    const doAuto = autoContinue;
-    stopRef.current = false;
-    if (doAuto) setIsAutoRunning(true);
-
-    let currentOffset = offset;
-    let cum = { updated: 0, skipped: 0, errors: 0, aiGenerated: 0 };
-    setCumulative(cum);
-    setPreview([]);
-    setDone(false);
-    setNextOffset(null);
-
-    setLog([`▶ Starting${dryRun ? " [DRY RUN]" : ""} — chunkSize=${chunkSize} offset=${currentOffset}…`]);
-    setLastSummary(null);
-
-    while (true) {
-      setRunning(true);
-
-      const params = new URLSearchParams({
-        offset: String(currentOffset),
-        chunkSize: String(chunkSize),
-        ...(dryRun ? { dry: "true" } : {}),
-      });
-
-      let data;
-      try {
-        const res = await fetch(`/api/updateSeo?${params}`);
-        if (!res.ok) throw new Error(`Server ${res.status}`);
-        data = await res.json();
-      } catch (err) {
-        addLog(`❌ Fetch error: ${err.message}`);
-        setRunning(false);
-        setIsAutoRunning(false);
-        return;
-      }
-
-      // Parse response
-      const updated     = data.updated     ?? 0;
-      const skipped     = data.skipped     ?? 0;
-      const errors      = data.errors?.length ?? 0;
-      const aiGenerated = data.changes?.filter(c => c.aiGenerated).length ?? 0;
-      const nextOff     = data.nextOffset ?? null;
-      const isDone      = data.done ?? (nextOff === null);
-
-      // Accumulate
-      cum = {
-        updated:     cum.updated + updated,
-        skipped:     cum.skipped + skipped,
-        errors:      cum.errors + errors,
-        aiGenerated: cum.aiGenerated + aiGenerated,
-      };
-      setCumulative({ ...cum });
-      setLastSummary({ updated, skipped, errors, aiGenerated });
-      setNextOffset(nextOff);
-
-      // Log batch summary
-      addLog(`──────────────────────────────`);
-      addLog(`📊 Batch offset=${currentOffset} — updated:${updated} skipped:${skipped} errors:${errors} ai:${aiGenerated}`);
-
-      // Show preview items (dry run)
-      if (dryRun && data.changes?.length) {
-        setPreview(p => [...p, ...data.changes].slice(0, 30));
-        data.changes.forEach(c => {
-          addLog(`  [${dryRun ? "dry-run" : "updated"}] ${c.title}`);
-          addLog(`    SEO: ${c.seoTitle}`);
-        });
-      }
-
-      // Log errors
-      if (data.errors?.length) {
-        data.errors.forEach(e => addLog(`  ❌ ${e}`));
-      }
-
-      if (isDone || updated === 0) {
-        addLog(`──────────────────────────────`);
-        addLog(`✅ Done — total updated:${cum.updated} skipped:${cum.skipped} ai:${cum.aiGenerated} errors:${cum.errors}`);
-        setDone(true);
-        setRunning(false);
-        setIsAutoRunning(false);
-        return;
-      }
-
-      if (!doAuto || stopRef.current) {
-        addLog(`⏸ Paused — next chunk starts at offset=${nextOff}`);
-        setOffset(nextOff ?? currentOffset + chunkSize);
-        setRunning(false);
-        setIsAutoRunning(false);
-        return;
-      }
-
-      currentOffset = nextOff;
-      setOffset(currentOffset);
-      await new Promise(r => setTimeout(r, 400)); // small gap
+// Extract load index and speed rating from tags
+function extractLoadIndex(tags: string): { li: string; sr: string } {
+  const tagArr = tags.split(',').map(t => t.trim());
+  const li = tagArr.find(t => t.startsWith('loadindex:'))?.slice(10) || '';
+  const sr = tagArr.find(t => t.startsWith('speedrating:'))?.slice(12) || '';
+  return { li, sr };
+}
+function seoTitle(productTitle: string, tags: string = ''): string {
+  // Template: [Title] – [LI][SR] | GCI Tires (max 60 chars)
+  const { li, sr } = extractLoadIndex(tags);
+  const suffix = (li && sr) ? ` – ${li}${sr}` : '';
+  const base   = `${productTitle}${suffix} | GCI Tires`;
+  if (base.length <= 60) return base;
+  // Drop load/speed rating if too long
+  const shorter = `${productTitle} | GCI Tires`;
+  if (shorter.length <= 60) return shorter;
+  // Truncate title
+  const maxTitle = 60 - ' | GCI Tires'.length;
+  return `${productTitle.slice(0, maxTitle)} | GCI Tires`;
+}
+function imageAlt(productTitle: string, season: string, vehicle: string): string {
+  // English image alts for GMC compliance
+  const s = season.replace('all-season', 'All-Season').replace('winter', 'Winter')
+                   .replace('summer', 'Summer').replace('all-weather', 'All-Weather')
+                   .replace('all-terrain', 'All-Terrain');
+  const v = vehicle === 'passenger' ? 'passenger car'
+          : vehicle === 'suv' ? 'SUV'
+          : vehicle === 'light_truck' || vehicle === 'light-truck' ? 'light truck'
+          : 'tire';
+  return `${productTitle} ${s} ${v} tire`.trim();
+}
+// ─── TAG DETECTION ────────────────────────────────────────────────────────────
+function detectFromTags(tags: string): { season: string; vehicle: string } {
+  const tagList = tags.split(',').map(t => t.trim().toLowerCase());
+  // Match bare tags (e.g. "all-season") OR prefixed (e.g. "season:all-season")
+  let season = tagList.find(t => SEASON_TAGS.includes(t)) || '';
+  if (!season) {
+    const prefixed = tagList.find(t => t.startsWith('season:'));
+    if (prefixed) season = prefixed.slice(7).trim();
+  }
+  // Match bare vehicle tags OR vehicle_type:X prefixed
+  const VEHICLE_BARE = ['passenger', 'suv', 'light_truck', 'light-truck'];
+  let vehicle = tagList.find(t => VEHICLE_BARE.includes(t)) || '';
+  if (!vehicle) {
+    const prefixed = tagList.find(t => t.startsWith('vehicle_type:'));
+    if (prefixed) {
+      const val = prefixed.slice(13).toLowerCase();
+      vehicle = val === 'suv' ? 'suv' : val.includes('truck') ? 'light_truck' : 'passenger';
     }
   }
+  return { season, vehicle };
+}
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  if (options.method === 'POST' || options.method === 'PUT') {
+    console.log('Writing metafield to Shopify:', url, JSON.stringify(options.body));
+  }
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': SHOPIFY.token,
+      ...(options.headers || {}),
+    },
+  });
+  let _responseBody: unknown = null;
+  try { _responseBody = await res.clone().json(); } catch { /* 204 / empty body */ }
+  console.log('Shopify response:', res.status, JSON.stringify(_responseBody));
+  if (res.status === 429) { await delay(2000); return shopifyFetchRaw(url, options); }
+  if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
+  return res;
+}
+async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await shopifyFetchRaw(`${SHOPIFY.baseUrl}${path}`, options);
+  if (res.status === 204 || res.headers.get('content-length') === '0') return {} as T;
+  return res.json() as Promise<T>;
+}
+// ─── TYPES ────────────────────────────────────────────────────────────────────
+interface ShopifyImage {
+  id:  number;
+  alt: string | null;
+}
+interface ShopifyProduct {
+  id:        number;
+  title:     string;
+  tags:      string;
+  images:    ShopifyImage[];
+  body_html: string;
+}
+interface ShopifyMetafield {
+  id:        number;
+  namespace: string;
+  key:       string;
+  value:     string;
+}
+interface ChangeRecord {
+  id:                 number;
+  title:              string;
+  seoTitle:           string;
+  metaDescription:    string;
+  imageAltsUpdated:   number;
+  descriptionUpdated: boolean;
+  aiGenerated:        boolean;
+}
+// ─── FETCH ALL PRODUCTS ───────────────────────────────────────────────────────
+async function fetchAllProducts(): Promise<ShopifyProduct[]> {
+  const all: ShopifyProduct[] = [];
+  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,tags,images,body_html`;
+  let page = 0;
+  while (url) {
+    page++;
+    const response = await shopifyFetchRaw(url);
+    const data: any = await response.json();
+    const products: ShopifyProduct[] = data.products || [];
+    all.push(...products);
+    console.log(`  [updateSeo] page ${page}: fetched ${products.length} products (running total: ${all.length})`);
+    const link = response.headers.get('Link') || '';
+    const next  = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : '';
+  }
+  console.log(`  [updateSeo] done — ${page} page(s), ${all.length} total products`);
+  return all;
+}
+// ─── METAFIELD HELPERS ────────────────────────────────────────────────────────
+async function getProductMetafields(productId: number): Promise<ShopifyMetafield[]> {
+  const data: any = await shopifyFetch(`/products/${productId}/metafields.json?namespace=global`);
+  return (data.metafields || []) as ShopifyMetafield[];
+}
+async function upsertMetafield(
+  productId: number,
+  existing:  ShopifyMetafield | undefined,
+  key:       string,
+  value:     string,
+): Promise<void> {
+  if (existing) {
+    await shopifyFetch(`/metafields/${existing.id}.json`, {
+      method: 'PUT',
+      body: JSON.stringify({ metafield: { id: existing.id, value } }),
+    });
+  } else {
+    await shopifyFetch(`/products/${productId}/metafields.json`, {
+      method: 'POST',
+      body: JSON.stringify({
+        metafield: { namespace: 'global', key, value, type: 'single_line_text_field' },
+      }),
+    });
+  }
+}
+// ─── PROCESS A SINGLE PRODUCT ─────────────────────────────────────────────────
+async function processProduct(
+  product: ShopifyProduct,
+  dryRun:  boolean,
+): Promise<{ change: ChangeRecord; error: string | null }> {
+  const { season, vehicle } = detectFromTags(product.tags);
 
-  function stop() {
-    stopRef.current = true;
-    setIsAutoRunning(false);
+  const newSeoTitle = seoTitle(product.title, product.tags);
+  const newAlt      = imageAlt(product.title, season, vehicle);
+
+  // ── AI copy (with static fallback) ────────────────────────────────────────
+  const aiCopy      = await generateAiCopy(product.title, season, vehicle);
+  const newMetaDesc = aiCopy?.metaDescription ?? metaDescriptionFallback(product.title, season, vehicle);
+  const newBodyHtml = aiCopy?.description     ?? productDescriptionFallback(product.title, season, vehicle);
+  const aiGenerated = aiCopy !== null;
+
+  console.log(`  ${aiGenerated ? '🤖 AI copy' : '📄 fallback copy'} for "${product.title}"`);
+
+  let imageAltsUpdated   = 0;
+  let descriptionUpdated = false;
+
+  if (!dryRun) {
+    // ── Metafields ────────────────────────────────────────────────────────────
+    let metafields: ShopifyMetafield[];
+    try {
+      metafields = await getProductMetafields(product.id);
+    } catch (err) {
+      return {
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+        error: `Product ${product.id}: failed to fetch metafields — ${String(err)}`,
+      };
+    }
+    const existingTitle = metafields.find(m => m.key === 'title_tag');
+    const existingDesc  = metafields.find(m => m.key === 'description_tag');
+    try {
+      await upsertMetafield(product.id, existingTitle, 'title_tag', newSeoTitle);
+    } catch (err) {
+      return {
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+        error: `Product ${product.id}: failed to upsert title_tag — ${String(err)}`,
+      };
+    }
+    try {
+      await upsertMetafield(product.id, existingDesc, 'description_tag', newMetaDesc);
+    } catch (err) {
+      return {
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+        error: `Product ${product.id}: failed to upsert description_tag — ${String(err)}`,
+      };
+    }
+    // ── Product description (body_html) ───────────────────────────────────────
+    try {
+      await shopifyFetch(`/products/${product.id}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({ product: { id: product.id, body_html: newBodyHtml } }),
+      });
+      descriptionUpdated = true;
+    } catch (err) {
+      return {
+        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+        error: `Product ${product.id}: failed to update body_html — ${String(err)}`,
+      };
+    }
+    // ── Image alt tags ────────────────────────────────────────────────────────
+    for (const image of product.images) {
+      try {
+        await shopifyFetch(`/products/${product.id}/images/${image.id}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ image: { id: image.id, alt: newAlt } }),
+        });
+        imageAltsUpdated++;
+      } catch (err) {
+        console.error(`  ⚠️  Product ${product.id} image ${image.id}: failed to set alt — ${String(err)}`);
+      }
+    }
+  } else {
+    imageAltsUpdated   = product.images.length;
+    descriptionUpdated = true;
+  }
+  return {
+    change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated, descriptionUpdated, aiGenerated },
+    error: null,
+  };
+}
+// ─── HANDLER ──────────────────────────────────────────────────────────────────
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Content-Type', 'application/json');
+  const dryRun    = req.query.dry       === 'true';
+  console.log('dry mode:', dryRun);
+  const productId = req.query.productId ? String(req.query.productId) : null;
+  const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
+  const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 10;
+  if (!SHOPIFY.domain || !SHOPIFY.token) {
+    return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
+  }
+  // ── Single-product mode ────────────────────────────────────────────────────
+  if (productId) {
+    console.log(`🔍 updateSeo — single product mode productId=${productId} dry=${dryRun}`);
+    let product: ShopifyProduct;
+    try {
+      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags,images,body_html`);
+      product = data.product as ShopifyProduct;
+      if (!product) throw new Error('Product not found');
+    } catch (err) {
+      return res.status(404).json({ error: `Failed to fetch product ${productId}: ${String(err)}` });
+    }
+    const titleLower = product.title.toLowerCase();
+    if (NON_TIRE_TITLES.some(kw => titleLower.includes(kw))) {
+      return res.status(200).json({
+        dryRun, total: 1, updated: 0, skipped: 1, errors: [], changes: [],
+        offset: 0, chunkSize, nextOffset: null,
+      });
+    }
+    const { change, error } = await processProduct(product, dryRun);
+    return res.status(200).json({
+      dryRun,
+      total:      1,
+      updated:    error ? 0 : 1,
+      skipped:    0,
+      errors:     error ? [error] : [],
+      changes:    error ? [] : [change],
+      offset:     0,
+      chunkSize,
+      nextOffset: null,
+    });
+  }
+  // ── Batch mode ─────────────────────────────────────────────────────────────
+  console.log(`🔍 updateSeo — dry=${dryRun} offset=${offset} chunkSize=${chunkSize}`);
+  let allProducts: ShopifyProduct[];
+  try {
+    allProducts = await fetchAllProducts();
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
 
-  function reset() {
-    setOffset(0);
-    setLog([]);
-    setPreview([]);
-    setCumulative({ updated: 0, skipped: 0, errors: 0, aiGenerated: 0 });
-    setLastSummary(null);
-    setNextOffset(null);
-    setDone(false);
-    stopRef.current = false;
+  const chunk      = allProducts.slice(offset, offset + chunkSize);
+  const nextOffset = (offset + chunkSize) < allProducts.length ? offset + chunkSize : null;
+  let updated = 0;
+  let skipped = 0;
+  const errors:  string[]       = [];
+  const changes: ChangeRecord[] = [];
+  for (const product of chunk) {
+    const titleLower = product.title.toLowerCase();
+    // Skip non-tire products: excluded keywords, vendors, or no tire signal
+    const isExcludedKeyword = EXCLUDE_KEYWORDS.some(kw => titleLower.includes(kw));
+    const isExcludedVendor  = EXCLUDED_VENDORS.has((product.vendor || '').toLowerCase());
+    const hasTireSignal     = TIRE_SIGNALS_RE.test(product.title) ||
+                              product.tags.toLowerCase().includes('ct-sync') ||
+                              product.tags.toLowerCase().includes('ai-match');
+    if (NON_TIRE_TITLES.some(kw => titleLower.includes(kw)) || isExcludedKeyword || isExcludedVendor || !hasTireSignal) {
+      skipped++;
+      continue;
+    }
+    console.log(`  Processing "${product.title}" (id=${product.id})`);
+    const { change, error } = await processProduct(product, dryRun);
+    if (error) {
+      console.error(`  ❌ ${error}`);
+      errors.push(error);
+    } else {
+      changes.push(change);
+      updated++;
+    }
   }
-
-  const canRun = !running;
-
-  return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#0f172a",
-      color: "#f9fafb",
-      fontFamily: "'Inter', system-ui, sans-serif",
-      padding: "32px 24px",
-    }}>
-      {/* Header */}
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-          <a href="/brain" style={{ color: "#6b7280", textDecoration: "none", fontSize: 13 }}>
-            ← Brain
-          </a>
-        </div>
-        <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "#f9fafb" }}>
-          🔍 Update Product SEO
-        </h1>
-        <p style={{ color: "#6b7280", fontSize: 14, marginTop: 6 }}>
-          Writes English SEO titles and meta descriptions to all products.
-          Format: <span style={{ color: "#60a5fa", fontFamily: "monospace" }}>[Title] | GCI Tires</span> and
-          <span style={{ color: "#60a5fa", fontFamily: "monospace" }}> Shop the [Title] at GCI Tires…</span>
-        </p>
-
-        {/* API URL */}
-        <div style={{ background: "#1e293b", borderRadius: 6, padding: "8px 14px", fontSize: 12, fontFamily: "monospace", color: "#94a3b8", marginBottom: 24 }}>
-          /api/updateSeo?chunkSize={chunkSize}&offset={offset}{dryRun ? "&dry=true" : ""}
-        </div>
-
-        {/* Controls */}
-        <div style={{
-          background: "#1e293b",
-          borderRadius: 12,
-          padding: 20,
-          marginBottom: 24,
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 16,
-        }}>
-          {/* Left: settings */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <label style={{ fontSize: 13, color: "#9ca3af" }}>
-              Chunk size
-              <input
-                type="number" min={1} max={50} value={chunkSize}
-                onChange={e => setChunkSize(Number(e.target.value))}
-                disabled={running}
-                style={{ marginLeft: 10, width: 60, background: "#0f172a", border: "1px solid #374151", borderRadius: 6, color: "#f9fafb", padding: "4px 8px", fontSize: 13 }}
-              />
-            </label>
-            <label style={{ fontSize: 13, color: "#9ca3af" }}>
-              Start offset
-              <input
-                type="number" min={0} value={offset}
-                onChange={e => setOffset(Number(e.target.value))}
-                disabled={running}
-                style={{ marginLeft: 10, width: 70, background: "#0f172a", border: "1px solid #374151", borderRadius: 6, color: "#f9fafb", padding: "4px 8px", fontSize: 13 }}
-              />
-            </label>
-          </div>
-
-          {/* Right: toggles */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#9ca3af", cursor: "pointer" }}>
-              <input
-                type="checkbox" checked={dryRun}
-                onChange={e => setDryRun(e.target.checked)}
-                disabled={running}
-                style={{ width: 16, height: 16, accentColor: "#60a5fa" }}
-              />
-              <span>Dry Run <span style={{ color: "#4b5563" }}>(preview only)</span></span>
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#9ca3af", cursor: "pointer" }}>
-              <input
-                type="checkbox" checked={autoContinue}
-                onChange={e => setAutoContinue(e.target.checked)}
-                disabled={running}
-                style={{ width: 16, height: 16, accentColor: "#34d399" }}
-              />
-              <span>Auto-continue <span style={{ color: "#4b5563" }}>(run all chunks)</span></span>
-            </label>
-          </div>
-        </div>
-
-        {/* Buttons */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-          <button
-            onClick={runUpdate}
-            disabled={!canRun}
-            style={{
-              background: dryRun ? "#1d4ed8" : "#15803d",
-              color: "white",
-              border: "none",
-              borderRadius: 8,
-              padding: "10px 22px",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: canRun ? "pointer" : "not-allowed",
-              opacity: canRun ? 1 : 0.5,
-            }}
-          >
-            {running ? "Running…" : dryRun ? "▶ Preview (Dry Run)" : "▶ Run (Live)"}
-          </button>
-
-          {isAutoRunning && (
-            <button
-              onClick={stop}
-              style={{ background: "#7f1d1d", color: "white", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
-            >
-              ⏹ Stop
-            </button>
-          )}
-
-          <button
-            onClick={reset}
-            disabled={running}
-            style={{ background: "#1e293b", color: "#9ca3af", border: "1px solid #374151", borderRadius: 8, padding: "10px 22px", fontSize: 14, cursor: running ? "not-allowed" : "pointer" }}
-          >
-            Reset
-          </button>
-        </div>
-
-        {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-          <StatCard label="Updated"     value={cumulative.updated}     color="#34d399" />
-          <StatCard label="Skipped"     value={cumulative.skipped}     color="#9ca3af" />
-          <StatCard label="AI Generated" value={cumulative.aiGenerated} color="#a78bfa" />
-          <StatCard label="Errors"      value={cumulative.errors}      color="#f87171" />
-        </div>
-
-        {/* Done banner */}
-        {done && (
-          <div style={{ background: "#14532d", border: "1px solid #16a34a", borderRadius: 8, padding: "12px 18px", marginBottom: 20, fontSize: 14, color: "#86efac" }}>
-            ✅ All products processed — {cumulative.updated} SEO records written, {cumulative.aiGenerated} AI-generated
-          </div>
-        )}
-
-        {/* Next offset hint */}
-        {nextOffset !== null && !done && !running && (
-          <div style={{ background: "#1e3a5f", border: "1px solid #2563eb", borderRadius: 8, padding: "10px 16px", marginBottom: 20, fontSize: 13, color: "#93c5fd" }}>
-            ⏸ Next chunk starts at offset <strong>{nextOffset}</strong> — click Run to continue
-          </div>
-        )}
-
-        {/* Preview grid (dry run) */}
-        {dryRun && preview.length > 0 && (
-          <div style={{ background: "#1e293b", borderRadius: 10, padding: 16, marginBottom: 24 }}>
-            <div style={{ fontSize: 13, color: "#9ca3af", marginBottom: 12, fontWeight: 600 }}>
-              PREVIEW ({preview.length} products)
-            </div>
-            {preview.map((item, i) => <PreviewRow key={i} item={item} />)}
-          </div>
-        )}
-
-        {/* Log */}
-        {log.length > 0 && (
-          <div style={{ background: "#1e293b", borderRadius: 10, padding: 16 }}>
-            <div style={{ fontSize: 11, color: "#4b5563", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              Console Output
-              <button
-                onClick={() => setLog([])}
-                style={{ marginLeft: 12, background: "none", border: "none", color: "#4b5563", cursor: "pointer", fontSize: 11 }}
-              >
-                clear
-              </button>
-            </div>
-            <div
-              ref={logRef}
-              style={{ maxHeight: 400, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1 }}
-            >
-              {log.map((line, i) => <LogLine key={i} line={line} index={i} />)}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  console.log(`✅ Done — offset:${offset} scanned:${chunk.length} updated:${updated} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
+  return res.status(200).json({
+    dryRun,
+    total: allProducts.length,
+    updated,
+    skipped,
+    errors,
+    changes,
+    offset,
+    chunkSize,
+    nextOffset,
+  });
 }
