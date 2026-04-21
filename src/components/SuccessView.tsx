@@ -1,9 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
-import { airtableService } from '../services/airtableService';
-import InstallerMap from './InstallerMap';
-import { CalendlyButton } from '../utils/validateCalendlyLink';
 
 interface SuccessViewProps {
   selectedTire: {
@@ -11,425 +8,129 @@ interface SuccessViewProps {
     quantity: number;
     withInstallation: boolean;
     total: number;
+    orderNumber?: string;
+    installer?: {
+      name: string;
+      phone: string;
+      city: string;
+    };
   };
   onReset: () => void;
   lang: Language;
   mapsLoaded?: boolean;
 }
 
-interface Installer {
-  id: string;
-  name: string;
-  address: string;
-  city: string;
-  province: string;
-  phone: string;
-  calendlyLink?: string;
-  distance: number;
-  pricePerTire?: number;
-  rating?: number;
-  lat?: number;
-  lng?: number;
-}
-const fetchInstallers = async (userLat?: number, userLng?: number): Promise<Installer[]> => {
-  console.log('🔍 Fetching installers from Airtable...', { lat: userLat, lng: userLng });
-  
-  try {
-    const installers = await airtableService.findNearbyInstallers(
-      userLat || 48.2368,
-      userLng || -79.0228,
-      100
-    );
-
-    console.log('📦 Raw Airtable response:', installers);
-
-    // ✅ Check if installers is an array
-    if (!Array.isArray(installers)) {
-      console.error('❌ Airtable did not return an array:', installers);
-      return [];
-    }
-
-    // ✅ Map with support for BOTH formats (with and without .fields wrapper)
-    const mapped = installers
-      .map(installer => {
-        try {
-          // ✅ FIXED: Handle both formats
-          // Format 1: {id, fields: {Name, Address, ...}}
-          // Format 2: {id, name, address, ...} (already extracted)
-          const data = installer.fields || installer;
-          
-          console.log('🔎 Processing installer:', {
-            id: installer.id,
-            hasFields: !!installer.fields,
-            data: data
-          });
-
-          return {
-            id: installer.id || '',
-            name: data.Name || data.name || data.InstallerName || 'Unknown Installer',
-            address: data.Address || data.address || data.StreetAddress || '',
-            city: data.City || data.city || '',
-            province: data.Province || data.province || data.State || '',
-            phone: data.Phone || data.phone || data.PhoneNumber || '',
-            calendlyLink: data['Calendar Link'] || data.CalendlyLink || data.calendlyLink || data['Calendly Link'],
-            pricePerTire: data.PricePerTire || data.pricePerTire || data['Price Per Tire'] || data.price_per_tire,
-            rating: data.Rating || data.rating,
-            distance: installer.distance || 0,
-            lat: data.Latitude || data.latitude || data.lat,
-            lng: data.Longitude || data.longitude || data.lng || data.lon,
-          };
-        } catch (mapError) {
-          console.error('❌ Error mapping installer:', installer, mapError);
-          return null;
-        }
-      })
-      .filter((installer): installer is Installer => {
-        if (!installer) return false;
-        
-        // ✅ Check if has valid coordinates
-        const hasCoords = installer.lat && installer.lng && 
-                         !isNaN(installer.lat) && !isNaN(installer.lng);
-        
-        if (!hasCoords) {
-          console.warn('⚠️ Installer missing coordinates:', installer.name);
-        }
-        
-        return hasCoords;
-      });
-
-    console.log(`✅ Successfully mapped ${mapped.length} installers`);
-    
-    // Log each valid installer
-    mapped.forEach((inst, idx) => {
-      console.log(`📍 Installer ${idx + 1}:`, {
-        name: inst.name,
-        coordinates: { lat: inst.lat, lng: inst.lng },
-        distance: inst.distance
-      });
-    });
-    
-    return mapped;
-  } catch (error) {
-    console.error('❌ Error fetching installers:', error);
-    return [];
-  }
-};
-const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang, mapsLoaded }) => {
-  const [installers, setInstallers] = useState<Installer[]>([]);
-  const [loadingInstallers, setLoadingInstallers] = useState(false);
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+const SuccessView: React.FC<SuccessViewProps> = ({ selectedTire, onReset, lang }) => {
   const t = translations[lang];
-
-  const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
-
-  const tireSubtotal = selectedTire.tire.pricePerUnit * selectedTire.quantity;
-  const installationSubtotal = selectedTire.withInstallation ? 15 * selectedTire.quantity : 0;
-  const subtotal = tireSubtotal + installationSubtotal;
-  const taxes = subtotal * 0.15;
-  const total = subtotal + taxes;
-
-  useEffect(() => {
-    if (selectedTire.withInstallation) {
-      setLoadingInstallers(true);
-      
-      const fetchWithLoc = async (lat?: number, lng?: number) => {
-        if (lat && lng) {
-          setUserLocation({ lat, lng });
-          console.log('📍 User location set:', { lat, lng });
-        } else {
-          console.log('📍 Using default location: Rouyn-Noranda, QC');
-        }
-        
-        try {
-          const data = await fetchInstallers(lat, lng);
-          console.log('✅ Installers fetched:', data.length);
-          setInstallers(data);
-        } catch (error) {
-          console.error('❌ Error in fetchWithLoc:', error);
-          setInstallers([]);
-        } finally {
-          setLoadingInstallers(false);
-        }
-      };
-
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            console.log('✅ Geolocation success:', pos.coords);
-            fetchWithLoc(pos.coords.latitude, pos.coords.longitude);
-          },
-          (err) => {
-            console.log('⚠️ Geolocation denied:', err.message);
-            fetchWithLoc();
-          }
-        );
-      } else {
-        console.log('⚠️ Geolocation not available');
-        fetchWithLoc();
-      }
-    }
-  }, [selectedTire.withInstallation]);
+  const isFr = lang === 'fr';
+  const { tire, quantity, withInstallation, total, orderNumber, installer } = selectedTire;
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Success Header */}
-        <div className="text-center mb-8 animate-fade-in-up">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-12 animate-fade-in">
+      <div className="max-w-lg w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+
+        {/* Success header */}
+        <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-8 text-center text-white">
+          <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h1 className="text-4xl font-black text-slate-900 mb-2 uppercase tracking-tight">
-            {t.orderConfirmed}
+          <h1 className="text-2xl font-black uppercase tracking-tight mb-1">
+            {isFr ? 'Commande confirmée !' : 'Order Confirmed!'}
           </h1>
-          <p className="text-lg text-slate-600">
-            {t.orderReceived} <strong>{selectedTire.tire.brand} {selectedTire.tire.model}</strong>
-          </p>
+          {orderNumber && (
+            <p className="text-green-100 font-mono text-sm">{orderNumber}</p>
+          )}
         </div>
 
-        {/* Order Details Card */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6 animate-fade-in-up">
-          <div className="grid md:grid-cols-2 gap-6 mb-6">
+        <div className="p-6 space-y-5">
+          {/* Order summary */}
+          <div className="bg-slate-50 rounded-xl p-4">
+            <p className="text-xs text-slate-500 uppercase font-semibold mb-2">
+              {isFr ? 'Récapitulatif' : 'Order Summary'}
+            </p>
+            <p className="font-bold text-slate-900">{tire.brand} {tire.model}</p>
+            <p className="text-sm text-slate-600">{tire.size} × {quantity}</p>
+            <div className="flex justify-between mt-3 pt-3 border-t border-slate-200">
+              <span className="font-bold text-slate-900">{isFr ? 'Total' : 'Total'}</span>
+              <span className="font-black text-lg text-slate-900">${total.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Confirmation email notice */}
+          <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-4">
+            <span className="text-2xl">📧</span>
             <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
-                {t.orderNumber}
+              <p className="font-semibold text-blue-900 text-sm">
+                {isFr ? 'Confirmation envoyée par courriel' : 'Confirmation sent to your email'}
               </p>
-              <p className="text-2xl font-black text-slate-900">{orderNumber}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wide mb-1">
-                {t.totalPaid}
+              <p className="text-xs text-blue-600 mt-0.5">
+                {isFr
+                  ? 'Vérifiez votre boîte de réception pour les détails.'
+                  : 'Check your inbox for order details.'}
               </p>
-              <p className="text-2xl font-black text-green-600">${total.toFixed(2)}</p>
             </div>
           </div>
 
-          <div className="border-t border-slate-200 pt-4">
-            <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
-              {t.orderSummary}
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-600">
-                  {selectedTire.quantity}x {selectedTire.tire.brand} {selectedTire.tire.model} ({selectedTire.tire.size})
-                </span>
-                <span className="font-semibold text-slate-900">${tireSubtotal.toFixed(2)}</span>
-              </div>
-              {selectedTire.withInstallation && (
-                <div className="flex justify-between">
-                  <span className="text-slate-600 flex items-center gap-1">
-                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    {t.installationAndBalancing}
-                  </span>
-                  <span className="font-semibold text-slate-900">${installationSubtotal.toFixed(2)}</span>
-                </div>
-              )}
-              <div className="flex justify-between border-t border-slate-200 pt-2">
-                <span className="text-slate-600">{t.subtotal}</span>
-                <span className="font-semibold text-slate-900">${subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">{t.taxes}</span>
-                <span className="font-semibold text-slate-900">${taxes.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-lg font-black border-t-2 border-slate-300 pt-2 mt-2">
-                <span className="text-slate-900">{t.total}</span>
-                <span className="text-green-600">${total.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+          {/* Installer contact — only if installation was chosen */}
+          {withInstallation && installer && (
+            <div className="border-2 border-red-100 bg-red-50 rounded-xl p-4">
+              <p className="text-xs text-red-600 uppercase font-bold mb-3">
+                📅 {isFr ? 'Prochaine étape : Prendre rendez-vous' : 'Next Step: Book Your Appointment'}
+              </p>
+              <p className="font-bold text-slate-900 mb-1">{installer.name}</p>
+              <p className="text-sm text-slate-600 mb-3">{installer.city}</p>
 
-        {/* Installation Section */}
-{selectedTire.withInstallation && (
-  <div className="bg-white rounded-lg shadow-md p-6 mb-6 animate-fade-in-up">
-    <div className="flex items-start gap-3 mb-4 pb-4 border-b border-slate-200">
-      <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
-        <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-      <div>
-        <h3 className="font-bold text-slate-900 text-lg mb-1">
-          {t.installationStatus}
-        </h3>
-        <p className="text-slate-600">
-          {t.installationNotice}
-        </p>
-      </div>
-    </div>
-
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <h4 className="font-bold text-slate-900 uppercase tracking-wide text-sm">
-          {t.authorizedInstallers}
-        </h4>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setViewMode('list')}
-            className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
-              viewMode === 'list'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-            }`}
-          >
-            {t.list}
-          </button>
-          <button
-            onClick={() => setViewMode('map')}
-            className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
-              viewMode === 'map'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            {t.map}
-          </button>
-        </div>
-      </div>
-
-      {loadingInstallers ? (
-        <div className="flex items-center justify-center py-8">
-          <svg className="animate-spin h-8 w-8 text-red-600" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-        </div>
-      ) : (
-        <>
-          {viewMode === 'list' && (
-            <div className="space-y-3">
-              {installers.length > 0 ? (
-                installers.map((installer) => (
-                  <div key={installer.id} className="border border-slate-200 rounded-lg p-4 hover:border-red-300 hover:shadow-md transition-all">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h5 className="font-bold text-slate-900">{installer.name}</h5>
-                        <p className="text-sm text-slate-600 mt-1">
-                          {installer.address}<br />
-                          {installer.city}, {installer.province}
-                        </p>
-                        <p className="text-sm text-slate-600 mt-1">
-                          📞 {installer.phone}
-                        </p>
-                        
-                        <div className="flex items-center gap-3 mt-2 flex-wrap">
-                          {installer.distance > 0 ? (
-                            <p className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                              📍 {installer.distance.toFixed(1)} {t.kmAway}
-                            </p>
-                          ) : (
-                            <p className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
-                              📍 {t.nearestLocation}
-                            </p>
-                          )}
-                          {installer.pricePerTire && (
-                            <p className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">
-                              ${installer.pricePerTire.toFixed(2)}{t.perTireLower}
-                            </p>
-                          )}
-                          {installer.rating && (
-                            <div className="flex items-center bg-yellow-50 px-2 py-1 rounded">
-                              <span className="text-yellow-500 text-xs">
-                                {'★'.repeat(Math.floor(installer.rating))}
-                              </span>
-                              <span className="ml-1 text-xs font-semibold text-slate-700">
-                                ({installer.rating.toFixed(1)})
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <CalendlyButton url={installer.calendlyLink} label={t.bookAppointment} />
-                    </div>
+              <div className="space-y-2">
+                <a
+                  href={`tel:${installer.phone.replace(/\D/g,'')}`}
+                  className="flex items-center gap-3 bg-white border border-red-200 rounded-lg px-4 py-3 hover:bg-red-50 transition group"
+                >
+                  <span className="text-xl">📞</span>
+                  <div>
+                    <p className="text-xs text-slate-400 font-semibold uppercase">
+                      {isFr ? 'Appeler pour un rendez-vous' : 'Call to book'}
+                    </p>
+                    <p className="font-bold text-slate-900 group-hover:text-red-600 transition">
+                      {installer.phone}
+                    </p>
                   </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-slate-500">
-                  <p>{t.noInstallersFound}</p>
-                  <p className="text-xs mt-2">Check browser console (F12) for debug info</p>
-                </div>
-              )}
+                </a>
+              </div>
+
+              <p className="text-xs text-slate-400 mt-3">
+                {isFr
+                  ? `Mentionnez votre numéro de commande ${orderNumber ?? ''} lors de votre appel.`
+                  : `Mention your order number ${orderNumber ?? ''} when you call.`}
+              </p>
             </div>
           )}
 
-          {viewMode === 'map' && (
-            <div className="mt-4">
-              {installers.length > 0 ? (
-                <InstallerMap installers={installers} userLocation={userLocation || undefined} />
-              ) : (
-                <div className="text-center py-8 text-slate-500">
-                  <p>{t.noInstallersFound}</p>
-                </div>
-              )}
+          {/* Delivery only */}
+          {!withInstallation && (
+            <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
+              <span className="text-2xl">🚚</span>
+              <div>
+                <p className="font-semibold text-slate-900 text-sm">
+                  {isFr ? 'Livraison gratuite partout au Canada' : 'Free shipping across Canada'}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {isFr
+                    ? 'Délai habituel : 2 à 5 jours ouvrables selon votre province.'
+                    : 'Typical delivery: 2–5 business days depending on your province.'}
+                </p>
+              </div>
             </div>
           )}
-        </>
-      )}
-    </div>
-  </div>
-)}
 
-        {/* Next Steps */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6 animate-fade-in-up">
-          <h3 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {t.nextSteps}
-          </h3>
-          <ul className="space-y-2 text-sm text-blue-800">
-            <li className="flex items-start gap-2">
-              <span className="text-blue-600 font-bold">1.</span>
-              <span>{t.confirmationEmailSent}</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-blue-600 font-bold">2.</span>
-              <span>
-                {selectedTire.withInstallation 
-                  ? t.bookAppointmentInstructions
-                  : t.tiresShippedInstructions}
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-blue-600 font-bold">3.</span>
-              <span>{t.trackOrderInstructions}</span>
-            </li>
-          </ul>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 animate-fade-in-up">
+          {/* Reset button */}
           <button
             onClick={onReset}
-            className="flex-1 px-6 py-4 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors uppercase tracking-wide shadow-md"
+            className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-700 transition uppercase tracking-wide text-sm"
           >
-            {t.startOver}
+            {t.startOver || (isFr ? 'Nouvelle recherche' : 'New Search')}
           </button>
-          <a
-            href="https://www.gcitires.com"
-            className="flex-1 px-6 py-4 border-2 border-slate-300 text-slate-700 font-bold rounded-lg hover:bg-slate-50 transition-colors uppercase tracking-wide text-center"
-          >
-            {t.backStore}
-          </a>
-        </div>
-
-        {/* Support */}
-        <div className="text-center mt-8 text-sm text-slate-500">
-          <p>
-            {t.needHelp}{' '}
-            <a href="mailto:support@gcitires.com" className="text-red-600 hover:underline font-semibold">
-              support@gcitires.com
-            </a>
-            {' '}{t.or}{' '}
-            <a href="tel:+18195550100" className="text-red-600 hover:underline font-semibold">
-              (819) 555-0100
-            </a>
-          </p>
         </div>
       </div>
     </div>
