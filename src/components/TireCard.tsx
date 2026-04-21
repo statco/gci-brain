@@ -24,7 +24,7 @@ const TireCard: React.FC<TireCardProps> = ({
   lang
 }) => {
   const [quantity, setQuantity] = useState(4);
-  const [withInstallation, setWithInstallation] = useState(true);
+  const [withInstallation, setWithInstallation] = useState(false);
   const [showFitmentDetails, setShowFitmentDetails] = useState(false);
   
   // Prefer visualization if available, otherwise product image, otherwise empty
