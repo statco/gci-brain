@@ -8,7 +8,7 @@ interface CheckoutModalProps {
   quantity: number;
   withInstallation: boolean;
   total: number;
-  onConfirm: () => void;
+  onConfirm: (orderNumber: string) => void;
   onCancel: () => void;
   lang: Language;
   selectedInstaller?: any;
@@ -76,7 +76,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         total,
         withInstallation,
         installerName: selectedInstaller?.name,
-        lang, // ✅ ADDED: Pass current language
+        lang,
       });
       
       console.log('✅ Email sent successfully');
@@ -84,7 +84,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
       // Simulate checkout delay
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      onConfirm();
+      onConfirm(orderNumber);
     } catch (error) {
       console.error('Checkout error:', error);
       alert(t.checkoutFailed || 'Checkout failed. Please try again.');
@@ -93,7 +93,9 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
   };
 
   const tireSubtotal = tire.pricePerUnit * quantity;
-  const installationSubtotal = withInstallation ? 15 * quantity : 0;
+  const installationSubtotal = withInstallation && selectedInstaller
+    ? selectedInstaller.pricePerTire * quantity
+    : 0;
   const subtotal = tireSubtotal + installationSubtotal;
   const taxes = subtotal * 0.15;
   const finalTotal = subtotal + taxes;
@@ -292,7 +294,7 @@ async function sendConfirmationEmail(data: {
   total: number;
   withInstallation: boolean;
   installerName?: string;
-  lang: string; // ✅ ADDED: Language parameter
+  lang: string;
 }): Promise<void> {
   try {
     // Call our Vercel API endpoint
@@ -308,7 +310,7 @@ async function sendConfirmationEmail(data: {
         total: data.total,
         withInstallation: data.withInstallation,
         installerName: data.installerName,
-        lang: data.lang, // ✅ ADDED: Include language
+        lang: data.lang,
       }),
     });
 
