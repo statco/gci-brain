@@ -33,7 +33,7 @@ const TireCard: React.FC<TireCardProps> = ({
 
   // Calculate pricing
   const itemPrice = tire.pricePerUnit;
-  const installFee = withInstallation ? 15 : 0;  // ✅ FIXED: Use fixed $15 installation fee per tire
+  const installFee = 0; // Installation price set by selected installer
   const totalPerUnit = itemPrice + installFee;
   const displayTotal = totalPerUnit * quantity;
 
@@ -272,7 +272,7 @@ const TireCard: React.FC<TireCardProps> = ({
                         </div>
                         <div className="flex flex-col leading-none">
                             <span className={`text-xs font-bold ${withInstallation ? 'text-green-800' : 'text-slate-600'}`}>{t.addInstallation}</span>
-                            <span className="text-[10px] text-slate-400 mt-0.5">+$15.00 {t.installFee}</span>
+                            <span className="text-[10px] text-slate-400 mt-0.5">+ {t.installFee || 'installation'}</span>
                         </div>
                     </div>
                 </div>

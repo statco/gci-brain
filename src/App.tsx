@@ -10,6 +10,8 @@ import InputForm from './components/InputForm';
 import ProcessingOverlay from './components/ProcessingOverlay';
 import TireCard from './components/TireCard';
 import CheckoutModal from './components/CheckoutModal';
+import InstallerSelect from './components/InstallerSelect';
+import InstallerPortal from './InstallerPortal';
 import SuccessView from './components/SuccessView';
 import ReviewsModal from './components/ReviewsModal';
 import ComparisonModal from './components/ComparisonModal';
@@ -27,6 +29,7 @@ function TireMatchApp() {
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [recommendations, setRecommendations] = useState<TireProduct[]>([]);
   const [selectedTire, setSelectedTire] = useState<{ tire: TireProduct; quantity: number; withInstallation: boolean; total: number } | null>(null);
+  const [selectedInstaller, setSelectedInstaller] = useState<any>(null);
   const [favorites, setFavorites] = useState<TireProduct[]>([]);
   const [compareList, setCompareList] = useState<TireProduct[]>([]);
   const [activeModal, setActiveModal] = useState<'reviews' | 'compare' | 'favorites' | null>(null);
@@ -99,6 +102,7 @@ function TireMatchApp() {
   };
 
   const resetApp = () => {
+    setSelectedInstaller(null);
     setAppState(AppStates.IDLE);
     setRecommendations([]);
     setSelectedTire(null);
@@ -162,7 +166,14 @@ function TireMatchApp() {
                 <TireCard
                   key={tire.id}
                   tire={tire}
-                  onSelect={(t, q, inst, tot) => { setSelectedTire({tire:t, quantity:q, withInstallation:inst, total:tot}); setAppState(AppStates.CHECKOUT); }}
+                  onSelect={(t, q, inst, tot) => {
+                    setSelectedTire({ tire: t, quantity: q, withInstallation: inst, total: tot });
+                    if (inst) {
+                      setAppState(AppStates.INSTALLER_SELECT);
+                    } else {
+                      setAppState(AppStates.CHECKOUT);
+                    }
+                  }}
                   lang={lang}
                 />
               ))}
@@ -224,19 +235,45 @@ function TireMatchApp() {
             )}
           </>
         )}
+        {appState === AppStates.INSTALLER_SELECT && selectedTire && (
+          <InstallerSelect
+            tire={selectedTire.tire}
+            quantity={selectedTire.quantity}
+            lang={lang}
+            mapsLoaded={isLoaded}
+            onSelect={(installer, installTotal) => {
+              setSelectedInstaller(installer);
+              setSelectedTire(prev => prev ? {
+                ...prev,
+                total: prev.tire.pricePerUnit * prev.quantity + installTotal
+              } : prev);
+              setAppState(AppStates.CHECKOUT);
+            }}
+            onBack={() => setAppState(AppStates.RESULTS)}
+            onSkip={() => {
+              setSelectedInstaller(null);
+              setSelectedTire(prev => prev ? { ...prev, withInstallation: false } : prev);
+              setAppState(AppStates.CHECKOUT);
+            }}
+          />
+        )}
         {appState === AppStates.CHECKOUT && selectedTire && (
           <CheckoutModal
             tire={selectedTire.tire}
             quantity={selectedTire.quantity}
             withInstallation={selectedTire.withInstallation}
             total={selectedTire.total}
-            onConfirm={() => setAppState(AppStates.SUCCESS)}
-            onCancel={() => setAppState(AppStates.RESULTS)}
+            onConfirm={(orderNum: string) => {
+              setSelectedTire(prev => prev ? { ...prev, orderNumber: orderNum, installer: selectedInstaller } : prev);
+              setAppState(AppStates.SUCCESS);
+            }}
+            onCancel={() => setAppState(selectedInstaller ? AppStates.INSTALLER_SELECT : AppStates.RESULTS)}
+            selectedInstaller={selectedInstaller}
             lang={lang}
           />
         )}
         {appState === AppStates.SUCCESS && selectedTire && (
-           <SuccessView selectedTire={selectedTire} onReset={resetApp} lang={lang} mapsLoaded={isLoaded} />
+           <SuccessView selectedTire={selectedTire} onReset={resetApp} lang={lang} />
         )}
       </main>
     </div>
@@ -244,6 +281,9 @@ function TireMatchApp() {
 }
 
 function App() {
+  if (window.location.pathname.includes('installer-portal')) {
+    return <InstallerPortal />;
+  }
   return (
     <BrowserRouter>
       <Routes>
