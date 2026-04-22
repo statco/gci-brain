@@ -271,8 +271,17 @@ async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
 let _locationId: number | null = null;
 async function getLocationId(): Promise<number> {
   if (_locationId) return _locationId;
-  const data: any = await shopifyFetch<any>('/locations.json?limit=1');
-  _locationId = data.locations?.[0]?.id;
+  // Use explicit location ID if set — avoids writing to wrong location (e.g. 3PL)
+  const envId = process.env.SHOPIFY_LOCATION_ID;
+  if (envId) {
+    _locationId = parseInt(envId, 10);
+    return _locationId;
+  }
+  // Fallback: find first active location that is NOT a 3PL/fulfillment service
+  const data: any = await shopifyFetch<any>('/locations.json?limit=10');
+  const locations = data.locations || [];
+  const primary = locations.find((l: any) => !l.legacy && l.active) || locations[0];
+  _locationId = primary?.id;
   if (!_locationId) throw new Error('No Shopify location found');
   return _locationId;
 }
