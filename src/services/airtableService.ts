@@ -139,5 +139,26 @@ export const airtableService = {
       // Critical fallback: Return Mock Data so the SuccessView UI never breaks
       return MOCK_DATA;
     }
+  },
+
+  async createInstallationJob(data: {
+    CustomerName: string;
+    CustomerEmail: string;
+    CustomerPhone: string;
+    InstallerId: string;
+    TireProduct: string;
+    Quantity: number;
+    InstallationPrice: number;
+    Status: string;
+    ShopifyOrderId: string;
+    Notes?: string;
+  }) {
+    try {
+      return await airtableRequest('POST', 'Installation Jobs', data);
+    } catch (error) {
+      console.error('createInstallationJob failed:', error);
+      // Non-blocking — log but don't throw so checkout still completes
+      return null;
+    }
   }
 };
