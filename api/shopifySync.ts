@@ -339,14 +339,8 @@ async function runImageBackfill(offset = 0, limit = 100): Promise<{ attached: nu
       return;
     }
 
-    const titleParts = p.title.trim().split(' ');
-    let imageUrl: string | undefined;
-    let matchedKey = '';
-    for (let drop = 0; drop < 3; drop++) {
-      const key = titleParts.slice(0, titleParts.length - drop).join(' ');
-      imageUrl = getTireImageUrl(key);
-      if (imageUrl) { matchedKey = key; break; }
-    }
+    const imageUrl = getTireImageUrl(p.title);
+    const matchedKey = p.title;
 
     if (!imageUrl) {
       console.log(`❌ No image map match for: "${p.title}"`);
