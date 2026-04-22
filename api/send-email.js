@@ -222,7 +222,7 @@ function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInsta
           <!-- CTA Button -->
           <tr>
             <td style="padding: 0 40px 30px 40px; text-align: center;">
-              <a href="https://www.gcitires.com" style="display: inline-block; background-color: #ef4444; color: #ffffff; text-decoration: none; padding: 14px 30px; border-radius: 6px; font-weight: bold; font-size: 16px;">
+              <a href="https://gcitires.com/en-ca/account/orders" style="display: inline-block; background-color: #ef4444; color: #ffffff; text-decoration: none; padding: 14px 30px; border-radius: 6px; font-weight: bold; font-size: 16px;">
                 ${isFrench ? 'Voir ma commande' : 'View My Order'}
               </a>
             </td>
@@ -235,7 +235,7 @@ function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInsta
                 ${isFrench ? "Besoin d'aide?" : 'Need help?'}
               </p>
               <p style="margin: 0; color: #4b5563; font-size: 14px;">
-                <a href="mailto:support@gcitires.com" style="color: #ef4444; text-decoration: none;">support@gcitires.com</a> 
+                <a href="mailto:info@gcitires.ca" style="color: #ef4444; text-decoration: none;">info@gcitires.ca</a> 
                 ${isFrench ? 'ou' : 'or'} 
                 <a href="tel:+18195550100" style="color: #ef4444; text-decoration: none;">(819) 555-0100</a>
               </p>
