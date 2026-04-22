@@ -5,7 +5,7 @@ import UpdateCollectionSeo from './components/UpdateCollectionSeo';
 import FixRedirects from './components/FixRedirects';
 import UpdateSeo from './components/UpdateSeo';
 import React, { useState, useEffect } from 'react';
-import { useJsApiLoader } from '@react-google-maps/api';
+import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
 import ProcessingOverlay from './components/ProcessingOverlay';
 import TireCard from './components/TireCard';
@@ -22,8 +22,6 @@ import type { ProcessingLog, TireProduct, Language, VehicleInput } from './types
 import { translations } from './utils/translations';
 import { AppStates, ProcessingStages } from './utils/appStates';
 
-const LIBRARIES: ("marker" | "maps" | "places")[] = ["marker", "maps", "places"];
-
 function TireMatchApp() {
   const [appState, setAppState] = useState<AppStates>(AppStates.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
@@ -38,11 +36,6 @@ function TireMatchApp() {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
-    libraries: LIBRARIES,
-  });
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -240,7 +233,7 @@ function TireMatchApp() {
             tire={selectedTire.tire}
             quantity={selectedTire.quantity}
             lang={lang}
-            mapsLoaded={isLoaded}
+            mapsLoaded={true}
             onSelect={(installer, installTotal) => {
               setSelectedInstaller(installer);
               setSelectedTire(prev => prev ? {
