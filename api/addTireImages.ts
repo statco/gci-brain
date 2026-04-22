@@ -1,7 +1,7 @@
 // =============================================================================
 // addTireImages.ts  —  Static IMAGE_MAP  (zero HTTP, O(1) lookup)
 //
-//  101 keys total: 58 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
+//  103 keys total: 60 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
 //
 //  Sources
 //  ├─ Cooper:      coopertire.ca Demandware CDN — URLs verified via live fetch
@@ -169,6 +169,8 @@ export const IMAGE_MAP: Record<string, string> = {
   "COOPER ENDEAVOR PLUS":           DW("Endeavor_Plus_24499"),               // 🔧 product 24499
   "COOPER EVOLUTION WINTER":        DW("Evolution_Winter_24501"),            // 🔧 product 24501
   "COOPER ZEON RS3-G1":             DWH("dwfdc729c9", "Zeon_RS3-G1_24508"), // 🔧 product 24508 hash confirmed
+  "COOPER PROCONTROL":              DWH("dwe1c6180d", "Pro_Control_24794"),  // ✅ confirmed from coopertire.ca
+  "COOPER PROCONTROL ALL-SEASON":   DWH("dwe1c6180d", "Pro_Control_24794"),  // ✅ same image all sizes
 
   // ── VREDESTEIN ─────────────────────────────────────────────────────────────
   // Images verified from vredestein.com/content/dam/orbit/syncforce/products/
