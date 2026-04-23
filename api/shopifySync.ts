@@ -632,7 +632,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
         await shopifyFetch(`/variants/${ex.variantId}.json`, {
           method: 'PUT',
           body: JSON.stringify({
-            variant: { id: ex.variantId, cost: netCost.toFixed(2) },
+            variant: { id: ex.variantId, cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' },
           }),
         });
         if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
@@ -655,6 +655,8 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             id:               ex.variantId,
             ...(priceChanged ? { price: newPrice, compare_at_price: newPrice } : {}),
             cost:             netCost.toFixed(2),
+            inventory_management: 'shopify',
+            inventory_policy:     'deny',
           },
         }),
       });
