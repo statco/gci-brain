@@ -7,6 +7,7 @@ const ALLOWED_TABLES = [
   'Installation Jobs',
   'Installer Payments',
   'Notifications',
+  'Outreach Prospects',
 ];
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
