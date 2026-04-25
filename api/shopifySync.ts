@@ -65,11 +65,18 @@ const SHIPPING_BUFFERS: Record<string, number> = {
   heavy_truck: 65,
 };
 const VENDOR_MAP: Record<string, string> = {
-  'COOPER': 'Cooper',
-  'NEXEN': 'Nexen',
+  'COOPER':     'Cooper',
+  'NEXEN':      'Nexen',
   'VREDESTEIN': 'Vredestein',
-  'NUPROZONE': 'Nuprozone',
+  'MAXTREK':    'Maxtrek',
+  'MINERVA':    'Minerva',
+  'OVATION':    'Ovation',
+  'STARFIRE':   'Starfire',
+  // NUPROZONE removed — CJ Dropshipping non-tire products handled separately
 };
+
+// Canada Tire exclusive brands — carry Road Hazard warranty + 30-day trial
+const CDA_EXCLUSIVE_BRANDS = new Set(['Minerva', 'Ovation']);
 
 function normalizeVendor(vendor: string): string {
   return VENDOR_MAP[vendor.toUpperCase()] ??
@@ -466,17 +473,23 @@ async function buildPayload(ct: CTTire) {
   // Parse load index + speed rating before tags and metafields
   const { loadIndex: ctLoadIndex, speedRating: ctSpeedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
 
+  // Canada Tire exclusive brands (Minerva, Ovation) get special tags + warranty copy
+  const normalizedVendor = normalizeVendor(ct.brand);
+  const isCdaExclusive   = CDA_EXCLUSIVE_BRANDS.has(normalizedVendor);
+
   const tags = [
     SYNC_TAG,
     `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
     season.toLowerCase(),
     `tire-type-${tireType}`,
     size,
-    ct.isRunFlat ? 'run-flat' : null,
+    ct.isRunFlat ? 'run-flat'              : null,
+    isCdaExclusive ? 'canada-tire-exclusive' : null,
+    isCdaExclusive ? 'road-hazard-warranty'  : null,
     classifiedSeason,
     vehicleType,
     classifiedBrand,
-    ctLoadIndex   ? `loadindex:${ctLoadIndex}`   : null,
+    ctLoadIndex   ? `loadindex:${ctLoadIndex}`    : null,
     ctSpeedRating ? `speedrating:${ctSpeedRating}` : null,
   ].filter((t): t is string => typeof t === 'string' && t.length > 0)
     .filter((t, i, arr) => arr.indexOf(t) === i)   // deduplicate
@@ -496,8 +509,22 @@ async function buildPayload(ct: CTTire) {
   return {
     product: {
       title,
-      body_html:    `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p><ul><li>Season: ${season}</li>${ct.isRunFlat?'<li>Run-Flat</li>':''}${ct.isWinter?'<li>3PMSF Winter</li>':''}<li>Stock: ${qty} units${closest?` (nearest: ${closest})`:''}</li><li>Part #: ${ct.partNumber}</li>${ctLoadIndex?`<li>Load Index: ${ctLoadIndex}</li>`:''}${ctSpeedRating?`<li>Speed Rating: ${ctSpeedRating}</li>`:''}</ul>`,
-      vendor:       normalizeVendor(ct.brand),
+      body_html: [
+        `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p>`,
+        `<ul>`,
+        `<li>Season: ${season}</li>`,
+        ct.isRunFlat                    ? `<li>Run-Flat</li>`                                          : '',
+        ct.isWinter                     ? `<li>❄️ 3PMSF Winter Certified</li>`                         : '',
+        isCdaExclusive                  ? `<li>🇧🇪 Canada Tire Exclusive Brand</li>`                   : '',
+        isCdaExclusive                  ? `<li>✅ Road Hazard Warranty — 1 year or 2/32nds</li>`       : '',
+        isCdaExclusive                  ? `<li>✅ 30-Day Customer Satisfaction Guarantee</li>`          : '',
+        `<li>Stock: ${qty} units${closest ? ` (nearest: ${closest})` : ''}</li>`,
+        `<li>Part #: ${ct.partNumber}</li>`,
+        ctLoadIndex   ? `<li>Load Index: ${ctLoadIndex}</li>`    : '',
+        ctSpeedRating ? `<li>Speed Rating: ${ctSpeedRating}</li>` : '',
+        `</ul>`,
+      ].filter(Boolean).join(''),
+      vendor:       normalizedVendor,
       product_type: 'Tire',
       tags,
       variants: [{
