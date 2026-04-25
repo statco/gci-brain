@@ -419,11 +419,13 @@ function normalizeTitle(title: string): string {
 
 // ─── FETCH ALL ACTIVE PRODUCT TITLES ─────────────────────────────────────────
 // Used once per sync run to build a dedup set before creating new products.
+// Scoped to ct-sync tagged products only (~457 vs 1,227 total) — cuts
+// pagination from 5+ API calls to 2, saving ~60s of startup time.
 
 async function fetchExistingProductTitles(): Promise<Set<string>> {
   const titles = new Set<string>();
   let nextUrl: string | null =
-    `${SHOPIFY.baseUrl}/products.json?status=active&fields=id,title,status&limit=250`;
+    `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&fields=id,title&limit=250`;
   while (nextUrl) {
     const res: Response = await fetch(nextUrl, {
       headers: {
@@ -441,7 +443,7 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
     const nextMatch: RegExpMatchArray | null = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
     nextUrl = nextMatch ? nextMatch[1] : null;
   }
-  console.log(`🗂️  Loaded ${titles.size} existing active product titles for dedup`);
+  console.log(`🗂️  Loaded ${titles.size} ct-sync product titles for dedup`);
   return titles;
 }
 
