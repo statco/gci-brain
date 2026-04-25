@@ -1,9 +1,20 @@
 {
   "functions": {
-    "api/shopifyFix.js":    { "maxDuration": 60  },
-    "api/shopifySync.ts":   { "maxDuration": 300 },
-    "api/tagOos.ts":        { "maxDuration": 300 },
-    "api/notifyMe.ts":      { "maxDuration": 15  }
+    "api/shopifyFix.js": {
+      "maxDuration": 60
+    },
+    "api/shopifySync.ts": {
+      "maxDuration": 300
+    },
+    "api/tagOos.ts": {
+      "maxDuration": 300
+    },
+    "api/notifyMe.ts": {
+      "maxDuration": 15
+    },
+    "api/installer-outreach.ts": {
+      "maxDuration": 120
+    }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
@@ -32,6 +43,10 @@
     {
       "path": "/api/fixTireSize?autorun=true",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/installer-outreach?action=run",
+      "schedule": "0 13 * * 5"
     }
   ],
   "headers": [
