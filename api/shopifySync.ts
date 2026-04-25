@@ -53,17 +53,38 @@ const BATCH_SIZE = 5;
 const BATCH_MS   = 300;
 
 // ─── PRICING CONFIG ───────────────────────────────────────────────────────────
-// Net cost = MSRP × NET_MULTIPLIER
-// Shipping buffer varies by tire type (from performanceCategory)
-// Floor price = net cost + shipping buffer (minimum viable selling price)
+// Net cost: use real CT cost field when valid; fall back to MSRP × NET_MULTIPLIER
+// Shopify floor: minimum price to cover cost + shipping + payment fee + target margin
+// Selling price: max(MSRP, shopifyFloor) — never sell below cost
+//
+// Why MSRP isn't always safe:
+//   Nexen dealer cost ≈ 80% of MSRP → MSRP - cost - $40 shipping = negative margin
+//   Cooper dealer cost ≈ 46-52% of MSRP → MSRP is comfortably above floor
+//
+// The floor formula: floor = (netCost + shipping) / (1 - SHOPIFY_FEE - TARGET_MARGIN)
+//   Nexen NPRIZ example: ($84.80 + $40) / 0.821 = $152 vs MSRP $106 → sell at $152
+//   Cooper Endeavor:     ($114 + $50)  / 0.821 = $200 vs MSRP $220 → sell at $220
 
-const NET_MULTIPLIER = 0.50;
+const NET_MULTIPLIER      = 0.50;   // fallback when real CT cost is unavailable
+const SHOPIFY_PAYMENT_FEE = 0.029;  // Shopify payment processing (credit card)
+const TARGET_NET_MARGIN   = 0.15;   // minimum net margin after fees + shipping
+const WALMART_FEE         = 0.12;   // Walmart marketplace commission (metafield only)
 
 const SHIPPING_BUFFERS: Record<string, number> = {
   passenger:   40,
   light_truck: 50,
   heavy_truck: 65,
 };
+
+/**
+ * Calculate the Shopify selling price.
+ * Guarantees we never sell below cost + shipping + payment fees + target margin.
+ * Returns max(msrp, floor) — Cooper stays at MSRP, Nexen gets raised to floor.
+ */
+function calcSellingPrice(netCost: number, shippingBuffer: number, msrp: number): number {
+  const floor = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
+  return parseFloat(Math.max(msrp, floor).toFixed(2));
+}
 const VENDOR_MAP: Record<string, string> = {
   'COOPER':     'Cooper',
   'NEXEN':      'Nexen',
@@ -465,9 +486,12 @@ async function buildPayload(ct: CTTire) {
 
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const WALMART_FEE = 0.12;
-  const TARGET_MARGIN = 0.14;
-  const floorPrice     = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_MARGIN);
+
+  // Selling price: max(MSRP, shopify floor) — never sell at a loss
+  const sellingPrice  = calcSellingPrice(netCost, shippingBuffer, msrp);
+  const shopifyFloor  = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
+  const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
+  const aboveMsrp     = sellingPrice > msrp + 0.01; // true when floor exceeds MSRP
 
   const title = formatTireSize(toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()));
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
@@ -488,6 +512,7 @@ async function buildPayload(ct: CTTire) {
     ct.isRunFlat ? 'run-flat'              : null,
     isCdaExclusive ? 'canada-tire-exclusive' : null,
     isCdaExclusive ? 'road-hazard-warranty'  : null,
+    aboveMsrp ? 'priced-above-msrp'         : null,
     classifiedSeason,
     vehicleType,
     classifiedBrand,
@@ -500,7 +525,9 @@ async function buildPayload(ct: CTTire) {
     { namespace:'canada_tire', key:'cost',                value:(parseFloat(ct.cost)||0).toFixed(2),  type:'number_decimal' },
     { namespace:'canada_tire', key:'part_number',         value:ct.partNumber,                        type:'single_line_text_field' },
     { namespace:'gci',         key:'net_cost',             value:netCost.toFixed(2),                   type:'number_decimal' },
-    { namespace:'gci',         key:'floor_price',          value:floorPrice.toFixed(2),                type:'number_decimal' },
+    { namespace:'gci',         key:'shopify_floor_price',  value:shopifyFloor.toFixed(2),              type:'number_decimal' },
+    { namespace:'gci',         key:'walmart_floor_price',  value:walmartFloor.toFixed(2),              type:'number_decimal' },
+    { namespace:'gci',         key:'selling_price',        value:sellingPrice.toFixed(2),              type:'number_decimal' },
     { namespace:'gci',         key:'shipping_buffer',      value:shippingBuffer.toFixed(2),            type:'number_decimal' },
     { namespace:'gci',         key:'tire_type',            value:tireType,                             type:'single_line_text_field' },
     { namespace:'gci',         key:'performance_category', value:ct.performanceCategory || 'Standard', type:'single_line_text_field' },
@@ -531,8 +558,8 @@ async function buildPayload(ct: CTTire) {
       tags,
       variants: [{
         sku:                  ct.partNumber,
-        price:                msrp.toFixed(2),
-        compare_at_price:     msrp.toFixed(2),
+        price:                sellingPrice.toFixed(2),
+        compare_at_price:     aboveMsrp ? null : msrp.toFixed(2),
         cost:                 netCost.toFixed(2),
         inventory_management: 'shopify',
         inventory_policy:     'deny',
@@ -644,8 +671,11 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const rawCost  = parseFloat(ct.cost) || 0;
     const costOk   = rawCost > 0 && rawCost < msrp * 0.90;
     const netCost  = costOk ? rawCost : msrp * NET_MULTIPLIER;
-    const newPrice = msrp.toFixed(2);
-    const priceChanged = newPrice !== ex.price;
+    const tireType = classifyTireType(ct.performanceCategory, ct.size);
+    const shipping = getShippingBuffer(ct.performanceCategory, ct.size);
+    const newSellingPrice = calcSellingPrice(netCost, shipping, msrp);
+    const newPrice        = newSellingPrice.toFixed(2);
+    const priceChanged    = newPrice !== ex.price;
 
     // Append loadindex/speedrating to existing tags without overwriting anything
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -682,7 +712,10 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
         body: JSON.stringify({
           variant: {
             id:               ex.variantId,
-            ...(priceChanged ? { price: newPrice, compare_at_price: newPrice } : {}),
+            ...(priceChanged ? {
+              price:            newPrice,
+              compare_at_price: newSellingPrice > msrp + 0.01 ? null : msrp.toFixed(2),
+            } : {}),
             cost:             netCost.toFixed(2),
             inventory_management: 'shopify',
             inventory_policy:     'deny',
