@@ -161,12 +161,15 @@ async function makePinterestPin(theme: typeof WEEKLY_THEMES[0]) {
     : `${CTX(t)}\n\nDescription de pin Pinterest SEO en français. 2–3 phrases riches en mots-clés.\nLigne vide puis EXACTEMENT 8 hashtags — mots seuls commençant par # uniquement.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`;
 
   const { caption, hashtags } = parsePost(await callClaude(prompt));
+  const pinTitle = caption.length > 97 ? caption.slice(0, 97) + '...' : caption;
+  const fullText = (caption + '\n\n' + hashtags).slice(0, 797);
   return {
     platform: 'pinterest',
     lang,
     caption,
+    pinTitle,
     hashtags,
-    text: `${caption}\n\n${hashtags}`,
+    text: fullText,
     board,
     link: 'https://gcitires.com',
     account: 'gci_tires',
