@@ -113,11 +113,11 @@ async function makeInstagramPost(theme: typeof WEEKLY_THEMES[0]) {
   let prompt: string;
 
   if (variant === 'en') {
-    prompt = `${CTX(theme.en)}\n\nWrite an Instagram caption in English. Strong hook, 3–4 punchy sentences.\nBlank line then exactly 12 hashtags starting with #.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
+    prompt = `${CTX(theme.en)}\n\nWrite an Instagram caption in English. Strong hook, 3–4 punchy sentences.\nBlank line then EXACTLY 12 hashtags — single words starting with # only, no sentences.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
   } else if (variant === 'fr') {
-    prompt = `${CTX(theme.fr)}\n\nÉcris une légende Instagram en français québécois. Accroche forte, 3–4 phrases percutantes.\nLigne vide puis exactement 12 hashtags commençant par #.\nFormat:\nLÉGENDE\n\n#tag1 #tag2 ...`;
+    prompt = `${CTX(theme.fr)}\n\nÉcris une légende Instagram en français québécois. Accroche forte, 3–4 phrases percutantes.\nLigne vide puis EXACTEMENT 12 hashtags — mots seuls commençant par # uniquement, pas de phrases.\nFormat:\nLÉGENDE\n\n#tag1 #tag2 ...`;
   } else {
-    prompt = `${CTX(theme.en)}\n\nWrite a bilingual Instagram caption: 2 sentences English then 2 sentences French (same message).\nBlank line then 12 mixed EN/FR hashtags.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
+    prompt = `${CTX(theme.en)}\n\nWrite a bilingual Instagram caption: 2 sentences English then 2 sentences French (same message).\nBlank line then EXACTLY 12 hashtags — single words starting with # only, mix EN/FR.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
   }
 
   const { caption, hashtags } = parsePost(await callClaude(prompt));
@@ -136,8 +136,8 @@ async function makeFacebookPost(theme: typeof WEEKLY_THEMES[0]) {
   const lang = fbLang();
   const t = lang === 'en' ? theme.en : theme.fr;
   const prompt = lang === 'en'
-    ? `${CTX(t)}\n\nWrite a Facebook post in English. Friendly and informative, 4–6 sentences. End with a question to encourage comments.\nBlank line then 6 hashtags.\nFormat:\nPOST\n\n#tag1 #tag2 ...`
-    : `${CTX(t)}\n\nÉcris une publication Facebook en français. Amical et informatif, 4–6 phrases. Termine par une question.\nLigne vide puis 6 hashtags.\nFormat:\nPUBLICATION\n\n#tag1 #tag2 ...`;
+    ? `${CTX(t)}\n\nWrite a Facebook post in English. Friendly and informative, 4–6 sentences. End with a question to encourage comments.\nThen a blank line then EXACTLY 6 hashtags (words starting with # only, no sentences).\nFormat:\nPOST TEXT\n\n#PneusCanada #PneusHiver #Tires`
+    : `${CTX(t)}\n\nÉcris une publication Facebook en français. Amical et informatif, 4–6 phrases. Termine par une question.\nPuis une ligne vide puis EXACTEMENT 6 hashtags (mots commençant par # seulement, pas de phrases).\nFormat:\nTEXTE\n\n#PneusCanada #PneusHiver #Tires`;
 
   const { caption, hashtags } = parsePost(await callClaude(prompt));
   return {
@@ -157,8 +157,8 @@ async function makePinterestPin(theme: typeof WEEKLY_THEMES[0]) {
   const board = pinBoard(lang);
   const t = lang === 'en' ? theme.en : theme.fr;
   const prompt = lang === 'en'
-    ? `${CTX(t)}\n\nWrite a Pinterest pin description for SEO in English. 2–3 keyword-rich sentences.\nBlank line then 8 hashtags.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`
-    : `${CTX(t)}\n\nDescription de pin Pinterest SEO en français. 2–3 phrases riches en mots-clés.\nLigne vide puis 8 hashtags.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`;
+    ? `${CTX(t)}\n\nWrite a Pinterest pin description for SEO in English. 2–3 keyword-rich sentences.\nBlank line then EXACTLY 8 hashtags — single words starting with # only.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`
+    : `${CTX(t)}\n\nDescription de pin Pinterest SEO en français. 2–3 phrases riches en mots-clés.\nLigne vide puis EXACTEMENT 8 hashtags — mots seuls commençant par # uniquement.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`;
 
   const { caption, hashtags } = parsePost(await callClaude(prompt));
   return {
