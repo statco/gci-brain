@@ -1,43 +1,35 @@
 // api/social-scheduler.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// GCI Tires — Weekly Social Media Auto-Scheduler
+// GCI Tires — Social Media Auto-Scheduler (per-platform cron architecture)
 //
-// Every Sunday 6pm ET: generates a full week of social content via Claude API
-// and sends it to Make.com via webhook for auto-publishing.
+// Each cron fires at exactly the right posting time and sends ONE post
+// immediately to Make.com, which publishes it right away.
 //
-// Architecture:
-//   gci-brain → Claude API (content) → Make.com webhook → Instagram/Facebook/Pinterest
-//
-// Make.com setup (free tier — 1,000 ops/month, ~40 posts/month needed):
-//   1. Create a new scenario at make.com
-//   2. Add trigger: Webhooks > Custom Webhook → copy URL
-//   3. Add modules: Instagram for Business, Facebook Pages, Pinterest
-//   4. Route by {{platform}} field in payload
-//   5. Paste webhook URL into MAKE_WEBHOOK_URL env var in Vercel
+// Cron schedule (vercel.json):
+//   Instagram : 0 14 * * 1,3,5  → Mon/Wed/Fri 10am ET  (EN / FR / bilingual)
+//   Facebook  : 0 16 * * 2,4    → Tue/Thu     12pm ET  (EN / FR)
+//   Pinterest : 0 18 * * 1-5    → Mon–Fri      2pm ET  (alternating EN/FR)
 //
 // Env vars required:
 //   ANTHROPIC_API_KEY   — already set
-//   MAKE_WEBHOOK_URL    — from Make.com Custom Webhook trigger
+//   MAKE_WEBHOOK_URL    — Make.com Custom Webhook URL
 //
-// Schedule (10 posts/week, stays within Make.com free 1,000 ops/month):
-//   Instagram (@gcitires)      — Mon / Wed / Fri  10am ET
-//   Facebook  (gcitirescanada) — Tue / Thu        12pm ET
-//   Pinterest (gci_tires)      — Mon–Fri           2pm ET
-//
-// GET /api/social-scheduler?action=preview  — show schedule + theme, no sending
-// GET /api/social-scheduler?action=run      — generate + send to Make.com
-// GET /api/social-scheduler?action=tiktok   — TikTok + YouTube scripts only
+// GET /api/social-scheduler?action=preview                   — theme + week plan
+// GET /api/social-scheduler?action=post&platform=instagram   — 1 IG post → Make
+// GET /api/social-scheduler?action=post&platform=facebook    — 1 FB post → Make
+// GET /api/social-scheduler?action=post&platform=pinterest   — 1 Pin     → Make
+// GET /api/social-scheduler?action=tiktok                    — video scripts
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-export const config = { maxDuration: 300 };
+export const config = { maxDuration: 120 };
 
 const CLAUDE_KEY   = process.env.ANTHROPIC_API_KEY!;
 const MAKE_WEBHOOK = process.env.MAKE_WEBHOOK_URL!;
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 
-// ─── Weekly content themes ────────────────────────────────────────────────────
+// ─── Weekly themes — rotated by ISO week number ───────────────────────────────
 
 const WEEKLY_THEMES = [
   { en: 'winter tire safety tips',           fr: 'conseils sécurité pneus hiver' },
@@ -54,137 +46,152 @@ const WEEKLY_THEMES = [
   { en: 'free tire delivery across Canada',  fr: 'livraison pneus gratuite Canada' },
 ];
 
-function getThisWeeksTheme() {
+function getTheme() {
   const week = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
   return WEEKLY_THEMES[week % WEEKLY_THEMES.length];
 }
 
-// ─── Post schedule ────────────────────────────────────────────────────────────
+// ─── Day-of-week helpers (UTC) ────────────────────────────────────────────────
+// 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
 
-function getSchedule() {
-  const now = new Date();
-  const dayOfWeek = now.getUTCDay();
-  const daysToMon = dayOfWeek === 1 ? 0 : (8 - dayOfWeek) % 7 || 7;
-  const mon = new Date(now);
-  mon.setUTCDate(now.getUTCDate() + daysToMon);
+function utcDay() { return new Date().getUTCDay(); }
 
-  const slot = (daysFromMon: number, utcHour: number) => {
-    const d = new Date(mon);
-    d.setUTCDate(mon.getUTCDate() + daysFromMon);
-    d.setUTCHours(utcHour, 0, 0, 0);
-    return d.toISOString();
-  };
+// Which language to use based on day the cron fires
+function igLang(): 'en' | 'fr' | 'bilingual' {
+  const d = utcDay();
+  if (d === 1) return 'en';        // Monday
+  if (d === 3) return 'fr';        // Wednesday
+  return 'bilingual';              // Friday
+}
 
-  return {
-    instagram: [slot(0, 14), slot(2, 14), slot(4, 14)],
-    facebook:  [slot(1, 16), slot(3, 16)],
-    pinterest: [slot(0, 18), slot(1, 18), slot(2, 18), slot(3, 18), slot(4, 18)],
-  };
+function fbLang(): 'en' | 'fr' {
+  return utcDay() === 2 ? 'en' : 'fr'; // Tuesday=EN, Thursday=FR
+}
+
+function pinLang(): 'en' | 'fr' {
+  // Alternates each day: Mon=EN, Tue=FR, Wed=EN, Thu=FR, Fri=EN
+  const d = utcDay();
+  return d % 2 === 1 ? 'en' : 'fr';
+}
+
+const PIN_BOARDS = {
+  en: ['Winter Tires Canada', 'Tire Tips & Guides', 'Cooper Tires', 'Nexen Tires', 'Online Tire Shopping'],
+  fr: ['Pneus Hiver Québec',  'Conseils Pneus',     'Pneus Cooper', 'Pneus Nexen', 'Acheter Pneus En Ligne'],
+};
+
+function pinBoard(lang: 'en' | 'fr'): string {
+  // Pick board based on ISO week so it rotates through boards each week
+  const week = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+  return PIN_BOARDS[lang][week % 5];
 }
 
 // ─── Claude API ───────────────────────────────────────────────────────────────
 
 async function callClaude(prompt: string): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
+    method: 'POST',
     headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 800, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d: any = await res.json();
   return d.content?.[0]?.text?.trim() || '';
 }
 
-const CTX = (theme: string) =>
-  `GCI Tires (gcitires.com) — Canadian online tire retailer. Brands: Cooper, Nexen, Vredestein, Minerva (Canada Tire exclusive with Road Hazard warranty + 30-day trial). Free shipping. AI Match 2.0 tire advisor. Markets: Ontario + Quebec. Always end with a CTA to gcitires.com. This week's theme: "${theme}".`;
+const CTX = (t: string) =>
+  `GCI Tires (gcitires.com) — Canadian online tire retailer. Brands: Cooper, Nexen, Vredestein, Minerva (Canada Tire exclusive — Road Hazard warranty + 30-day trial). Free shipping. AI Match 2.0. Markets: Ontario + Quebec. Theme: "${t}". Always end with a CTA linking to gcitires.com.`;
 
-// ─── Content generation ───────────────────────────────────────────────────────
-
-interface Post {
-  platform:    'instagram' | 'facebook' | 'pinterest';
-  lang:        'en' | 'fr';
-  caption:     string;
-  hashtags:    string;
-  scheduledAt: string;
-  board?:      string;
+function parsePost(raw: string): { caption: string; hashtags: string } {
+  const parts = raw.split(/\n{2,}/);
+  return { caption: (parts[0] || '').trim(), hashtags: (parts[1] || '').trim() };
 }
 
-async function generatePosts(theme: { en: string; fr: string }): Promise<Post[]> {
-  const sched = getSchedule();
-  const posts: Post[] = [];
+// ─── Per-platform generators ──────────────────────────────────────────────────
 
-  // Instagram: Mon (EN) · Wed (FR) · Fri (bilingual)
-  const igPrompts = [
-    { lang: 'en' as const, prompt: `${CTX(theme.en)}\n\nWrite an Instagram caption in English. Strong hook, 3–4 sentences. Blank line then 12 hashtags.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...` },
-    { lang: 'fr' as const, prompt: `${CTX(theme.fr)}\n\nÉcris une légende Instagram en français québécois. Accroche forte, 3–4 phrases. Ligne vide puis 12 hashtags.\nFormat:\nLÉGENDE\n\n#tag1 #tag2 ...` },
-    { lang: 'en' as const, prompt: `${CTX(theme.en)}\n\nWrite a bilingual Instagram caption: 2 sentences English then 2 French (same message). Blank line then 12 mixed EN/FR hashtags.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...` },
-  ];
-  for (let i = 0; i < 3; i++) {
-    const raw = await callClaude(igPrompts[i].prompt);
-    const [caption, hashtags = ''] = raw.split(/\n{2,}/);
-    posts.push({ platform: 'instagram', lang: igPrompts[i].lang, caption: caption.trim(), hashtags: hashtags.trim(), scheduledAt: sched.instagram[i] });
+async function makeInstagramPost(theme: typeof WEEKLY_THEMES[0]) {
+  const variant = igLang();
+  let prompt: string;
+
+  if (variant === 'en') {
+    prompt = `${CTX(theme.en)}\n\nWrite an Instagram caption in English. Strong hook, 3–4 punchy sentences.\nBlank line then exactly 12 hashtags starting with #.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
+  } else if (variant === 'fr') {
+    prompt = `${CTX(theme.fr)}\n\nÉcris une légende Instagram en français québécois. Accroche forte, 3–4 phrases percutantes.\nLigne vide puis exactement 12 hashtags commençant par #.\nFormat:\nLÉGENDE\n\n#tag1 #tag2 ...`;
+  } else {
+    prompt = `${CTX(theme.en)}\n\nWrite a bilingual Instagram caption: 2 sentences English then 2 sentences French (same message).\nBlank line then 12 mixed EN/FR hashtags.\nFormat:\nCAPTION\n\n#tag1 #tag2 ...`;
   }
 
-  // Facebook: Tue (EN) · Thu (FR)
-  const fbPrompts = [
-    { lang: 'en' as const, prompt: `${CTX(theme.en)}\n\nWrite a Facebook post in English. Friendly, 4–6 sentences, ends with a question. Blank line then 6 hashtags.\nFormat:\nPOST\n\n#tag1 #tag2 ...` },
-    { lang: 'fr' as const, prompt: `${CTX(theme.fr)}\n\nÉcris une publication Facebook en français. Amical, 4–6 phrases, termine par une question. Ligne vide puis 6 hashtags.\nFormat:\nPUBLICATION\n\n#tag1 #tag2 ...` },
-  ];
-  for (let i = 0; i < 2; i++) {
-    const raw = await callClaude(fbPrompts[i].prompt);
-    const [caption, hashtags = ''] = raw.split(/\n{2,}/);
-    posts.push({ platform: 'facebook', lang: fbPrompts[i].lang, caption: caption.trim(), hashtags: hashtags.trim(), scheduledAt: sched.facebook[i] });
-  }
-
-  // Pinterest: Mon–Fri alternating EN/FR
-  const pinBoards = {
-    en: ['Winter Tires Canada', 'Tire Tips & Guides', 'Cooper Tires', 'Nexen Tires', 'Online Tire Shopping'],
-    fr: ['Pneus Hiver Québec',  'Conseils Pneus',     'Pneus Cooper', 'Pneus Nexen', 'Acheter Pneus En Ligne'],
+  const { caption, hashtags } = parsePost(await callClaude(prompt));
+  return {
+    platform: 'instagram',
+    lang: variant,
+    caption,
+    hashtags,
+    text: `${caption}\n\n${hashtags}`,
+    account: '@gcitires',
+    source: 'gci-brain',
   };
-  for (let i = 0; i < 5; i++) {
-    const lang  = i % 2 === 1 ? 'fr' as const : 'en' as const;
-    const board = pinBoards[lang][i];
-    const t     = lang === 'fr' ? theme.fr : theme.en;
-    const raw   = await callClaude(
-      lang === 'fr'
-        ? `${CTX(t)}\nDescription Pinterest SEO en français, 2–3 phrases riches en mots-clés. Ligne vide puis 8 hashtags. Board: "${board}".\nDESCRIPTION\n\n#tag1 ...`
-        : `${CTX(t)}\nPinterest pin description for SEO in English, 2–3 keyword-rich sentences. Blank line then 8 hashtags. Board: "${board}".\nDESCRIPTION\n\n#tag1 ...`
-    );
-    const [caption, hashtags = ''] = raw.split(/\n{2,}/);
-    posts.push({ platform: 'pinterest', lang, caption: caption.trim(), hashtags: hashtags.trim(), scheduledAt: sched.pinterest[i], board });
-  }
+}
 
-  return posts;
+async function makeFacebookPost(theme: typeof WEEKLY_THEMES[0]) {
+  const lang = fbLang();
+  const t = lang === 'en' ? theme.en : theme.fr;
+  const prompt = lang === 'en'
+    ? `${CTX(t)}\n\nWrite a Facebook post in English. Friendly and informative, 4–6 sentences. End with a question to encourage comments.\nBlank line then 6 hashtags.\nFormat:\nPOST\n\n#tag1 #tag2 ...`
+    : `${CTX(t)}\n\nÉcris une publication Facebook en français. Amical et informatif, 4–6 phrases. Termine par une question.\nLigne vide puis 6 hashtags.\nFormat:\nPUBLICATION\n\n#tag1 #tag2 ...`;
+
+  const { caption, hashtags } = parsePost(await callClaude(prompt));
+  return {
+    platform: 'facebook',
+    lang,
+    caption,
+    hashtags,
+    text: `${caption}\n\n${hashtags}`,
+    link: 'https://gcitires.com',
+    account: 'gcitirescanada',
+    source: 'gci-brain',
+  };
+}
+
+async function makePinterestPin(theme: typeof WEEKLY_THEMES[0]) {
+  const lang  = pinLang();
+  const board = pinBoard(lang);
+  const t = lang === 'en' ? theme.en : theme.fr;
+  const prompt = lang === 'en'
+    ? `${CTX(t)}\n\nWrite a Pinterest pin description for SEO in English. 2–3 keyword-rich sentences.\nBlank line then 8 hashtags.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`
+    : `${CTX(t)}\n\nDescription de pin Pinterest SEO en français. 2–3 phrases riches en mots-clés.\nLigne vide puis 8 hashtags.\nBoard: "${board}".\nFormat:\nDESCRIPTION\n\n#tag1 ...`;
+
+  const { caption, hashtags } = parsePost(await callClaude(prompt));
+  return {
+    platform: 'pinterest',
+    lang,
+    caption,
+    hashtags,
+    text: `${caption}\n\n${hashtags}`,
+    board,
+    link: 'https://gcitires.com',
+    account: 'gci_tires',
+    source: 'gci-brain',
+  };
 }
 
 // ─── Make.com webhook delivery ────────────────────────────────────────────────
 
-async function sendToMake(post: Post): Promise<boolean> {
+async function sendToMake(payload: object): Promise<boolean> {
   const res = await fetch(MAKE_WEBHOOK, {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      platform:    post.platform,
-      lang:        post.lang,
-      text:        post.hashtags ? `${post.caption}\n\n${post.hashtags}` : post.caption,
-      caption:     post.caption,
-      hashtags:    post.hashtags,
-      scheduledAt: post.scheduledAt,
-      board:       post.board || null,
-      account:     ({ instagram: '@gcitires', facebook: 'gcitirescanada', pinterest: 'gci_tires' })[post.platform],
-      source:      'gci-brain',
-    }),
+    body: JSON.stringify(payload),
   });
   return res.ok;
 }
 
-// ─── TikTok + YouTube scripts ─────────────────────────────────────────────────
+// ─── Video scripts (manual posting) ──────────────────────────────────────────
 
-async function generateVideoScripts(theme: { en: string; fr: string }) {
+async function generateVideoScripts(theme: typeof WEEKLY_THEMES[0]) {
   const [tiktokEn, tiktokFr, ytEn] = await Promise.all([
-    callClaude(`${CTX(theme.en)}\n\nWrite a 30-second TikTok script. Sections:\n[HOOK 3s]\n[PROBLEM 5s]\n[SOLUTION 15s]\n[CTA 7s → gcitires.com]\nCasual, punchy, Canadian. Label each section clearly.`),
-    callClaude(`${CTX(theme.fr)}\n\nÉcris un script TikTok de 30 secondes. Sections:\n[ACCROCHE 3s]\n[PROBLÈME 5s]\n[SOLUTION 15s]\n[CTA 7s → gcitires.com]\nDécontracté, percutant, québécois. Étiquette chaque section.`),
-    callClaude(`${CTX(theme.en)}\n\nWrite a 60-second YouTube Shorts script. Include on-screen text overlays in [BRACKETS]. Structure: hook → 3 tips → CTA gcitires.com. Professional but approachable.`),
+    callClaude(`${CTX(theme.en)}\n\nWrite a 30-second TikTok script:\n[HOOK 3s]\n[PROBLEM 5s]\n[SOLUTION 15s]\n[CTA 7s → gcitires.com]\nCasual, punchy, Canadian.`),
+    callClaude(`${CTX(theme.fr)}\n\nÉcris un script TikTok de 30 secondes:\n[ACCROCHE 3s]\n[PROBLÈME 5s]\n[SOLUTION 15s]\n[CTA 7s → gcitires.com]\nDécontracté, percutant, québécois.`),
+    callClaude(`${CTX(theme.en)}\n\nWrite a 60-second YouTube Shorts script. On-screen text overlays in [BRACKETS]. Hook → 3 tips → CTA gcitires.com.`),
   ]);
   return { tiktokEn, tiktokFr, ytEn };
 }
@@ -194,62 +201,67 @@ async function generateVideoScripts(theme: { en: string; fr: string }) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
-  const action = (req.query.action as string) || 'preview';
-  const theme  = getThisWeeksTheme();
+  const action   = (req.query.action   as string) || 'preview';
+  const platform = (req.query.platform as string) || '';
+  const theme    = getTheme();
 
+  // ── Preview ────────────────────────────────────────────────────────────────
   if (action === 'preview') {
     return res.status(200).json({
-      success: true, mode: 'preview', theme,
-      postsThisWeek: 10,
-      schedule: getSchedule(),
-      delivery: 'Make.com webhook → Instagram · Facebook · Pinterest',
-      note: '?action=run to generate + send  ·  ?action=tiktok for video scripts',
+      success: true,
+      theme,
+      weeklySchedule: {
+        monday:    'Instagram EN  10am ET  +  Pinterest EN  2pm ET',
+        tuesday:   'Facebook  EN  12pm ET  +  Pinterest FR  2pm ET',
+        wednesday: 'Instagram FR  10am ET  +  Pinterest EN  2pm ET',
+        thursday:  'Facebook  FR  12pm ET  +  Pinterest FR  2pm ET',
+        friday:    'Instagram bilingual 10am ET  +  Pinterest EN  2pm ET',
+      },
+      crons: [
+        '0 14 * * 1,3,5  → /api/social-scheduler?action=post&platform=instagram',
+        '0 16 * * 2,4    → /api/social-scheduler?action=post&platform=facebook',
+        '0 18 * * 1-5    → /api/social-scheduler?action=post&platform=pinterest',
+      ],
+      note: 'Each cron generates 1 post and fires it to Make.com immediately.',
     });
   }
 
+  // ── TikTok / YouTube scripts ───────────────────────────────────────────────
   if (action === 'tiktok') {
     const scripts = await generateVideoScripts(theme);
     return res.status(200).json({ success: true, theme, scripts });
   }
 
-  if (!MAKE_WEBHOOK) {
-    return res.status(500).json({
-      success: false,
-      error: 'MAKE_WEBHOOK_URL not set in Vercel env vars.',
-      setup: [
-        '1. go to make.com → create free account',
-        '2. New scenario → Webhooks → Custom Webhook → copy URL',
-        '3. Add modules: Instagram for Business · Facebook Pages · Pinterest',
-        '4. Route by {{platform}} field',
-        '5. Add MAKE_WEBHOOK_URL to Vercel env vars',
-      ],
-    });
-  }
-
-  try {
-    const posts   = await generatePosts(theme);
-    const results = [];
-    const errors  = [];
-
-    for (const post of posts) {
-      try {
-        const ok = await sendToMake(post);
-        if (!ok) throw new Error('Make.com non-OK response');
-        results.push({ platform: post.platform, lang: post.lang, scheduledAt: post.scheduledAt, preview: post.caption.slice(0, 80) + '…' });
-        console.log(`✅ [${post.platform}/${post.lang}] → Make.com`);
-      } catch (err: any) {
-        errors.push({ platform: post.platform, lang: post.lang, error: err.message });
-        console.error(`❌ [${post.platform}/${post.lang}]`, err.message);
-      }
+  // ── Post — generate 1 post for the specified platform ─────────────────────
+  if (action === 'post') {
+    if (!MAKE_WEBHOOK) {
+      return res.status(500).json({ success: false, error: 'MAKE_WEBHOOK_URL not set in Vercel env vars.' });
+    }
+    if (!['instagram', 'facebook', 'pinterest'].includes(platform)) {
+      return res.status(400).json({ success: false, error: 'platform must be instagram, facebook, or pinterest' });
     }
 
-    return res.status(200).json({
-      success: errors.length < posts.length,
-      theme, sent: results.length, failed: errors.length,
-      results, errors,
-      nextRun: 'Next Sunday 6pm ET (Vercel cron)',
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    try {
+      let payload: object;
+
+      if (platform === 'instagram') {
+        payload = await makeInstagramPost(theme);
+      } else if (platform === 'facebook') {
+        payload = await makeFacebookPost(theme);
+      } else {
+        payload = await makePinterestPin(theme);
+      }
+
+      const ok = await sendToMake(payload);
+      if (!ok) throw new Error('Make.com returned non-OK');
+
+      console.log(`✅ [${platform}] → Make.com`);
+      return res.status(200).json({ success: true, platform, theme, payload });
+    } catch (err: any) {
+      console.error(`❌ [${platform}]`, err.message);
+      return res.status(500).json({ success: false, platform, error: err.message });
+    }
   }
+
+  return res.status(400).json({ error: 'Unknown action. Use: preview | post | tiktok' });
 }
