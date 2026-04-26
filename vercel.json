@@ -19,7 +19,7 @@
       "maxDuration": 300
     },
     "api/social-scheduler.ts": {
-      "maxDuration": 300
+      "maxDuration": 120
     },
     "api/setup-prospects-table.ts": {
       "maxDuration": 60
@@ -62,8 +62,16 @@
       "schedule": "0 12 * * 1"
     },
     {
-      "path": "/api/social-scheduler?action=run",
-      "schedule": "0 22 * * 0"
+      "path": "/api/social-scheduler?action=post&platform=instagram",
+      "schedule": "0 14 * * 1,3,5"
+    },
+    {
+      "path": "/api/social-scheduler?action=post&platform=facebook",
+      "schedule": "0 16 * * 2,4"
+    },
+    {
+      "path": "/api/social-scheduler?action=post&platform=pinterest",
+      "schedule": "0 18 * * 1-5"
     }
   ],
   "headers": [
