@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE_URL!;
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN!;
+const SHOPIFY_STORE = `https://${process.env.SHOPIFY_STORE_DOMAIN}`;
+const SHOPIFY_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN!;
 
 interface ShopifyVariant {
   id: number;
