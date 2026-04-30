@@ -93,7 +93,8 @@ const VENDOR_MAP: Record<string, string> = {
   'MINERVA':    'Minerva',
   'OVATION':    'Ovation',
   'STARFIRE':   'Starfire',
-  // NUPROZONE removed — CJ Dropshipping non-tire products handled separately
+  'KENDA':      'Kenda',       // confirmed in CT API screenshots
+  // Add further brands here after running ?action=debug-ct-pages
 };
 
 // Canada Tire exclusive brands — carry Road Hazard warranty + 30-day trial
@@ -187,30 +188,66 @@ interface CTTire {
 
 // ─── FETCH ALL CT TIRES ───────────────────────────────────────────────────────
 
-async function fetchAllCTTires(): Promise<CTTire[]> {
-  const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
-  const res = await fetch(fullUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': buildAuthHeader(),
-      'Content-Type':  'application/json',
-      'Accept':        'application/json',
-    },
-    body: JSON.stringify({
-      customerId:    CT.customerId,
-      customerToken: CT.customerToken,
-      filters: {
-        width:'', rimSize:'', aspectRatio:'', size:'',
-        partNumber:[], brand:'', searchKey:'',
-        isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1,
-      },
-    }),
-  });
+// CT_PAGE_SIZE: stop paginating when a page returns fewer items than this.
+// Adjust if CT uses a different page size — run ?action=debug-ct-pages to confirm.
+const CT_PAGE_SIZE = 50;
 
-  if (!res.ok) throw new Error(`CT API HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
-  const data: any = await res.json();
-  if (!data.success) throw new Error(`CT API error: ${JSON.stringify(data.error)}`);
-  return data.data as CTTire[];
+async function fetchAllCTTires(): Promise<CTTire[]> {
+  const fullUrl  = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+  const allTires: CTTire[] = [];
+  let   page     = 1;
+  const PAGE_CAP = 100; // safety: prevents infinite loop if CT never returns empty page
+
+  while (page <= PAGE_CAP) {
+    const res = await fetch(fullUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': buildAuthHeader(),
+        'Content-Type':  'application/json',
+        'Accept':        'application/json',
+      },
+      body: JSON.stringify({
+        customerId:    CT.customerId,
+        customerToken: CT.customerToken,
+        filters: {
+          width:'', rimSize:'', aspectRatio:'', size:'',
+          partNumber:[], brand:'', searchKey:'',
+          isWinter:'', isRunFlat:'', isTire:true, isWheel:false,
+          page, // increments each iteration
+        },
+      }),
+    });
+
+    if (!res.ok) throw new Error(`CT API HTTP ${res.status} on page ${page}: ${(await res.text()).slice(0,200)}`);
+    const data: any = await res.json();
+    if (!data.success) throw new Error(`CT API error on page ${page}: ${JSON.stringify(data.error)}`);
+
+    const tires = data.data as CTTire[];
+    if (!tires || tires.length === 0) {
+      console.log(`📄 CT page ${page}: 0 tires — pagination complete`);
+      break;
+    }
+
+    allTires.push(...tires);
+    console.log(`📄 CT page ${page}: ${tires.length} tires (running total: ${allTires.length})`);
+
+    // Stop if this page returned fewer items than the expected page size —
+    // CT's signal that there are no more pages
+    if (tires.length < CT_PAGE_SIZE) {
+      console.log(`📄 CT page ${page} returned ${tires.length} < ${CT_PAGE_SIZE} — last page reached`);
+      break;
+    }
+
+    page++;
+    await delay(300); // respect CT API rate limits between pages
+  }
+
+  if (page > PAGE_CAP) {
+    console.warn(`⚠️ CT pagination safety cap hit at ${PAGE_CAP} pages — ${allTires.length} tires fetched. Increase PAGE_CAP if catalog is larger.`);
+  }
+
+  console.log(`✅ CT fetch complete: ${allTires.length} tires across ${page} page(s)`);
+  return allTires;
 }
 
 function getTotalQty(p: CTTire): number {
@@ -306,8 +343,14 @@ async function getLocationId(): Promise<number> {
     return _locationId;
   }
   // Fallback: find first active location that is NOT a 3PL/fulfillment service
-  const data: any = await shopifyFetch<any>('/locations.json?limit=10');
+  // Raised from limit=10 to limit=50 (Shopify's max for this endpoint).
+  // If exactly 50 locations are returned, log a warning — set
+  // SHOPIFY_LOCATION_ID env var explicitly to avoid ambiguity.
+  const data: any = await shopifyFetch<any>('/locations.json?limit=50');
   const locations = data.locations || [];
+  if (locations.length === 50) {
+    console.warn('⚠️ getLocationId: received exactly 50 locations — store may have more. Set SHOPIFY_LOCATION_ID env var to be explicit.');
+  }
   const primary = locations.find((l: any) => !l.legacy && l.active) || locations[0];
   _locationId = primary?.id;
   if (!_locationId) throw new Error('No Shopify location found');
@@ -764,6 +807,131 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     switch (action) {
+      // ── NEW: debug-ct-pages ─────────────────────────────────────────────────
+      // Probes the CT API across pages and returns:
+      //   - total tires found across all pages
+      //   - tires per page (confirms CT_PAGE_SIZE constant is correct)
+      //   - brand breakdown sorted by count
+      //   - any brands NOT yet in VENDOR_MAP (so you can add them)
+      //
+      // Run this first after deploy to verify pagination and discover all brands.
+      // Usage: POST /api/shopifySync?action=debug-ct-pages
+      //   Optional: &maxPages=10  (default: up to 20 pages)
+      case 'debug-ct-pages': {
+        const maxPages = parseInt(req.query.maxPages as string || '20', 10);
+        const fullUrl  = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+
+        const brandCounts:  Record<string, number> = {};
+        const pageSizes:    number[]               = [];
+        let   totalTires  = 0;
+        let   page        = 1;
+        let   stoppedEarly = false;
+
+        while (page <= maxPages) {
+          const ctRes = await fetch(fullUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': buildAuthHeader(),
+              'Content-Type':  'application/json',
+              'Accept':        'application/json',
+            },
+            body: JSON.stringify({
+              customerId:    CT.customerId,
+              customerToken: CT.customerToken,
+              filters: {
+                width:'', rimSize:'', aspectRatio:'', size:'',
+                partNumber:[], brand:'', searchKey:'',
+                isWinter:'', isRunFlat:'', isTire:true, isWheel:false,
+                page,
+              },
+            }),
+          });
+
+          if (!ctRes.ok) {
+            return res.status(502).json({
+              success: false,
+              mode: 'debug-ct-pages',
+              error: `CT API HTTP ${ctRes.status} on page ${page}`,
+              pagesCompleted: page - 1,
+              totalTiresSoFar: totalTires,
+              brandCounts,
+              pageSizes,
+            });
+          }
+
+          const data: any = await ctRes.json();
+          if (!data.success) {
+            return res.status(502).json({
+              success: false,
+              mode: 'debug-ct-pages',
+              error: `CT API error on page ${page}: ${JSON.stringify(data.error)}`,
+              pagesCompleted: page - 1,
+              totalTiresSoFar: totalTires,
+              brandCounts,
+              pageSizes,
+            });
+          }
+
+          const tires = (data.data || []) as CTTire[];
+
+          if (tires.length === 0) {
+            console.log(`📄 debug-ct-pages: page ${page} empty — done`);
+            break;
+          }
+
+          pageSizes.push(tires.length);
+          totalTires += tires.length;
+
+          for (const t of tires) {
+            brandCounts[t.brand] = (brandCounts[t.brand] || 0) + 1;
+          }
+
+          console.log(`📄 debug-ct-pages: page ${page} → ${tires.length} tires`);
+
+          if (tires.length < CT_PAGE_SIZE) {
+            break; // partial page = last page
+          }
+
+          if (page === maxPages) {
+            stoppedEarly = true;
+          }
+
+          page++;
+          await delay(300);
+        }
+
+        // Flag brands missing from VENDOR_MAP
+        const unmappedBrands = Object.keys(brandCounts)
+          .filter(b => !VENDOR_MAP[b.toUpperCase()])
+          .sort();
+
+        // Sort brands by count descending
+        const sortedBrands = Object.entries(brandCounts)
+          .sort(([, a], [, b]) => b - a)
+          .reduce<Record<string, number>>((acc, [k, v]) => { acc[k] = v; return acc; }, {});
+
+        return res.status(200).json({
+          success: true,
+          mode: 'debug-ct-pages',
+          summary: {
+            totalPages:  pageSizes.length,
+            totalTires,
+            stoppedEarlyAtPage: stoppedEarly ? maxPages : null,
+            pageSizes,
+            note: stoppedEarly
+              ? `Stopped at maxPages=${maxPages}. Re-run with ?maxPages=50 if you expect more pages.`
+              : 'All pages fetched — this is the complete CT catalog.',
+          },
+          brands: {
+            total:         Object.keys(brandCounts).length,
+            sortedByCount: sortedBrands,
+            unmappedBrands: unmappedBrands.length > 0
+              ? { count: unmappedBrands.length, brands: unmappedBrands, action: 'Add these to VENDOR_MAP in shopifySync.ts' }
+              : { count: 0, message: '✅ All brands are already in VENDOR_MAP' },
+          },
+        });
+      }
+
       case 'status': {
         const existing = await fetchExistingProducts();
         return res.status(200).json({
@@ -1156,7 +1324,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const allById = new Map<number, { id: number; title: string; handle: string; imageCount: number }>();
         let nextUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&limit=250&fields=id,title,images`;
-        let safetyLimit = 20;
+        let safetyLimit = 100; // raised from 20 → 100 (covers up to 25,000 products)
         while (nextUrl && safetyLimit-- > 0) {
           const res: Response = await fetch(nextUrl, {
             headers: {
@@ -1242,10 +1410,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let found: Array<{id:number; title:string; tags:string}> = [];
         let nextUrl: string | null =
           `${SHOPIFY.baseUrl}/products.json?status=active&limit=250&fields=id,title,tags`;
-        while (nextUrl && found.length === 0) {
+        // Fixed: was `while (nextUrl && found.length === 0)` which stopped
+        // paginating as soon as anything was found on page 1.
+        // Now paginates all pages and breaks only once 3 matches are collected.
+        while (nextUrl) {
           const r: Response = await fetch(nextUrl, {
             headers: { 'Content-Type':'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
           });
+          if (r.status === 429) { await delay(2000); continue; }
+          if (!r.ok) break;
           const data: any = await r.json();
           for (const p of (data.products || [])) {
             if (p.title.toLowerCase().includes(search.toLowerCase())) {
@@ -1253,6 +1426,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               if (found.length >= 3) break;
             }
           }
+          if (found.length >= 3) break;
           const link: string | null = r.headers.get('link');
           const m = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
           nextUrl = m ? m[1] : null;
