@@ -1041,6 +1041,120 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const stats = await runSync('full', Number.MAX_SAFE_INTEGER, 0, updateOffset, updateChunkSz);
         return res.status(200).json({ success:true, mode:'update-only', ...stats });
       }
+
+      case 'list-skus': {
+        // Returns all SKUs currently in Shopify (tagged ct-sync).
+        // Used by runUpdateOnly.ts to build the SKU list before chunked updates.
+        const existingMap = await fetchExistingProducts();
+        const skus = [...existingMap.keys()];
+        return res.status(200).json({ success: true, mode: 'list-skus', total: skus.length, skus });
+      }
+
+      case 'update-chunk': {
+        // Updates price, inventory and cost for a specific list of SKUs.
+        // Fetches CT data only for those SKUs using the partNumber filter — no full catalog fetch.
+        // POST body: { skus: string[] }  (max 50 per call)
+        const body = req.body as any;
+        const skus: string[] = Array.isArray(body?.skus) ? body.skus : [];
+        if (skus.length === 0) return res.status(400).json({ error: 'POST body must include skus: string[]' });
+        if (skus.length > 50) return res.status(400).json({ error: 'Max 50 SKUs per chunk' });
+
+        const t0 = Date.now();
+
+        // Single CT API call — partNumber filter returns only the requested SKUs
+        const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+        const ctRes = await fetch(fullUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': buildAuthHeader(),
+            'Content-Type':  'application/json',
+            'Accept':        'application/json',
+          },
+          body: JSON.stringify({
+            customerId:    CT.customerId,
+            customerToken: CT.customerToken,
+            filters: {
+              width: '', rimSize: '', aspectRatio: '', size: '',
+              partNumber: skus, brand: '', searchKey: '',
+              isWinter: '', isRunFlat: '', isTire: true, isWheel: false, page: 1,
+            },
+          }),
+        });
+        if (!ctRes.ok) throw new Error(`CT API HTTP ${ctRes.status}: ${(await ctRes.text()).slice(0, 200)}`);
+        const ctData: any = await ctRes.json();
+        if (!ctData.success) throw new Error(`CT API error: ${JSON.stringify(ctData.error)}`);
+        const ctTires = (ctData.data || []) as CTTire[];
+
+        const existingMap = await fetchExistingProducts();
+
+        let ucUpdated = 0, ucErrors = 0;
+        const ucErrorList: string[] = [];
+        const notFoundInCT: string[] = [];
+
+        for (const sku of skus) {
+          const ct = ctTires.find(t => t.partNumber === sku);
+          if (!ct) { notFoundInCT.push(sku); continue; }
+          const ex = existingMap.get(sku);
+          if (!ex) continue;
+
+          const msrp    = parseFloat(ct.msrp) || 0;
+          const rawCost = parseFloat(ct.cost) || 0;
+          const costOk  = rawCost > 0 && rawCost < msrp * 0.90;
+          const netCost = costOk ? rawCost : msrp * NET_MULTIPLIER;
+          const shipping = getShippingBuffer(ct.performanceCategory, ct.size);
+          const newSellingPrice = calcSellingPrice(netCost, shipping, msrp);
+          const newPrice = newSellingPrice.toFixed(2);
+          const priceChanged = newPrice !== ex.price;
+
+          const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
+          const existingTagStr = ex.tags || '';
+          let updatedTags = existingTagStr;
+          if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
+          if (upSR && !existingTagStr.includes('speedrating:')) updatedTags = [updatedTags, `speedrating:${upSR}`].filter(Boolean).join(', ');
+          const tagsChanged = updatedTags !== existingTagStr;
+
+          try {
+            await shopifyFetch(`/variants/${ex.variantId}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                variant: {
+                  id: ex.variantId,
+                  ...(priceChanged ? {
+                    price:            newPrice,
+                    compare_at_price: newSellingPrice > msrp + 0.01 ? null : msrp.toFixed(2),
+                  } : {}),
+                  cost:                 netCost.toFixed(2),
+                  inventory_management: 'shopify',
+                  inventory_policy:     'deny',
+                },
+              }),
+            });
+            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
+            }).catch(() => {});
+            await setInventory(ex.inventoryItemId, getTotalQty(ct));
+            if (!ex.hasImages) await attachProductImage(ex.productId, ct);
+            ucUpdated++;
+          } catch (e: any) {
+            ucErrors++;
+            ucErrorList.push(`UPDATE ${sku}: ${e.message}`);
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'update-chunk',
+          skusRequested: skus.length,
+          ctFound: ctTires.length,
+          ...(notFoundInCT.length > 0 ? { notFoundInCT } : {}),
+          updated: ucUpdated,
+          errors: ucErrors,
+          ...(ucErrorList.length > 0 ? { errorList: ucErrorList } : {}),
+          duration: `${((Date.now() - t0) / 1000).toFixed(1)}s`,
+        });
+      }
+
       case 'missing-images': {
         const checkAll = req.query.all === 'true';
         let sinceId = 0;
