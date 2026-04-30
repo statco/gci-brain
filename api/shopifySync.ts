@@ -1022,12 +1022,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'full-import': {
-        const offset         = parseInt((req.body as any)?.offset    || req.query.offset    as string || '0', 10);
-        const chunkSize      = parseInt((req.body as any)?.chunkSize || req.query.chunkSize as string || '50', 10);
-        const updateOffset   = parseInt(req.query.updateOffset as string || '0', 10);
-        const updateChunkSz  = parseInt(req.query.updateChunk  as string || '200', 10);
+        const offset        = parseInt((req.body as any)?.offset    || req.query.offset    as string || '0', 10);
+        const chunkSize     = parseInt((req.body as any)?.chunkSize || req.query.chunkSize as string || '10', 10);
+        const updateOffset  = parseInt(req.query.updateOffset as string || '0', 10);
+        // When offset=0 (first create pass) skip updates entirely — keeps each call focused.
+        // Pass updateChunk=N explicitly to run updates alongside creates on later offsets.
+        const updateChunkSz = offset === 0
+          ? 0
+          : parseInt(req.query.updateChunk as string || '200', 10);
         const stats = await runSync('full', offset, chunkSize, updateOffset, updateChunkSz);
         return res.status(200).json({ success:true, mode:'full-import', ...stats });
+      }
+      case 'update-only': {
+        // Runs price + inventory updates only — skips all creates.
+        // Call repeatedly with increasing updateOffset until updateDone=true.
+        const updateOffset  = parseInt(req.query.updateOffset as string || '0', 10);
+        const updateChunkSz = parseInt(req.query.updateChunk  as string || '200', 10);
+        // Pass offset=Infinity so the create pool slice is always empty
+        const stats = await runSync('full', Number.MAX_SAFE_INTEGER, 0, updateOffset, updateChunkSz);
+        return res.status(200).json({ success:true, mode:'update-only', ...stats });
       }
       case 'missing-images': {
         const checkAll = req.query.all === 'true';
