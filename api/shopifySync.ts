@@ -15,7 +15,14 @@ import { getTireImageUrl } from './addTireImages.js';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { classifyTire } = require('../lib/classifyTire.cjs') as typeof import('../lib/classifyTire.js');
 
-export const config = { maxDuration: 300 };
+export const config = {
+  maxDuration: 300,
+  api: {
+    bodyParser: {
+      sizeLimit: '1mb',
+    },
+  },
+};
 
 // ─── CANADA TIRE CONFIG ───────────────────────────────────────────────────────
 
