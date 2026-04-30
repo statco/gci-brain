@@ -93,7 +93,12 @@ const VENDOR_MAP: Record<string, string> = {
   'MINERVA':    'Minerva',
   'OVATION':    'Ovation',
   'STARFIRE':   'Starfire',
-  'KENDA':      'Kenda',       // confirmed in CT API screenshots
+  'KENDA':       'Kenda',
+  'TRANSEAGLE':  'Transeagle',
+  'PIRELLI':     'Pirelli',
+  'GT RADIAL':   'GT Radial',
+  'FALKEN':      'Falken',
+  'KELLY':       'Kelly',
   // Add further brands here after running ?action=debug-ct-pages
 };
 
