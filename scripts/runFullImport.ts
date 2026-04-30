@@ -89,10 +89,17 @@ async function main() {
     }
 
     const { created = 0, skipped = 0, skippedNoStock = 0, skippedDuplicate = 0,
-            errors = 0, errorList = [], duration = '?', done } = data;
+            errors = 0, errorList = [], duration = '?', done,
+            createPoolSize } = data;
 
     totalCreated += created;
     totalErrors  += errors;
+
+    // On first call, log createPoolSize so we know how many total calls to expect
+    if (callCount === 1 && createPoolSize != null) {
+      const totalCalls = Math.ceil(createPoolSize / CHUNK_SIZE);
+      console.log(`   📦 createPoolSize=${createPoolSize} — expect ~${totalCalls} total call(s)`);
+    }
 
     console.log(`   created=${created}  skipped=${skipped}  skippedNoStock=${skippedNoStock}  skippedDuplicate=${skippedDuplicate}  errors=${errors}  duration=${duration}`);
     if (errorList.length > 0) {
