@@ -647,7 +647,7 @@ interface SyncStats {
   skippedDuplicate:number;             // count of products skipped due to duplicate title
   skippedDuplicateTitles:string[];     // list of normalized titles that were skipped
   errorList:string[]; duration:string; timestamp:string;
-  totalCT?:number; inStock?:number;     // total vs in-stock counts
+  totalCT?:number; inStock?:number; createPoolSize?:number;  // total vs in-stock vs new-to-create counts
   offset?:number; chunkSize?:number; done?:boolean;
 }
 
@@ -681,6 +681,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
 
   // For CREATE: only use in-stock tires, sliced by chunk
   const createPool = inStockTires.filter(p => !existingMap.has(p.partNumber));
+  stats.createPoolSize = createPool.length;
   const createChunk = createPool.slice(offset, offset + chunkSize);
 
   // For UPDATE: chunk existing products (price + inventory + cost), including zero-stock
@@ -1022,16 +1023,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       case 'full-import': {
-        const offset        = parseInt((req.body as any)?.offset    || req.query.offset    as string || '0', 10);
-        const chunkSize     = parseInt((req.body as any)?.chunkSize || req.query.chunkSize as string || '10', 10);
-        const updateOffset  = parseInt(req.query.updateOffset as string || '0', 10);
-        // When offset=0 (first create pass) skip updates entirely — keeps each call focused.
-        // Pass updateChunk=N explicitly to run updates alongside creates on later offsets.
-        const updateChunkSz = offset === 0
-          ? 0
-          : parseInt(req.query.updateChunk as string || '200', 10);
-        const stats = await runSync('full', offset, chunkSize, updateOffset, updateChunkSz);
-        return res.status(200).json({ success:true, mode:'full-import', ...stats });
+        const offset    = parseInt((req.body as any)?.offset    || req.query.offset    as string || '0', 10);
+        const chunkSize = parseInt((req.body as any)?.chunkSize || req.query.chunkSize as string || '10', 10);
+        // Always skip updates — full-import only creates new products.
+        // Run update-only separately to update prices + inventory.
+        const stats = await runSync('full', offset, chunkSize, 0, 0);
+        // done = create pool exhausted (independent of updateDone)
+        const done = offset + chunkSize >= (stats.createPoolSize ?? 0);
+        return res.status(200).json({ success:true, mode:'full-import', ...stats, done });
       }
       case 'update-only': {
         // Runs price + inventory updates only — skips all creates.
