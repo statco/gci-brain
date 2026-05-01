@@ -1973,6 +1973,88 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, mode: 'list-products', products: lpProducts, nextSinceId });
       }
 
+      case 'list-no-image-products': {
+        // Paginate ct-sync products that have no images.
+        // Used by scripts/backfillImages.ts.
+        // Query params:
+        //   sinceId — Shopify product id to start after (default: 0)
+        // Response:
+        //   products:    Array<{ id, title, vendor }>  — only no-image products from this page
+        //   nextSinceId: number | null                 — null when this is the last page
+        //   pageTotal:   number                        — total products on this raw page (for progress)
+        const nipSinceId = parseInt(req.query.sinceId as string || '0', 10);
+        const nipQ = `tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,vendor,images${nipSinceId ? `&since_id=${nipSinceId}` : ''}`;
+        const nipData: any = await shopifyFetch<any>(`/products.json?${nipQ}`);
+        const nipAll = nipData.products || [];
+        const nipProducts = nipAll
+          .filter((p: any) => !p.images || p.images.length === 0)
+          .map((p: any) => ({ id: p.id, title: p.title, vendor: p.vendor || '' }));
+        const nipNextSinceId = nipAll.length === 250 ? nipAll[nipAll.length - 1].id : null;
+        return res.status(200).json({
+          success: true, mode: 'list-no-image-products',
+          products: nipProducts, nextSinceId: nipNextSinceId, pageTotal: nipAll.length,
+        });
+      }
+
+      case 'attach-image-by-id': {
+        // Attach an image URL to a specific product by ID.
+        // Used by scripts/backfillImages.ts.
+        // Query params:
+        //   productId — Shopify numeric product id (required)
+        //   imageUrl  — fully-qualified image URL (required)
+        //   alt       — image alt text (optional)
+        const aibProductId = parseInt(req.query.productId as string || '0', 10);
+        const aibImageUrl  = (req.query.imageUrl as string || '').trim();
+        const aibAlt       = (req.query.alt as string || '').trim();
+        if (!aibProductId || !aibImageUrl) {
+          return res.status(400).json({ error: 'Required params: productId and imageUrl' });
+        }
+        await shopifyFetch(`/products/${aibProductId}/images.json`, {
+          method: 'POST',
+          body: JSON.stringify({ image: { src: aibImageUrl, ...(aibAlt ? { alt: aibAlt } : {}) } }),
+        });
+        return res.status(200).json({ success: true, mode: 'attach-image-by-id', productId: aibProductId, imageUrl: aibImageUrl });
+      }
+
+      case 'list-products-seo': {
+        // Paginate ct-sync products with fields needed for SEO description generation.
+        // Used by scripts/generateSeoDescriptions.ts.
+        // Query params:
+        //   sinceId — Shopify product id to start after (default: 0)
+        // Response:
+        //   products:    Array<{ id, title, vendor, tags, body_html }>
+        //   nextSinceId: number | null
+        const lpsSinceId = parseInt(req.query.sinceId as string || '0', 10);
+        const lpsQ = `tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,vendor,tags,body_html${lpsSinceId ? `&since_id=${lpsSinceId}` : ''}`;
+        const lpsData: any = await shopifyFetch<any>(`/products.json?${lpsQ}`);
+        const lpsProducts = (lpsData.products || []).map((p: any) => ({
+          id:        p.id,
+          title:     p.title,
+          vendor:    p.vendor    || '',
+          tags:      p.tags      || '',
+          body_html: p.body_html || '',
+        }));
+        const lpsNextSinceId = lpsProducts.length === 250 ? lpsProducts[lpsProducts.length - 1].id : null;
+        return res.status(200).json({ success: true, mode: 'list-products-seo', products: lpsProducts, nextSinceId: lpsNextSinceId });
+      }
+
+      case 'update-description': {
+        // Replace body_html on a single product by ID.
+        // Used by scripts/generateSeoDescriptions.ts.
+        // Body (JSON POST): { productId: number, body_html: string }
+        const udBody      = req.body as { productId?: number; body_html?: string };
+        const udProductId = Number(udBody?.productId);
+        const udBodyHtml  = (udBody?.body_html || '').trim();
+        if (!udProductId || !udBodyHtml) {
+          return res.status(400).json({ error: 'Required body fields: productId (number) and body_html (string)' });
+        }
+        await shopifyFetch(`/products/${udProductId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ product: { id: udProductId, body_html: udBodyHtml } }),
+        });
+        return res.status(200).json({ success: true, mode: 'update-description', productId: udProductId });
+      }
+
       case 'list-all-products': {
         // Lightweight paginator — returns one page of 250 active products with NO tag filter.
         // Used by scripts/archiveTireSkus.ts to paginate all Shopify products locally.
