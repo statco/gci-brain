@@ -99,7 +99,7 @@ Size: ${size}
 Return ONLY valid HTML with no markdown, using this exact structure:
 <div class='gci-product-description'>
 <p>[2 sentence English description targeting keywords: ${effectiveBrand} ${model} tire Canada, buy ${effectiveBrand} tires online, free shipping tires Canada]</p>
-<p class='fr'>[Same 2 sentences in French québécois targeting: pneus ${effectiveBrand} Canada, acheter pneus en ligne, livraison gratuite pneus]</p>
+<p class='fr'>[Same 2 sentences in French québécois targeting: pneus ${effectiveBrand} ${model} au Canada, acheter pneus en ligne, livraison gratuite pneus. IMPORTANT: keep brand and model name together — write "pneus ${effectiveBrand} ${model} au Canada" NOT "pneus ${effectiveBrand} Canada ${model}"]</p>
 <ul>
 <li>Season: ${season}</li>
 <li>Size: ${size}</li>
