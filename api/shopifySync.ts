@@ -1816,6 +1816,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, mode: 'list-products', products: lpProducts, nextSinceId });
       }
 
+      case 'list-all-products': {
+        // Lightweight paginator — returns one page of 250 active products with NO tag filter.
+        // Used by scripts/archiveTireSkus.ts to paginate all Shopify products locally.
+        //
+        // Query params:
+        //   sinceId  — Shopify product id to start after (default: 0)
+        //
+        // Response:
+        //   products: Array<{ id, title, handle, sku }>
+        //   nextSinceId: number | null  — null when this is the last page
+        const lapSinceId = parseInt(req.query.sinceId as string || '0', 10);
+        const lapQ = `status=active&limit=250&fields=id,title,handle,variants${lapSinceId ? `&since_id=${lapSinceId}` : ''}`;
+        const lapData: any = await shopifyFetch<any>(`/products.json?${lapQ}`);
+        const lapProducts = (lapData.products || []).map((p: any) => ({
+          id:     p.id,
+          title:  p.title,
+          handle: p.handle || '',
+          sku:    p.variants?.[0]?.sku || '',
+        }));
+        const lapNextSinceId = lapProducts.length === 250 ? lapProducts[lapProducts.length - 1].id : null;
+        return res.status(200).json({ success: true, mode: 'list-all-products', products: lapProducts, nextSinceId: lapNextSinceId });
+      }
+
+      case 'archive-single': {
+        // Archives one product by id and creates a /products/<handle> → /collections/all redirect.
+        // Used by scripts/archiveTireSkus.ts to archive TIRE- products one at a time with
+        // a local delay between calls, avoiding serverless timeouts.
+        //
+        // Query params:
+        //   id      — Shopify product id (required)
+        //   handle  — product handle (optional; skips redirect creation if omitted)
+        const asId     = parseInt(req.query.id as string || '0', 10);
+        const asHandle = (req.query.handle as string || '').trim();
+        if (!asId) return res.status(400).json({ error: '?id= is required' });
+
+        let asRedirected = false;
+        if (asHandle) {
+          await shopifyFetch('/redirects.json', {
+            method: 'POST',
+            body: JSON.stringify({ redirect: { path: `/products/${asHandle}`, target: '/collections/all' } }),
+          }).catch(() => {}); // silently ignore duplicate-redirect errors
+          asRedirected = true;
+        }
+
+        await shopifyFetch(`/products/${asId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ product: { id: asId, status: 'archived' } }),
+        });
+
+        return res.status(200).json({ success: true, mode: 'archive-single', productId: asId, redirected: asRedirected });
+      }
+
       case 'audit-tire-skus': {
         // Fetches all ct-sync products whose SKU starts with "TIRE-" and classifies them:
         //   - "has_real_match": another ct-sync product exists with the same title but a real CT part number SKU
