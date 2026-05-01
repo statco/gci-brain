@@ -28,9 +28,10 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
   }
 
   const query = `
-    query getCollection($handle: String!) {
+    query getCollection($handle: String!, $after: String) {
       collection(handle: $handle) {
-        products(first: 50) {
+        products(first: 250, after: $after) {
+          pageInfo { hasNextPage endCursor }
           edges {
             node {
               id
@@ -67,8 +68,8 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
                 {namespace: "custom", key: "tire_model"}
                 {namespace: "custom", key: "tire_rating"}
                 {namespace: "custom", key: "tire_reviews"}
-                {namespace: "custom", key: "speed_rating"}
-                {namespace: "custom", key: "load_index"}
+                {namespace: "canada_tire", key: "speed_rating"}
+                {namespace: "canada_tire", key: "load_index"}
               ]) {
                 key
                 value
@@ -81,28 +82,42 @@ export async function fetchProductsByCollection(collectionHandle: string = 'ai-m
   `;
 
   try {
-    const response = await fetch(STOREFRONT_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { handle: collectionHandle }
-      }),
-    });
+    let allEdges: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+    let page = 0;
 
-    const result = await response.json();
-    
-    if (result.errors) {
-      console.error('❌ GraphQL errors:', result.errors);
-      return [];
+    while (hasNextPage) {
+      page++;
+      const response = await fetch(STOREFRONT_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
+        },
+        body: JSON.stringify({
+          query,
+          variables: { handle: collectionHandle, after: cursor }
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.errors) {
+        console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
+        break;
+      }
+
+      const pageData = result.data?.collection?.products;
+      const edges = pageData?.edges || [];
+      allEdges = allEdges.concat(edges);
+
+      hasNextPage = pageData?.pageInfo?.hasNextPage ?? false;
+      cursor = pageData?.pageInfo?.endCursor ?? null;
+      console.log(`🔍 [fetchProductsByCollection] page ${page}: ${edges.length} products (hasNextPage=${hasNextPage})`);
     }
 
-    const products = result.data?.collection?.products?.edges || [];
-    
-    const transformedProducts = products.map((edge: any) => {
+    const transformedProducts = allEdges.map((edge: any) => {
       const product = edge.node;
       const variant = product.variants.edges[0]?.node;
       const shopifyImage = product.images.edges[0]?.node.url || '';
@@ -256,8 +271,9 @@ export async function fetchProductsByType(productType: string = 'Tires') {
   console.log(`🔍 Fetching products with type: ${productType}`);
 
   const query = `
-    query getProducts($query: String!) {
-      products(first: 50, query: $query) {
+    query getProducts($query: String!, $after: String) {
+      products(first: 250, query: $query, after: $after) {
+        pageInfo { hasNextPage endCursor }
         edges {
           node {
             id
@@ -289,22 +305,42 @@ export async function fetchProductsByType(productType: string = 'Tires') {
   `;
 
   try {
-    const response = await fetch(STOREFRONT_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { query: `product_type:${productType}` }
-      }),
-    });
+    let allEdges: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+    let page = 0;
 
-    const result = await response.json();
-    const products = result.data?.products?.edges || [];
-    
-    return transformShopifyProducts(products);
+    while (hasNextPage) {
+      page++;
+      const response = await fetch(STOREFRONT_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
+        },
+        body: JSON.stringify({
+          query,
+          variables: { query: `product_type:${productType}`, after: cursor }
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.errors) {
+        console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
+        break;
+      }
+
+      const pageData = result.data?.products;
+      const edges = pageData?.edges || [];
+      allEdges = allEdges.concat(edges);
+
+      hasNextPage = pageData?.pageInfo?.hasNextPage ?? false;
+      cursor = pageData?.pageInfo?.endCursor ?? null;
+      console.log(`🔍 [fetchProductsByType] page ${page}: ${edges.length} products (hasNextPage=${hasNextPage})`);
+    }
+
+    return transformShopifyProducts(allEdges);
 
   } catch (error) {
     console.error('❌ Error fetching products by type:', error);
