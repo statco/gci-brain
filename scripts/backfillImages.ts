@@ -2,16 +2,20 @@
 /**
  * scripts/backfillImages.ts
  *
- * Finds all ct-sync Shopify products with no images and probes known
- * tire CDN URL patterns to find and attach matching images.
+ * Finds all ct-sync Shopify products with no images and uses the Claude API
+ * with web_search to locate and attach matching product images.
  *
  * Usage:
- *   npx tsx scripts/backfillImages.ts             # dry run (default)
- *   npx tsx scripts/backfillImages.ts --confirm   # attach images
+ *   npx tsx scripts/backfillImages.ts              # dry run (default)
+ *   npx tsx scripts/backfillImages.ts --confirm    # attach images
+ *   npx tsx scripts/backfillImages.ts --limit=10   # test: first N products
  *
  * Env (read from .env in project root):
- *   VERCEL_URL    — base URL, e.g. https://gci-brain.vercel.app
- *   CRON_SECRET   — value sent as Bearer token
+ *   VERCEL_URL         — base URL, e.g. https://gci-brain.vercel.app
+ *   CRON_SECRET        — value sent as Bearer token
+ *   ANTHROPIC_API_KEY  — Claude API key
+ *
+ * Est. cost: ~$0.002 per product × 1128 products ≈ $2.25 total
  */
 
 import { resolve } from 'node:path';
@@ -23,51 +27,78 @@ try {
   // env vars may already be set in the shell
 }
 
-const VERCEL_URL  = process.env.VERCEL_URL?.replace(/\/$/, '');
-const CRON_SECRET = process.env.CRON_SECRET;
+const VERCEL_URL        = process.env.VERCEL_URL?.replace(/\/$/, '');
+const CRON_SECRET       = process.env.CRON_SECRET;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-if (!VERCEL_URL)  { console.error('❌ VERCEL_URL is not set'); process.exit(1); }
-if (!CRON_SECRET) { console.error('❌ CRON_SECRET is not set'); process.exit(1); }
+if (!VERCEL_URL)        { console.error('❌ VERCEL_URL is not set');        process.exit(1); }
+if (!CRON_SECRET)       { console.error('❌ CRON_SECRET is not set');       process.exit(1); }
+if (!ANTHROPIC_API_KEY) { console.error('❌ ANTHROPIC_API_KEY is not set'); process.exit(1); }
 
 const DRY_RUN        = !process.argv.includes('--confirm');
-const BATCH_SIZE     = 10;
-const BATCH_DELAY_MS = 500;
+const BATCH_SIZE     = 3;   // stay within Anthropic rate limits
+const BATCH_DELAY_MS = 2000;
+
+function parseArg(name: string): number | null {
+  const arg = process.argv.find(a => a.startsWith(`--${name}=`));
+  return arg ? parseInt(arg.split('=')[1], 10) : null;
+}
+
+const LIMIT = parseArg('limit') ?? Infinity;
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
-function authHeaders() { return { 'Authorization': `Bearer ${CRON_SECRET}` } as Record<string, string>; }
-
-// ── CDN URL generators ────────────────────────────────────────────────────────
-
-function toSlug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+function authHeaders(): Record<string, string> {
+  return { 'Authorization': `Bearer ${CRON_SECRET}` };
 }
 
-function extractBrandModel(title: string): { brand: string; model: string } {
-  const tokens = title.trim().split(/\s+/);
-  const brand = tokens[0] || '';
-  const sizeIdx = tokens.findIndex(t => /\d{3}\/\d{2}/.test(t));
-  const modelTokens = sizeIdx > 1 ? tokens.slice(1, sizeIdx) : tokens.slice(1, 2);
-  return { brand, model: modelTokens.join(' ') };
+// ── Claude web_search image finder ───────────────────────────────────────────
+
+const IMAGE_URL_RE = /https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>]*)?/i;
+
+async function findImageViaAI(title: string): Promise<string | null> {
+  const prompt =
+    `Find a direct product image URL for this tire: ${title}\n` +
+    `Search manufacturer websites and tire distributors.\n` +
+    `Rules: URL must end in .jpg .jpeg .png or .webp, minimum 400x400px, ` +
+    `publicly accessible, no authentication required.\n` +
+    `Return ONLY the raw URL, nothing else. No explanation.`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type':      'application/json',
+      'x-api-key':         ANTHROPIC_API_KEY!,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta':    'web-search-2025-03-05',
+    },
+    body: JSON.stringify({
+      model:      'claude-3-5-haiku-20241022',
+      max_tokens: 512,
+      tools:      [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages:   [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Anthropic API HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const data: any = await res.json();
+
+  // The final answer lives in the last text content block after tool use
+  const textBlock = [...(data.content || [])].reverse().find((b: any) => b.type === 'text');
+  const text = textBlock?.text?.trim() || '';
+
+  const match = text.match(IMAGE_URL_RE);
+  return match ? match[0] : null;
 }
 
-function cdnCandidates(title: string): string[] {
-  const { brand, model } = extractBrandModel(title);
-  const brandSlug  = toSlug(brand);
-  const modelSlug  = toSlug(model);
-
-  return [
-    // SimpleTire
-    `https://images.simpletire.com/image/upload/w_600/v1/lineitems/${brandSlug}-${modelSlug}.jpg`,
-    // TireRack
-    `https://www.tirerack.com/content/tirerack/desktop/en_US/tires/${encodeURIComponent(brand.toUpperCase())}/${encodeURIComponent(model.toUpperCase())}/hero.jpg`,
-    // DiscountTire
-    `https://images.discounttire.com/imgserver/tire_images/${encodeURIComponent(brandSlug)}/${encodeURIComponent(modelSlug)}.jpg`,
-  ];
-}
+// ── URL validation ────────────────────────────────────────────────────────────
 
 async function probeUrl(url: string): Promise<boolean> {
   try {
-    const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+    const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
     if (!res.ok) return false;
     const ct = res.headers.get('content-type') || '';
     return ct.startsWith('image/');
@@ -76,16 +107,12 @@ async function probeUrl(url: string): Promise<boolean> {
   }
 }
 
-async function findImage(title: string): Promise<string | null> {
-  for (const url of cdnCandidates(title)) {
-    if (await probeUrl(url)) return url;
-  }
-  return null;
-}
+// ── Shopify API helpers ───────────────────────────────────────────────────────
 
-// ── API helpers ───────────────────────────────────────────────────────────────
-
-async function fetchPage(sinceId: number): Promise<{ products: Array<{ id: number; title: string; vendor: string }>; nextSinceId: number | null }> {
+async function fetchPage(sinceId: number): Promise<{
+  products: Array<{ id: number; title: string; vendor: string }>;
+  nextSinceId: number | null;
+}> {
   const url = `${VERCEL_URL}/api/shopifySync?action=list-no-image-products&sinceId=${sinceId}`;
   const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
@@ -113,60 +140,79 @@ async function attachImage(productId: number, imageUrl: string, alt: string): Pr
 interface Result {
   id: number;
   title: string;
-  status: 'attached' | 'not_found' | 'error';
+  status: 'attached' | 'not_found' | 'invalid_url' | 'error';
   imageUrl?: string;
   error?: string;
 }
 
 async function main() {
   console.log(`\n🖼️  backfillImages — mode: ${DRY_RUN ? 'DRY RUN (pass --confirm to attach)' : 'LIVE ATTACH'}`);
-  console.log(`   Target: ${VERCEL_URL}\n`);
+  if (LIMIT !== Infinity) console.log(`   Limit: ${LIMIT} products`);
+  console.log(`   Target: ${VERCEL_URL}`);
+  console.log(`   Model:  claude-3-5-haiku-20241022 + web_search\n`);
 
   // 1. Paginate all no-image products
   const noImageProducts: Array<{ id: number; title: string; vendor: string }> = [];
   let sinceId = 0;
   let page    = 0;
 
-  while (true) {
+  outer: while (true) {
     page++;
     const { products, nextSinceId } = await fetchPage(sinceId);
-    noImageProducts.push(...products);
+    for (const p of products) {
+      noImageProducts.push(p);
+      if (noImageProducts.length >= LIMIT) break outer;
+    }
     console.log(`   📄 Page ${page}: ${products.length} no-image products (running total: ${noImageProducts.length})`);
     if (!nextSinceId) break;
     sinceId = nextSinceId;
     await sleep(300);
   }
 
-  console.log(`\n   🔍 ${noImageProducts.length} products have no image — probing CDN patterns…\n`);
+  const subset = noImageProducts.slice(0, LIMIT === Infinity ? noImageProducts.length : LIMIT);
 
-  // 2. Process in batches
+  console.log(`\n   🔍 ${subset.length} products — searching via Claude web_search…`);
+  console.log(`   Est. cost: ~$${(subset.length * 0.002).toFixed(2)} (${subset.length} × $0.002)\n`);
+
+  // 2. Process in batches of 3
   const results: Result[] = [];
-  let found = 0, notFound = 0, attached = 0, errors = 0;
+  let found = 0, notFound = 0, invalidUrl = 0, attached = 0, errors = 0;
 
-  for (let i = 0; i < noImageProducts.length; i += BATCH_SIZE) {
-    const batch = noImageProducts.slice(i, i + BATCH_SIZE);
-    console.log(`── Batch ${Math.floor(i / BATCH_SIZE) + 1} (${i + 1}–${Math.min(i + BATCH_SIZE, noImageProducts.length)} of ${noImageProducts.length}) ──`);
+  for (let i = 0; i < subset.length; i += BATCH_SIZE) {
+    const batch = subset.slice(i, i + BATCH_SIZE);
+    console.log(`── Batch ${Math.floor(i / BATCH_SIZE) + 1} (${i + 1}–${Math.min(i + BATCH_SIZE, subset.length)} of ${subset.length}) ──`);
 
     await Promise.all(batch.map(async (product) => {
       try {
-        const imageUrl = await findImage(product.title);
+        const rawUrl = await findImageViaAI(product.title);
 
-        if (!imageUrl) {
+        if (!rawUrl) {
           notFound++;
           results.push({ id: product.id, title: product.title, status: 'not_found' });
-          console.log(`   ❌ No URL found : ${product.title}`);
+          console.log(`   ❌ No URL in response : ${product.title}`);
+          return;
+        }
+
+        const valid = await probeUrl(rawUrl);
+        if (!valid) {
+          invalidUrl++;
+          results.push({ id: product.id, title: product.title, status: 'invalid_url', imageUrl: rawUrl });
+          console.log(`   ⚠️  URL failed validation : ${product.title}`);
+          console.log(`         → ${rawUrl}`);
           return;
         }
 
         found++;
         console.log(`   ✅ Found : ${product.title}`);
-        console.log(`         → ${imageUrl}`);
+        console.log(`         → ${rawUrl}`);
 
         if (!DRY_RUN) {
-          await attachImage(product.id, imageUrl, product.title);
+          await attachImage(product.id, rawUrl, product.title);
           attached++;
+          results.push({ id: product.id, title: product.title, status: 'attached', imageUrl: rawUrl });
+        } else {
+          results.push({ id: product.id, title: product.title, status: 'attached', imageUrl: rawUrl });
         }
-        results.push({ id: product.id, title: product.title, status: 'attached', imageUrl });
       } catch (e: any) {
         errors++;
         results.push({ id: product.id, title: product.title, status: 'error', error: e.message });
@@ -174,24 +220,29 @@ async function main() {
       }
     }));
 
-    if (i + BATCH_SIZE < noImageProducts.length) await sleep(BATCH_DELAY_MS);
+    if (i + BATCH_SIZE < subset.length) {
+      console.log(`   ⏳ Waiting ${BATCH_DELAY_MS / 1000}s…\n`);
+      await sleep(BATCH_DELAY_MS);
+    }
   }
 
   // 3. Save results
   const resultsPath = resolve(process.cwd(), 'scripts/image-backfill-results.json');
   writeFileSync(resultsPath, JSON.stringify({
     timestamp: new Date().toISOString(),
-    dryRun: DRY_RUN,
-    summary: { total: noImageProducts.length, found, notFound, attached, errors },
+    dryRun:    DRY_RUN,
+    model:     'claude-3-5-haiku-20241022',
+    summary:   { total: subset.length, found, notFound, invalidUrl, attached, errors },
     results,
   }, null, 2));
 
   // 4. Summary
   console.log(`\n${'─'.repeat(56)}`);
   console.log(`✅ Complete`);
-  console.log(`   Total no-image : ${noImageProducts.length}`);
+  console.log(`   Total no-image : ${subset.length}`);
   console.log(`   URL found      : ${found}`);
   console.log(`   URL not found  : ${notFound}`);
+  console.log(`   Invalid URL    : ${invalidUrl}`);
   console.log(`   Attached       : ${DRY_RUN ? '0 (dry run)' : attached}`);
   console.log(`   Errors         : ${errors}`);
   console.log(`   Results saved  : scripts/image-backfill-results.json`);
