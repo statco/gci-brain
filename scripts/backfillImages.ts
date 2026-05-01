@@ -72,7 +72,7 @@ async function findImageViaAI(title: string): Promise<string | null> {
       'anthropic-beta':    'web-search-2025-03-05',
     },
     body: JSON.stringify({
-      model:      'claude-3-5-haiku-20241022',
+      model:      'claude-haiku-4-5-20251001',
       max_tokens: 512,
       tools:      [{ type: 'web_search_20250305', name: 'web_search' }],
       messages:   [{ role: 'user', content: prompt }],
@@ -149,7 +149,7 @@ async function main() {
   console.log(`\n🖼️  backfillImages — mode: ${DRY_RUN ? 'DRY RUN (pass --confirm to attach)' : 'LIVE ATTACH'}`);
   if (LIMIT !== Infinity) console.log(`   Limit: ${LIMIT} products`);
   console.log(`   Target: ${VERCEL_URL}`);
-  console.log(`   Model:  claude-3-5-haiku-20241022 + web_search\n`);
+  console.log(`   Model:  claude-haiku-4-5-20251001 + web_search\n`);
 
   // 1. Paginate all no-image products
   const noImageProducts: Array<{ id: number; title: string; vendor: string }> = [];
@@ -231,7 +231,7 @@ async function main() {
   writeFileSync(resultsPath, JSON.stringify({
     timestamp: new Date().toISOString(),
     dryRun:    DRY_RUN,
-    model:     'claude-3-5-haiku-20241022',
+    model:     'claude-haiku-4-5-20251001',
     summary:   { total: subset.length, found, notFound, invalidUrl, attached, errors },
     results,
   }, null, 2));
