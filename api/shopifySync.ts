@@ -560,6 +560,7 @@ async function buildPayload(ct: CTTire) {
 
   const tags = [
     SYNC_TAG,
+    'ai-match',
     `brand-${ct.brand.toLowerCase().replace(/\s+/g,'-')}`,
     season.toLowerCase(),
     `tire-type-${tireType}`,
@@ -1875,6 +1876,76 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           repaired, errors,
           nextOffset: done ? null : nextOffset,
           done,
+        });
+      }
+
+      case 'backfill-ai-match': {
+        // Finds all ct-sync products missing the 'ai-match' tag and adds it.
+        // Safe to run repeatedly — skips products that already have ai-match.
+        // GET /api/shopifySync?action=backfill-ai-match
+        // Optional: &dryRun=true  (default false)
+        // Optional: &offset=0 &limit=100  (for pagination if store is large)
+        const bfDryRun  = req.query.dryRun !== 'false' && req.query.dryRun === 'true';
+        const bfOffset  = parseInt(req.query.offset as string || '0',   10);
+        const bfLimit   = parseInt(req.query.limit  as string || '250', 10);
+
+        const missing: Array<{ id: number; title: string; tags: string }> = [];
+        let nextUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,tags`;
+
+        while (nextUrl) {
+          const r: Response = await fetch(nextUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          if (r.status === 429) { await delay(2000); continue; }
+          if (!r.ok) throw new Error(`Shopify ${r.status}`);
+          const d: any = await r.json();
+          for (const p of (d.products || [])) {
+            const existingTags: string[] = (p.tags || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+            if (!existingTags.includes('ai-match')) {
+              missing.push({ id: p.id, title: p.title, tags: p.tags });
+            }
+          }
+          const lnk = r.headers.get('link');
+          const lm  = lnk ? lnk.match(/<([^>]+)>;\s*rel="next"/) : null;
+          nextUrl = lm ? lm[1] : null;
+        }
+
+        const chunk   = missing.slice(bfOffset, bfOffset + bfLimit);
+        const bfDone  = bfOffset + bfLimit >= missing.length;
+
+        console.log(`[backfill-ai-match] ${missing.length} products missing ai-match, processing ${chunk.length} (offset=${bfOffset})`);
+
+        let patched = 0, bfErrors = 0;
+        if (!bfDryRun) {
+          for (const p of chunk) {
+            try {
+              const existingTags = (p.tags || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+              const newTags = [...existingTags, 'ai-match'].join(', ');
+              await shopifyFetch(`/products/${p.id}.json`, {
+                method: 'PUT',
+                body: JSON.stringify({ product: { id: p.id, tags: newTags } }),
+              });
+              patched++;
+              await delay(250);
+            } catch (e: any) {
+              console.error(`[backfill-ai-match] Failed ${p.id} "${p.title}":`, e.message);
+              bfErrors++;
+            }
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'backfill-ai-match',
+          dryRun: bfDryRun,
+          totalMissing: missing.length,
+          chunkSize: chunk.length,
+          patched: bfDryRun ? 0 : patched,
+          errors:  bfDryRun ? 0 : bfErrors,
+          nextOffset: bfDone ? null : bfOffset + bfLimit,
+          done: bfDone,
+          ...(bfDryRun ? { sample: chunk.slice(0, 10).map(p => ({ id: p.id, title: p.title })) } : {}),
         });
       }
 
