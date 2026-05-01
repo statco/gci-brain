@@ -1055,6 +1055,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'update-only', ...stats });
       }
 
+      case 'retry-create': {
+        // Creates specific products by SKU — used to retry handle-collision failures.
+        // Fetches only the requested SKUs from CT, skips any already in Shopify,
+        // and applies the same handle-collision retry logic as full-import.
+        // Query param: skus=SKU1,SKU2,SKU3  (comma-separated, max 50)
+        const rawSkus = (req.query.skus as string || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (rawSkus.length === 0) return res.status(400).json({ error: 'Query param ?skus= is required (comma-separated SKUs)' });
+        if (rawSkus.length > 50) return res.status(400).json({ error: 'Max 50 SKUs per call' });
+
+        const t0 = Date.now();
+        const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+        const ctRes = await fetch(fullUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': buildAuthHeader(),
+            'Content-Type':  'application/json',
+            'Accept':        'application/json',
+          },
+          body: JSON.stringify({
+            customerId:    CT.customerId,
+            customerToken: CT.customerToken,
+            filters: {
+              width: '', rimSize: '', aspectRatio: '', size: '',
+              partNumber: rawSkus, brand: '', searchKey: '',
+              isWinter: '', isRunFlat: '', isTire: true, isWheel: false, page: 1,
+            },
+          }),
+        });
+        if (!ctRes.ok) throw new Error(`CT API HTTP ${ctRes.status}: ${(await ctRes.text()).slice(0, 200)}`);
+        const ctData: any = await ctRes.json();
+        if (!ctData.success) throw new Error(`CT API error: ${JSON.stringify(ctData.error)}`);
+        const rcTires = (ctData.data || []) as CTTire[];
+
+        const [rcExisting, rcTitles] = await Promise.all([fetchExistingProducts(), fetchExistingProductTitles()]);
+
+        let rcCreated = 0, rcSkipped = 0, rcErrors = 0;
+        const rcErrorList: string[] = [];
+        const notFoundInCT: string[] = [];
+        const alreadyInShopify: string[] = [];
+
+        for (const sku of rawSkus) {
+          const ct = rcTires.find(t => t.partNumber === sku);
+          if (!ct) { notFoundInCT.push(sku); continue; }
+          if (rcExisting.has(sku)) { alreadyInShopify.push(sku); rcSkipped++; continue; }
+
+          const payload  = await buildPayload(ct);
+          const normTitle = normalizeTitle(payload.product.title);
+          if (rcTitles.has(normTitle)) {
+            console.log(`⏭️  retry-create: duplicate title skipped: "${normTitle}"`);
+            rcSkipped++;
+            rcErrorList.push(`SKIP ${sku}: duplicate title "${normTitle}"`);
+            continue;
+          }
+
+          try {
+            let data: any;
+            try {
+              data = await shopifyFetch<any>('/products.json', { method: 'POST', body: JSON.stringify(payload) });
+            } catch (e: any) {
+              if (!e.message?.toLowerCase().includes('handle has already been taken')) throw e;
+              const slugBase = payload.product.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+              const skuSlug  = sku.toLowerCase().replace(/[^a-z0-9]/g, '');
+              console.log(`🔁 retry-create: handle collision on "${payload.product.title}" — retrying with suffix: ${skuSlug}`);
+              data = await shopifyFetch<any>('/products.json', { method: 'POST', body: JSON.stringify({ product: { ...payload.product, handle: `${slugBase}-${skuSlug}` } }) });
+            }
+            const productId = data.product?.id;
+            const invId     = data.product?.variants?.[0]?.inventory_item_id;
+            if (invId)     await setInventory(invId, getTotalQty(ct));
+            if (productId) await attachProductImage(productId, ct);
+            rcTitles.add(normTitle);
+            rcCreated++;
+            console.log(`✅ retry-create: created ${sku} — "${payload.product.title}"`);
+          } catch (e: any) {
+            rcErrors++;
+            rcErrorList.push(`CREATE ${sku}: ${e.message}`);
+            console.error(`❌ retry-create: failed ${sku}: ${e.message}`);
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'retry-create',
+          skusRequested: rawSkus.length,
+          ctFound: rcTires.length,
+          created: rcCreated,
+          skipped: rcSkipped,
+          errors: rcErrors,
+          ...(notFoundInCT.length > 0    ? { notFoundInCT }    : {}),
+          ...(alreadyInShopify.length > 0 ? { alreadyInShopify } : {}),
+          ...(rcErrorList.length > 0      ? { errorList: rcErrorList } : {}),
+          duration: `${((Date.now() - t0) / 1000).toFixed(1)}s`,
+        });
+      }
+
       case 'list-skus': {
         // Returns all SKUs currently in Shopify (tagged ct-sync).
         // Used by runUpdateOnly.ts to build the SKU list before chunked updates.
