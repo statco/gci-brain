@@ -38,10 +38,6 @@
   ],
   "crons": [
     {
-      "path": "/api/shopifySync",
-      "schedule": "0 9 * * *"
-    },
-    {
       "path": "/api/feed/gmc",
       "schedule": "0 */6 * * *"
     },

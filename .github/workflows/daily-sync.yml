@@ -1,0 +1,35 @@
+name: Daily Shopify Sync
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # 3am ET (UTC-5) / 8am UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_URL: ${{ secrets.VERCEL_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run update-only sync
+        run: npx tsx scripts/runUpdateOnly.ts
+
+      - name: Write failure summary
+        if: failure()
+        run: |
+          echo "## ❌ Daily Shopify Sync Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the [workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." >> $GITHUB_STEP_SUMMARY
