@@ -81,12 +81,15 @@ async function main() {
   if (!listData.success) { console.error('❌ list-skus error:', listData); process.exit(1); }
 
   const allSkus: string[] = listData.skus;
-  console.log(`   ${allSkus.length} SKUs to update\n`);
+  const filtered = allSkus.filter((s: string) => !s.startsWith('TIRE-'));
+  const skipped  = allSkus.length - filtered.length;
+  if (skipped > 0) console.log(`   ⏭️  Skipped ${skipped} legacy TIRE- SKUs`);
+  console.log(`   ${filtered.length} SKUs to update\n`);
 
   // Step 2: split into chunks
   const chunks: string[][] = [];
-  for (let i = 0; i < allSkus.length; i += CHUNK_SIZE) {
-    chunks.push(allSkus.slice(i, i + CHUNK_SIZE));
+  for (let i = 0; i < filtered.length; i += CHUNK_SIZE) {
+    chunks.push(filtered.slice(i, i + CHUNK_SIZE));
   }
   console.log(`   ${chunks.length} chunk(s) of up to ${CHUNK_SIZE} SKUs each\n`);
 
@@ -103,8 +106,19 @@ async function main() {
     try {
       data = await apiFetch('/api/shopifySync?action=update-chunk', { skus: chunk });
     } catch (e: any) {
-      console.error(`❌ Request failed: ${e.message}`);
-      process.exit(1);
+      if (e.message?.startsWith('HTTP 500')) {
+        console.warn(`   ⚠️  HTTP 500 — waiting 3s and retrying chunk ${i + 1}…`);
+        await sleep(3000);
+        try {
+          data = await apiFetch('/api/shopifySync?action=update-chunk', { skus: chunk });
+        } catch (e2: any) {
+          console.error(`❌ Retry failed: ${e2.message}`);
+          process.exit(1);
+        }
+      } else {
+        console.error(`❌ Request failed: ${e.message}`);
+        process.exit(1);
+      }
     }
 
     if (!data.success) {
