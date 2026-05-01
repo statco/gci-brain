@@ -176,6 +176,7 @@ interface SeoResult {
   charsBefore: number;
   charsAfter: number;
   status: 'generated' | 'written' | 'invalid_response' | 'error';
+  generatedHtml?: string;
   error?: string;
 }
 
@@ -243,9 +244,9 @@ async function main() {
           await updateDescription(product.id, html);
           written++;
           console.log(`      Written to Shopify ✓`);
-          results.push({ id: product.id, title: product.title, charsBefore: product.charsBefore, charsAfter, status: 'written' });
+          results.push({ id: product.id, title: product.title, charsBefore: product.charsBefore, charsAfter, status: 'written', generatedHtml: html });
         } else {
-          results.push({ id: product.id, title: product.title, charsBefore: product.charsBefore, charsAfter, status: 'generated' });
+          results.push({ id: product.id, title: product.title, charsBefore: product.charsBefore, charsAfter, status: 'generated', generatedHtml: html });
         }
       } catch (e: any) {
         errors++;
