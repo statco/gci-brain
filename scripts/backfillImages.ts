@@ -37,7 +37,7 @@ if (!ANTHROPIC_API_KEY) { console.error('❌ ANTHROPIC_API_KEY is not set'); pro
 
 const DRY_RUN        = !process.argv.includes('--confirm');
 const BATCH_SIZE     = 3;   // stay within Anthropic rate limits
-const BATCH_DELAY_MS = 2000;
+const BATCH_DELAY_MS = 5000;
 
 function parseArg(name: string): number | null {
   const arg = process.argv.find(a => a.startsWith(`--${name}=`));
@@ -66,28 +66,44 @@ async function findImageViaAI(title: string): Promise<string | null> {
     `The URL should point directly to an image file or image CDN.\n` +
     `No explanation, no markdown, just the raw URL.`;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta':    'web-search-2025-03-05',
-    },
-    body: JSON.stringify({
-      model:      'claude-haiku-4-5-20251001',
-      max_tokens: 512,
-      tools:      [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages:   [{ role: 'user', content: prompt }],
-    }),
-  });
+  const MAX_RETRIES  = 3;
+  const RETRY_DELAYS = [10_000, 20_000, 40_000];
+  let   attempt      = 0;
+  let   data: any;
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Anthropic API HTTP ${res.status}: ${body.slice(0, 300)}`);
+  while (true) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         ANTHROPIC_API_KEY!,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta':    'web-search-2025-03-05',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 512,
+        tools:      [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages:   [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      const delaySec = RETRY_DELAYS[attempt] / 1000;
+      console.log(`   ⏳ Rate limited, retrying in ${delaySec}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await sleep(RETRY_DELAYS[attempt]);
+      attempt++;
+      continue;
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Anthropic API HTTP ${res.status}: ${body.slice(0, 300)}`);
+    }
+
+    data = await res.json();
+    break;
   }
-
-  const data: any = await res.json();
 
   // The final answer lives in the last text content block after tool use
   const textBlock = [...(data.content || [])].reverse().find((b: any) => b.type === 'text');
