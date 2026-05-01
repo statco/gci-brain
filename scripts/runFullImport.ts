@@ -8,6 +8,10 @@
  *
  * Usage:
  *   npx tsx scripts/runFullImport.ts [--chunkSize=N] [--startOffset=N]
+ *   npx tsx scripts/runFullImport.ts --skus=SKU1,SKU2,SKU3
+ *
+ * When --skus is provided, the offset/chunk loop is skipped entirely and the
+ * listed SKUs are sent directly to the retry-create action (one API call).
  *
  * Env (read from .env in project root):
  *   VERCEL_URL    — base URL, e.g. https://your-project.vercel.app
@@ -36,8 +40,15 @@ function parseArg(name: string, fallback: number): number {
   return arg ? parseInt(arg.split('=')[1], 10) : fallback;
 }
 
+function parseSkusArg(): string[] | null {
+  const arg = process.argv.find(a => a.startsWith('--skus='));
+  if (!arg) return null;
+  return arg.split('=').slice(1).join('=').split(',').map(s => s.trim()).filter(Boolean);
+}
+
 const CHUNK_SIZE   = parseArg('chunkSize', 10);
 const START_OFFSET = parseArg('startOffset', 0);
+const SKUS_ONLY    = parseSkusArg();
 const DELAY_MS     = 2000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,9 +71,63 @@ async function callImport(offset: number): Promise<any> {
   return res.json();
 }
 
+async function callRetryCreate(skus: string[]): Promise<any> {
+  const url = `${VERCEL_URL}/api/shopifySync?action=retry-create&skus=${encodeURIComponent(skus.join(','))}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${CRON_SECRET}`,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 async function main() {
+  // ── SKU retry mode ────────────────────────────────────────────────────────
+  if (SKUS_ONLY) {
+    console.log(`\n🔁 runFullImport --skus mode — ${SKUS_ONLY.length} SKU(s) to retry`);
+    console.log(`   SKUs: ${SKUS_ONLY.join(', ')}`);
+    console.log(`   Target: ${VERCEL_URL}\n`);
+
+    let data: any;
+    try {
+      data = await callRetryCreate(SKUS_ONLY);
+    } catch (e: any) {
+      console.error(`❌ Request failed: ${e.message}`);
+      process.exit(1);
+    }
+
+    if (!data.success) {
+      console.error(`❌ API error: ${JSON.stringify(data)}`);
+      process.exit(1);
+    }
+
+    const { created = 0, skipped = 0, errors = 0, errorList = [],
+            notFoundInCT = [], alreadyInShopify = [], ctFound, duration } = data;
+
+    console.log(`   created=${created}  skipped=${skipped}  errors=${errors}  ctFound=${ctFound}  duration=${duration}`);
+    if (notFoundInCT.length > 0)    console.log(`   ⚠️  Not found in CT: ${notFoundInCT.join(', ')}`);
+    if (alreadyInShopify.length > 0) console.log(`   ℹ️  Already in Shopify (skipped): ${alreadyInShopify.join(', ')}`);
+    if (errorList.length > 0)       console.log(`   ❌ Errors: ${errorList.join(' | ')}`);
+
+    if (errors === 0 && created > 0) {
+      console.log(`\n✅ All ${created} SKU(s) created successfully`);
+    } else if (errors > 0) {
+      console.log(`\n⚠️  Completed with ${errors} error(s) — review above`);
+    } else {
+      console.log(`\nℹ️  No products created (all skipped or not found)`);
+    }
+    return;
+  }
+
+  // ── Normal chunked import mode ────────────────────────────────────────────
   console.log(`\n🚀 runFullImport — chunkSize=${CHUNK_SIZE} startOffset=${START_OFFSET}`);
   console.log(`   Target: ${VERCEL_URL}\n`);
 
