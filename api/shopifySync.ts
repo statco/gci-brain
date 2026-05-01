@@ -1685,6 +1685,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      case 'list-products': {
+        // Lightweight paginator — returns one page of ct-sync products.
+        // Caller advances sinceId using the last id from the previous response.
+        // Used by scripts/auditTireSkus.ts to paginate locally and avoid timeouts.
+        //
+        // Query params:
+        //   sinceId  — Shopify product id to start after (default: 0)
+        //
+        // Response:
+        //   products: Array<{ id, title, tags, sku }>
+        //   nextSinceId: number | null  — null when this is the last page
+        const sinceId = parseInt(req.query.sinceId as string || '0', 10);
+        const lpQuery = `tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,tags,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+        const lpData: any = await shopifyFetch<any>(`/products.json?${lpQuery}`);
+        const lpProducts = (lpData.products || []).map((p: any) => ({
+          id:    p.id,
+          title: p.title,
+          tags:  p.tags || '',
+          sku:   p.variants?.[0]?.sku || '',
+        }));
+        const nextSinceId = lpProducts.length === 250 ? lpProducts[lpProducts.length - 1].id : null;
+        return res.status(200).json({ success: true, mode: 'list-products', products: lpProducts, nextSinceId });
+      }
+
       case 'audit-tire-skus': {
         // Fetches all ct-sync products whose SKU starts with "TIRE-" and classifies them:
         //   - "has_real_match": another ct-sync product exists with the same title but a real CT part number SKU
