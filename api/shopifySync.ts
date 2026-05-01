@@ -709,7 +709,20 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     }
 
     try {
-      const data: any = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(payload) });
+      let createPayload = payload;
+      let data: any;
+      try {
+        data = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(createPayload) });
+      } catch (e: any) {
+        if (!e.message?.toLowerCase().includes('handle has already been taken')) throw e;
+        // Retry with an explicit handle that appends the SKU to avoid the collision
+        const slugBase   = payload.product.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        const skuSlug    = ct.partNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const retryBody: any = { product: { ...payload.product, handle: `${slugBase}-${skuSlug}` } };
+        createPayload    = retryBody;
+        console.log(`🔁 Handle collision on "${payload.product.title}" — retrying with handle suffix: ${skuSlug}`);
+        data = await shopifyFetch<any>('/products.json', { method:'POST', body:JSON.stringify(createPayload) });
+      }
       const productId = data.product?.id;
       const invId     = data.product?.variants?.[0]?.inventory_item_id;
       if (invId)     await setInventory(invId, getTotalQty(ct));
