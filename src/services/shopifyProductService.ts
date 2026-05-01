@@ -9,162 +9,12 @@ const API_VERSION = import.meta.env.VITE_SHOPIFY_API_VERSION || '2024-01';
 
 const STOREFRONT_API_URL = `https://${SHOPIFY_DOMAIN}/api/${API_VERSION}/graphql.json`;
 
-// Cache products to avoid repeated API calls
-let cachedProducts: any[] | null = null;
-let cacheTimestamp = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-/**
- * ✅ OPTION 1: Fetch products by collection handle
- * This is the RECOMMENDED approach
- */
-export async function fetchProductsByCollection(collectionHandle: string = 'ai-match-tires') {
-  console.log(`🔍 Fetching products from collection: ${collectionHandle}`);
-
-  // Check cache
-  if (cachedProducts && Date.now() - cacheTimestamp < CACHE_DURATION) {
-    console.log('✅ Using cached products');
-    return cachedProducts;
-  }
-
-  const query = `
-    query getCollection($handle: String!, $after: String) {
-      collection(handle: $handle) {
-        products(first: 250, after: $after) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id
-              title
-              handle
-              description
-              productType
-              tags
-              images(first: 1) {
-                edges {
-                  node {
-                    url
-                    altText
-                  }
-                }
-              }
-              variants(first: 1) {
-                edges {
-                  node {
-                    id
-                    title
-                    priceV2 {
-                      amount
-                      currencyCode
-                    }
-                    availableForSale
-                  }
-                }
-              }
-              metafields(identifiers: [
-                {namespace: "custom", key: "tire_size"}
-                {namespace: "custom", key: "tire_season"}
-                {namespace: "custom", key: "tire_brand"}
-                {namespace: "custom", key: "tire_model"}
-                {namespace: "custom", key: "tire_rating"}
-                {namespace: "custom", key: "tire_reviews"}
-                {namespace: "canada_tire", key: "speed_rating"}
-                {namespace: "canada_tire", key: "load_index"}
-              ]) {
-                key
-                value
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  try {
-    let allEdges: any[] = [];
-    let hasNextPage = true;
-    let cursor: string | null = null;
-    let page = 0;
-
-    while (hasNextPage) {
-      page++;
-      const response = await fetch(STOREFRONT_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': STOREFRONT_TOKEN,
-        },
-        body: JSON.stringify({
-          query,
-          variables: { handle: collectionHandle, after: cursor }
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.errors) {
-        console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
-        break;
-      }
-
-      const pageData = result.data?.collection?.products;
-      const edges = pageData?.edges || [];
-      allEdges = allEdges.concat(edges);
-
-      hasNextPage = pageData?.pageInfo?.hasNextPage ?? false;
-      cursor = pageData?.pageInfo?.endCursor ?? null;
-      console.log(`🔍 [fetchProductsByCollection] page ${page}: ${edges.length} products (hasNextPage=${hasNextPage})`);
-    }
-
-    const transformedProducts = allEdges.map((edge: any) => {
-      const product = edge.node;
-      const variant = product.variants.edges[0]?.node;
-      const shopifyImage = product.images.edges[0]?.node.url || '';
-      const imageUrl = shopifyImage || getTireImageUrl(product.title) || '';
-
-      // Extract metafield values
-      const metafields = product.metafields || [];
-      const getMetafield = (key: string) => {
-        const field = metafields.find((m: any) => m.key === key);
-        return field?.value || '';
-      };
-
-      return {
-        id: product.id.split('/').pop(), // Extract numeric ID
-        title: product.title,
-        brand: getMetafield('tire_brand') || extractBrandFromTitle(product.title),
-        model: getMetafield('tire_model') || product.title,
-        size: getMetafield('tire_size') || extractSizeFromTitle(product.title),
-        season: getMetafield('tire_season') || extractSeasonFromTags(product.tags),
-        pricePerUnit: parseFloat(variant?.priceV2.amount || '0'),
-        rating: parseFloat(getMetafield('tire_rating') || '4.5'),
-        reviews: parseInt(getMetafield('tire_reviews') || '0'),
-        imageUrl,
-        description: product.description || '',
-        features: extractFeaturesFromDescription(product.description),
-        inStock: variant?.availableForSale || false,
-        warranty: '6-year limited', // Default, can be metafield
-        speedRating: getMetafield('speed_rating') || 'H',
-        loadIndex: getMetafield('load_index') || '94',
-        shopifyVariantId: variant?.id || '',
-        shopifyHandle: product.handle,
-        shopifyProductId: product.id
-      };
-    });
-
-    console.log(`✅ Fetched ${transformedProducts.length} products from Shopify`);
-    
-    // Cache the results
-    cachedProducts = transformedProducts;
-    cacheTimestamp = Date.now();
-    
-    return transformedProducts;
-
-  } catch (error) {
-    console.error('❌ Error fetching products:', error);
-    return [];
-  }
+// The 'ai-match-tires' collection does not exist in Shopify.
+// fetchProductsByCollection is kept as a named export for forward compatibility
+// but delegates to fetchProductsByTag so callers get real data immediately.
+export async function fetchProductsByCollection(_collectionHandle: string = 'ai-match-tires') {
+  console.warn('⚠️ fetchProductsByCollection: collection does not exist — delegating to fetchProductsByTag("ai-match")');
+  return fetchProductsByTag('ai-match');
 }
 
 /**
@@ -483,30 +333,6 @@ function extractFeaturesFromDescription(description: string): string[] {
   ).filter(Boolean);
 }
 
-/**
- * Clear product cache (useful for debugging or forcing refresh)
- */
-export function clearProductCache() {
-  cachedProducts = null;
-  cacheTimestamp = 0;
-  console.log('🗑️ Product cache cleared');
-}
-
-/**
- * Get cache status
- */
-export function getCacheStatus() {
-  const isCached = cachedProducts !== null;
-  const cacheAge = Date.now() - cacheTimestamp;
-  const cacheValid = cacheAge < CACHE_DURATION;
-  
-  return {
-    isCached,
-    cacheAge,
-    cacheValid,
-    productCount: cachedProducts?.length || 0
-  };
-}
 
 /**
  * Enrich tire products with images — checks static map first (O(1)),
