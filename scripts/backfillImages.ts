@@ -53,15 +53,18 @@ function authHeaders(): Record<string, string> {
 
 // ── Claude web_search image finder ───────────────────────────────────────────
 
-const IMAGE_URL_RE = /https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>]*)?/i;
+const IMAGE_URL_RE = /https:\/\/[^\s"'<>]+(?:\/(?:image|images|img|media|cdn|product|tire)[^\s"'<>]*|[^\s"'<>]*\.(?:jpg|jpeg|png|webp|avif)(?:[?#][^\s"'<>]*)?|[^\s"'<>]*(?:cloudinary|imgix|akamai|fastly)[^\s"'<>]*)/i;
+
+let firstProduct = true;
 
 async function findImageViaAI(title: string): Promise<string | null> {
   const prompt =
-    `Find a direct product image URL for this tire: ${title}\n` +
-    `Search manufacturer websites and tire distributors.\n` +
-    `Rules: URL must end in .jpg .jpeg .png or .webp, minimum 400x400px, ` +
-    `publicly accessible, no authentication required.\n` +
-    `Return ONLY the raw URL, nothing else. No explanation.`;
+    `Find a product image URL for this tire: ${title}\n` +
+    `Search manufacturer websites, tire retailers, and distributor sites.\n` +
+    `Look for the main product/hero image on the product page.\n` +
+    `Return ONLY a single direct image URL that is publicly accessible.\n` +
+    `The URL should point directly to an image file or image CDN.\n` +
+    `No explanation, no markdown, just the raw URL.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -89,6 +92,11 @@ async function findImageViaAI(title: string): Promise<string | null> {
   // The final answer lives in the last text content block after tool use
   const textBlock = [...(data.content || [])].reverse().find((b: any) => b.type === 'text');
   const text = textBlock?.text?.trim() || '';
+
+  if (firstProduct) {
+    firstProduct = false;
+    console.log(`   🔬 Raw Claude response for first product:\n      "${text}"\n`);
+  }
 
   const match = text.match(IMAGE_URL_RE);
   return match ? match[0] : null;
