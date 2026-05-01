@@ -1685,6 +1685,99 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      case 'list-products': {
+        // Lightweight paginator — returns one page of ct-sync products.
+        // Caller advances sinceId using the last id from the previous response.
+        // Used by scripts/auditTireSkus.ts to paginate locally and avoid timeouts.
+        //
+        // Query params:
+        //   sinceId  — Shopify product id to start after (default: 0)
+        //
+        // Response:
+        //   products: Array<{ id, title, tags, sku }>
+        //   nextSinceId: number | null  — null when this is the last page
+        const sinceId = parseInt(req.query.sinceId as string || '0', 10);
+        const lpQuery = `tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,tags,variants${sinceId ? `&since_id=${sinceId}` : ''}`;
+        const lpData: any = await shopifyFetch<any>(`/products.json?${lpQuery}`);
+        const lpProducts = (lpData.products || []).map((p: any) => ({
+          id:    p.id,
+          title: p.title,
+          tags:  p.tags || '',
+          sku:   p.variants?.[0]?.sku || '',
+        }));
+        const nextSinceId = lpProducts.length === 250 ? lpProducts[lpProducts.length - 1].id : null;
+        return res.status(200).json({ success: true, mode: 'list-products', products: lpProducts, nextSinceId });
+      }
+
+      case 'audit-tire-skus': {
+        // Fetches all ct-sync products whose SKU starts with "TIRE-" and classifies them:
+        //   - "has_real_match": another ct-sync product exists with the same title but a real CT part number SKU
+        //   - "truly_stale":    no ct-sync product at all shares the same title (safe to delete)
+        //
+        // Usage: POST /api/shopifySync?action=audit-tire-skus
+
+        // Single pass: collect all ct-sync products, splitting by SKU prefix
+        const tireSkuProducts:  Array<{ id: number; title: string; sku: string }> = [];
+        const realSkuByTitle:   Map<string, { id: number; title: string; sku: string }> = new Map();
+
+        let auditUrl: string | null =
+          `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,variants`;
+
+        while (auditUrl) {
+          const r: Response = await fetch(auditUrl, {
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+          });
+          if (r.status === 429) { await delay(2000); continue; }
+          if (!r.ok) throw new Error(`Shopify ${r.status} fetching ct-sync products`);
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            const sku: string = p.variants?.[0]?.sku || '';
+            const entry = { id: p.id, title: p.title, sku };
+            if (sku.startsWith('TIRE-')) {
+              tireSkuProducts.push(entry);
+            } else if (sku) {
+              // Real CT part number — index by normalized title for matching
+              realSkuByTitle.set(normalizeTitle(p.title), entry);
+            }
+          }
+          const lnk: string | null = r.headers.get('link');
+          const lm = lnk ? lnk.match(/<([^>]+)>;\s*rel="next"/) : null;
+          auditUrl = lm ? lm[1] : null;
+        }
+
+        // Classify each TIRE- product
+        const hasRealMatch: Array<{ id: number; title: string; tireSku: string; realSku: string; realId: number }> = [];
+        const trulyStale:   Array<{ id: number; title: string; sku: string }> = [];
+
+        for (const p of tireSkuProducts) {
+          const match = realSkuByTitle.get(normalizeTitle(p.title));
+          if (match) {
+            hasRealMatch.push({ id: p.id, title: p.title, tireSku: p.sku, realSku: match.sku, realId: match.id });
+          } else {
+            trulyStale.push(p);
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'audit-tire-skus',
+          summary: {
+            totalTireSkuProducts: tireSkuProducts.length,
+            realCtSkuProducts:    realSkuByTitle.size,
+            hasRealMatch:         hasRealMatch.length,
+            trulyStale:           trulyStale.length,
+            note: 'hasRealMatch products are safe to delete (real CT product exists). trulyStale have no CT counterpart — investigate before deleting.',
+          },
+          samples: {
+            hasRealMatch: hasRealMatch.slice(0, 10).map(p => ({
+              tireProduct: { id: p.id, title: p.title, sku: p.tireSku },
+              realProduct: { id: p.realId, sku: p.realSku },
+            })),
+            trulyStale: trulyStale.slice(0, 10).map(p => ({ id: p.id, title: p.title, sku: p.sku })),
+          },
+        });
+      }
+
       case 'daily-sync':
       default: {
         const updateOffset    = parseInt(req.query.updateOffset as string || '0', 10);
