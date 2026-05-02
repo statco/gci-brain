@@ -218,6 +218,55 @@ The `scripts/auditTireSkus.ts` script gives a CT vs Shopify coverage comparison.
 
 ---
 
+---
+
+# Session 2 — May 2, 2026
+
+**Operator:** statco
+
+---
+
+## Priority 2 — Product Images
+
+**Status: IN PROGRESS (approach rebuilt)**
+
+The original `backfillImages.ts` used Claude API + `web_search` to find image URLs automatically. This was abandoned — tire retailer and manufacturer sites load product images via JavaScript at runtime, so a HEAD request or web search returns the page HTML rather than a direct image URL. Extraction was unreliable and produced invalid or 404 URLs consistently.
+
+**New approach — CSV manual image map:**
+- `scripts/image-map.csv` — manually curated lookup table with columns `brand,model,imageUrl`
+- `scripts/backfillImages.ts` — fully rewritten; loads CSV, does case-insensitive substring match on Shopify product titles, probes each URL with HEAD before attaching
+- `scripts/README-images.md` — manufacturer site links for all 13 brands, `curl -I` verification step, add-a-brand workflow
+
+**Current CSV state:** 5 Cooper rows pre-populated with plausible URL patterns (`cooper-tires.com/content/dam/...`). URLs need verification — script will skip any that fail HEAD probe.
+
+**Commits:** `d948f39`
+
+**To complete this priority:**
+1. Visit each manufacturer site (links in README-images.md), find direct image URLs, verify with `curl -I`
+2. Add rows to `scripts/image-map.csv` for all 13 brands
+3. Run `npx tsx scripts/backfillImages.ts` (dry run — review matches)
+4. Run `npx tsx scripts/backfillImages.ts --confirm` to attach
+
+---
+
+## Priority 3 — SEO Descriptions
+
+**Status: COMPLETE**
+
+`scripts/generateSeoDescriptions.ts` wrote bilingual EN/FR SEO descriptions to Shopify for **1,891 products**. Script checks for existing descriptions before writing — safe to re-run on future sessions, it will automatically skip already-written products.
+
+---
+
+## Next Session Priorities
+
+### 1 — Populate image-map.csv (images)
+Visit manufacturer websites listed in `scripts/README-images.md` for all 13 brands. Add verified `brand,model,imageUrl` rows to `scripts/image-map.csv`. Verify each URL with `curl -I` before committing. Then run `npx tsx scripts/backfillImages.ts --confirm`.
+
+### 2 — Collection SEO
+Update `updateCollectionSeo.ts` to cover the 10 new brand collections created this session (Kenda, Transeagle, Pirelli, GT Radial, Falken, Kelly, and any others).
+
+---
+
 ## How to Run a Manual Full Sync (Future Reference)
 
 ```bash
