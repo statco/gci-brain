@@ -4,6 +4,7 @@ import ShopifySync from './components/ShopifySync';
 import UpdateCollectionSeo from './components/UpdateCollectionSeo';
 import FixRedirects from './components/FixRedirects';
 import UpdateSeo from './components/UpdateSeo';
+import ShopifyFixDashboard from './components/ShopifyFixDashboard';
 import React, { useState, useEffect } from 'react';
 import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
@@ -286,6 +287,7 @@ function App() {
         <Route path="/collection-seo" element={<UpdateCollectionSeo />} />
         <Route path="/fix-redirects" element={<FixRedirects />} />
         <Route path="/update-seo" element={<UpdateSeo />} />
+        <Route path="/fix" element={<ShopifyFixDashboard />} />
       </Routes>
     </BrowserRouter>
   );
