@@ -50,15 +50,18 @@ export async function getTireRecommendations(
     return [];
   }
 
-  // Build catalog: only in-stock products visible to AI
-  const catalogProducts = availableProducts.filter(p => p.inStock);
-  console.log('[debug] in-stock catalog size:', catalogProducts.length);
-  const oemMatches = catalogProducts.filter(p => p.size === '235/55R18');
-  console.log('[debug] in-stock 235/55R18 count:', oemMatches.length, oemMatches.map(p => p.title));
+  // Prefer in-stock products; fall back to full catalog if in-stock is empty
+  const inStockProducts = availableProducts.filter(p => p.inStock);
+  const catalogProducts = inStockProducts.length > 0 ? inStockProducts : availableProducts;
+  console.log('[debug] catalog size:', catalogProducts.length, '(in-stock:', inStockProducts.length, ')');
 
-  // Build OEM constraint text
-  const oemConstraint = (oemSizes && oemSizes.length > 0)
-    ? `\nCRITICAL REQUIREMENT: You MUST only recommend products whose size EXACTLY matches one of these OEM sizes: ${oemSizes.join(', ')}. Do NOT recommend any product with a different size. If you cannot find products matching these exact sizes in the catalog, return an empty array rather than recommending wrong sizes.\n`
+  // Normalise OEM sizes — strip suffixes like XL, C, RFT, BSW, OWL before matching
+  const normSize = (s: string) => s.replace(/\s*(XL|C|RFT|BSW|OWL|ORWL|SL|RF|\+)$/i, '').trim();
+  const normOemSizes = (oemSizes ?? []).map(normSize).filter(Boolean);
+
+  // Build OEM constraint text (uses normalised sizes)
+  const oemConstraint = normOemSizes.length > 0
+    ? `\nIMPORTANT: Prioritise products whose size matches one of these OEM sizes: ${normOemSizes.join(', ')}. If you find matching sizes, prefer them. If none are available in the catalog, recommend the closest suitable alternatives and note that exact OEM size is unavailable.\n`
     : '';
 
   // Build the prompt
