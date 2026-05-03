@@ -166,39 +166,40 @@ interface ShopifyCollection {
   title: string;
 }
 
-async function findCollection(
-  domain: string,
-  token: string,
-  handle: string
-): Promise<{ id: number; type: 'custom' | 'smart' } | null> {
+type CollectionMap = Map<string, { id: number; type: 'custom' | 'smart' }>;
+
+// Fetches ALL custom + smart collections from Shopify (with pagination) and
+// returns a handle→{id,type} map. Doing this once upfront avoids per-handle
+// API calls and bypasses any edge-cases with Shopify's ?handle= filter.
+async function buildCollectionMap(domain: string, token: string): Promise<CollectionMap> {
   const headers: Record<string, string> = {
     'X-Shopify-Access-Token': token,
     'Content-Type': 'application/json',
   };
+  const map: CollectionMap = new Map();
 
-  const customRes = await fetch(
-    `https://${domain}/admin/api/2024-01/custom_collections.json?handle=${encodeURIComponent(handle)}`,
-    { headers }
-  );
-  if (customRes.ok) {
-    const customData = (await customRes.json()) as { custom_collections: ShopifyCollection[] };
-    if (customData.custom_collections?.length > 0) {
-      return { id: customData.custom_collections[0].id, type: 'custom' };
+  for (const [path, type] of [
+    ['custom_collections', 'custom'],
+    ['smart_collections',  'smart'],
+  ] as const) {
+    let url: string | null =
+      `https://${domain}/admin/api/2024-01/${path}.json?limit=250&fields=id,handle`;
+
+    while (url) {
+      const res = await fetch(url, { headers });
+      if (!res.ok) break;
+      const data = (await res.json()) as Record<string, ShopifyCollection[]>;
+      for (const c of data[path] ?? []) {
+        if (!map.has(c.handle)) map.set(c.handle, { id: c.id, type });
+      }
+      // Follow Link header for pagination
+      const link = res.headers.get('link');
+      const m    = link?.match(/<([^>]+)>;\s*rel="next"/);
+      url = m ? m[1] : null;
     }
   }
 
-  const smartRes = await fetch(
-    `https://${domain}/admin/api/2024-01/smart_collections.json?handle=${encodeURIComponent(handle)}`,
-    { headers }
-  );
-  if (smartRes.ok) {
-    const smartData = (await smartRes.json()) as { smart_collections: ShopifyCollection[] };
-    if (smartData.smart_collections?.length > 0) {
-      return { id: smartData.smart_collections[0].id, type: 'smart' };
-    }
-  }
-
-  return null;
+  return map;
 }
 
 async function updateCollection(
@@ -244,6 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing env vars: SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
+  const dryRun     = req.query.dryRun === 'true';
   const handleParam = typeof req.query.collection === 'string' ? req.query.collection : undefined;
 
   if (handleParam && !(handleParam in SEO_MAP)) {
@@ -252,23 +254,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const targets = handleParam ? [handleParam] : Object.keys(SEO_MAP);
   const log: string[] = [];
-  const summary = { total: targets.length, updated: 0, failed: 0, notFound: 0 };
+  const summary = { total: targets.length, updated: 0, skipped: 0, failed: 0, notFound: 0 };
+
+  if (dryRun) log.push(`[DRY RUN] No writes will be made — preview only`);
+
+  // Build the handle map once so we don't make per-handle Shopify API calls.
+  // This is more reliable than ?handle= filtered requests and handles pagination.
+  let collectionMap: CollectionMap;
+  try {
+    collectionMap = await buildCollectionMap(domain, token);
+    log.push(`📦 Loaded ${collectionMap.size} collections from Shopify`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(502).json({ error: `Failed to load collections: ${message}` });
+  }
 
   for (const handle of targets) {
-    const seo = SEO_MAP[handle];
+    const seo        = SEO_MAP[handle];
+    const collection = collectionMap.get(handle);
     log.push(`→ Processing: ${handle}`);
 
-    try {
-      const collection = await findCollection(domain, token, handle);
+    if (!collection) {
+      log.push(`  ⚠ Not found in Shopify: ${handle}`);
+      summary.notFound++;
+      continue;
+    }
 
-      if (!collection) {
-        log.push(`  ⚠ Not found in Shopify: ${handle}`);
-        summary.notFound++;
-      } else {
-        await updateCollection(domain, token, collection.id, collection.type, seo);
-        log.push(`  ✓ Updated: ${handle} (${collection.type}, id=${collection.id})`);
-        summary.updated++;
-      }
+    if (dryRun) {
+      log.push(`  [DRY RUN] Would update: ${handle} (${collection.type}, id=${collection.id})`);
+      summary.skipped++;
+      continue;
+    }
+
+    try {
+      await updateCollection(domain, token, collection.id, collection.type, seo);
+      log.push(`  ✓ Updated: ${handle} (${collection.type}, id=${collection.id})`);
+      summary.updated++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`  ✗ Error updating ${handle}: ${message}`);
