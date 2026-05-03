@@ -63,22 +63,7 @@ function extractTireSizes(data: unknown): string[] {
   return [...sizes];
 }
 
-/** Fetch all available region slugs from the v2 API and log them. Call once to discover valid values. */
-async function logAvailableRegions(): Promise<void> {
-  if (!WHEEL_SIZE_API_KEY) return;
-  try {
-    const url = `${WHEEL_SIZE_BASE}/regions/?user_key=${WHEEL_SIZE_API_KEY}`;
-    console.log('[fitmentCheck] fetching regions:', url.replace(WHEEL_SIZE_API_KEY, '***'));
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    const body = await r.text();
-    console.log(`[fitmentCheck] /regions/ status=${r.status} body:`, body);
-  } catch (err) {
-    console.error('[fitmentCheck] /regions/ fetch failed:', err);
-  }
-}
-
-// Log valid region slugs on first cold-start so we can identify the correct Canada slug.
-logAvailableRegions();
+// Canadian region slug confirmed from Wheel-Size API: 'cdm' = Canada/domestic
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Allow browser clients from the same origin (and Vercel preview URLs)
@@ -106,39 +91,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const params = new URLSearchParams({
-      make: toSlug(make),
-      model: toSlug(model),
-      year: String(parseInt(year, 10)), // ensure integer, no extra whitespace
-      region: 'usdm',                   // TODO: replace with correct Canada slug once /regions/ log is reviewed
-      user_key: WHEEL_SIZE_API_KEY,
-    });
+    // Try Canadian region first (cdm), fall back to North American (nadm) then US (usdm)
+    const regionsToTry = ['cdm', 'nadm', 'usdm'];
+    let sizes: string[] = [];
 
-    const apiUrl = `${WHEEL_SIZE_BASE}/search/by_model/?${params.toString()}`;
-    console.log(`[fitmentCheck] fetching: ${apiUrl.replace(WHEEL_SIZE_API_KEY, '***')}`);
+    for (const region of regionsToTry) {
+      const params = new URLSearchParams({
+        make: toSlug(make),
+        model: toSlug(model),
+        year: String(parseInt(year, 10)),
+        region,
+        user_key: WHEEL_SIZE_API_KEY,
+      });
 
-    const upstream = await fetch(apiUrl, {
-      headers: { Accept: 'application/json' },
-    });
+      const apiUrl = `${WHEEL_SIZE_BASE}/search/by_model/?${params.toString()}`;
+      console.log(`[fitmentCheck] fetching (region=${region}): ${apiUrl.replace(WHEEL_SIZE_API_KEY, '***')}`);
 
-    if (!upstream.ok) {
-      const body = await upstream.text();
-      console.error(`[fitmentCheck] upstream error ${upstream.status}: ${body}`);
-      // Return empty sizes rather than surfacing the error to the client
-      return res.status(200).json({ sizes: [] });
+      const upstream = await fetch(apiUrl, { headers: { Accept: 'application/json' } });
+
+      if (!upstream.ok) {
+        console.warn(`[fitmentCheck] upstream error ${upstream.status} for region=${region}`);
+        continue;
+      }
+
+      const json = await upstream.json() as { data?: unknown };
+      const data = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+      sizes = extractTireSizes(data);
+
+      if (sizes.length > 0) {
+        console.log(`[fitmentCheck] found ${sizes.length} size(s) via region=${region}:`, sizes);
+        break; // Got results — no need to try next region
+      }
+      console.log(`[fitmentCheck] region=${region} returned 0 sizes, trying next`);
     }
 
-    const json = await upstream.json() as { data?: unknown };
-
-    // Log truncated raw response so we can inspect the real shape
-    const rawSnippet = JSON.stringify(json).slice(0, 2000);
-    console.log('[fitmentCheck] raw response (first 2000 chars):', rawSnippet);
-
-    // The v2 API wraps results in a "data" array
-    const data = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
-    const sizes = extractTireSizes(data);
-
-    console.log(`[fitmentCheck] found ${sizes.length} tire size(s):`, sizes);
     return res.status(200).json({ sizes });
   } catch (err) {
     console.error('[fitmentCheck] unexpected error:', err);
