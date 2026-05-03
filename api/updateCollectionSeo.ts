@@ -84,6 +84,76 @@ const SEO_MAP: Record<string, SeoEntry> = {
     body_html:
       '<p>Vredestein tires — premium European engineering for Canadian roads. Free delivery across Canada.</p>',
   },
+  'maxtrek-tires': {
+    title: 'Maxtrek Tires Canada | Buy Maxtrek Tires Online | GCI Tires',
+    description:
+      'Shop Maxtrek tires at GCI Tires. All-terrain, mud-terrain and highway tires with free delivery across Canada.',
+    body_html:
+      '<p>Shop the full Maxtrek lineup at GCI Tires — all-terrain, mud-terrain and all-season tires for trucks and SUVs. Free delivery across Canada.</p>',
+  },
+  'minerva-tires': {
+    title: 'Minerva Tires Canada | Buy Minerva Tires Online | GCI Tires',
+    description:
+      'Shop Minerva tires at GCI Tires. Belgium-engineered all-season, winter and performance tires with free shipping across Canada.',
+    body_html:
+      '<p>Minerva tires — Belgian engineering for Canadian roads. All-season, winter and performance tires with free delivery across Canada.</p>',
+  },
+  'ovation-tires': {
+    title: 'Ovation Tires Canada | Buy Ovation Tires Online | GCI Tires',
+    description:
+      'Shop Ovation tires at GCI Tires. All-season, all-terrain and winter tires for cars, trucks and SUVs with free delivery across Canada.',
+    body_html:
+      '<p>Ovation tires deliver reliable performance for every season and road condition. Free delivery across Canada.</p>',
+  },
+  'starfire-tires': {
+    title: 'Starfire Tires Canada | Buy Starfire Tires Online | GCI Tires',
+    description:
+      'Shop Starfire tires at GCI Tires. Quality all-season and winter tires from a Cooper Tire brand, free shipping across Canada.',
+    body_html:
+      '<p>Starfire tires — a trusted Cooper Tire brand offering value-driven all-season and winter performance. Free delivery across Canada.</p>',
+  },
+  'kenda-tires': {
+    title: 'Kenda Tires Canada | Buy Kenda Tires Online | GCI Tires',
+    description:
+      'Shop Kenda tires at GCI Tires. All-terrain, highway and all-season tires for cars, trucks and SUVs with free delivery across Canada.',
+    body_html:
+      '<p>Shop Kenda tires at GCI Tires — reliable all-terrain and all-season tires at competitive prices. Free delivery across Canada.</p>',
+  },
+  'transeagle-tires': {
+    title: 'Transeagle Tires Canada | Buy Transeagle Tires Online | GCI Tires',
+    description:
+      'Shop Transeagle tires at GCI Tires. Heavy-duty trailer, ST radial and all-terrain tires with free shipping across Canada.',
+    body_html:
+      '<p>Transeagle tires engineered for heavy-duty performance — trailer, all-terrain and ST radial options. Free delivery across Canada.</p>',
+  },
+  'falken-tires': {
+    title: 'Falken Tires Canada | Buy Falken Tires Online | GCI Tires',
+    description:
+      'Shop Falken tires at GCI Tires. Performance, all-season and winter tires with motorsport-inspired engineering. Free delivery across Canada.',
+    body_html:
+      '<p>Falken tires — motorsport heritage meets everyday performance. Shop all-season, summer and winter tires with free delivery across Canada.</p>',
+  },
+  'gt-radial-tires': {
+    title: 'GT Radial Tires Canada | Buy GT Radial Tires Online | GCI Tires',
+    description:
+      'Shop GT Radial tires at GCI Tires. All-terrain, highway and performance tires for cars, trucks and SUVs with free shipping across Canada.',
+    body_html:
+      '<p>GT Radial tires offer high-performance value for every driving style — all-season, all-terrain and performance. Free delivery across Canada.</p>',
+  },
+  'kelly-tires': {
+    title: 'Kelly Tires Canada | Buy Kelly Tires Online | GCI Tires',
+    description:
+      'Shop Kelly tires at GCI Tires. All-terrain and highway tires from this long-standing Cooper Tire brand. Free delivery across Canada.',
+    body_html:
+      '<p>Kelly tires — reliable, value-driven performance from a Cooper Tire brand. Free delivery across Canada.</p>',
+  },
+  'pirelli-tires': {
+    title: 'Pirelli Tires Canada | Buy Pirelli Tires Online | GCI Tires',
+    description:
+      'Shop Pirelli tires at GCI Tires. Premium Italian performance and winter tires for Canadian drivers, free shipping Canada-wide.',
+    body_html:
+      '<p>Pirelli tires — Italian performance engineering for Canadian roads. Shop summer, all-season and winter tires with free delivery across Canada.</p>',
+  },
 };
 
 function delay(ms: number): Promise<void> {
