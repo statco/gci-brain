@@ -1,0 +1,18 @@
+# GCI Tires — Protected Files
+# Changes to these files require approval from @statco (info@gcitires.ca)
+# Add this file to .github/CODEOWNERS in both repos
+
+# === gci-brain ===
+/src/services/shopifyProductService.ts  @statco
+/api/chat.ts                            @statco
+/src/services/geminiService.ts          @statco
+/api/updateCollectionSeo.ts             @statco
+/api/fitmentCheck.ts                    @statco
+/api/shopifySync.ts                     @statco
+/api/addTireImages.ts                   @statco
+
+# === gcitires-chatbot ===
+/api/chat.ts                            @statco
+/lib/shopify.ts                         @statco
+/lib/prompts.ts                         @statco
+/lib/anthropic.ts                       @statco
