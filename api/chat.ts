@@ -58,12 +58,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!question) return res.status(400).json({ error: 'Missing question' });
 
   const tiresSummary = tires.length > 0
-    ? tires.map((t: any) => `- ${t.brand} ${t.model} ${t.size} (${t.season}, $${t.pricePerUnit ?? t.price}/tire, ${t.fitmentVerified ? 'fitment verified' : 'not fitment verified'})`).join('\n')
+    ? tires.map((t: any) => {
+        // productUrl is pre-built in shopifyProductService from the real Shopify handle
+        const url = t.productUrl
+          ?? (t.shopifyHandle ? `https://gcitires.ca/products/${t.shopifyHandle}` : '');
+        const link = url ? ` | 🔗 ${url}` : '';
+        return `- ${t.title} (${t.season}, $${t.pricePerUnit ?? t.price}/tire, ${t.fitmentVerified ? 'fitment verified' : 'not verified'}${link})`;
+      }).join('\n')
     : 'No specific tires were recommended.';
 
   const systemPrompt = language === 'fr'
-    ? `Vous êtes un conseiller expert en pneus pour GCI Tires (Canada). Le client a reçu les recommandations de pneus suivantes:\n${tiresSummary}\n\nRépondez aux questions de suivi sur ces pneus spécifiques. Soyez concis (2-4 phrases max). Ne recommandez pas d'autres pneus sauf si explicitement demandé. Répondez en français.`
-    : `You are an expert tire consultant for GCI Tires (Canada). The customer was already recommended these tires:\n${tiresSummary}\n\nAnswer follow-up questions about these specific tires only. Be concise (2-4 sentences max). Do not suggest different tires unless explicitly asked.`;
+    ? `Vous êtes un conseiller expert en pneus pour GCI Tires (Canada). Le client a reçu les recommandations de pneus suivantes:\n${tiresSummary}\n\nRègles:\n- Répondez aux questions de suivi sur ces pneus spécifiques uniquement.\n- Soyez concis (2-4 phrases max).\n- TOUJOURS inclure le lien produit (🔗 URL) lorsque vous discutez d'un pneu spécifique, même si le client ne le demande pas.\n- Si le client veut acheter, fournissez le lien exact depuis la liste ci-dessus. Ne jamais inventer des URLs.\n- Ne recommandez pas d'autres pneus sauf si explicitement demandé. Répondez en français.`
+    : `You are an expert tire consultant for GCI Tires (Canada). The customer was already recommended these tires:\n${tiresSummary}\n\nRules:\n- Answer follow-up questions about these specific tires only.\n- Be concise (2-4 sentences max).\n- ALWAYS include the product link (🔗 URL) when discussing a specific tire, even if the customer did not ask for it.\n- If a customer asks to buy or checkout, provide the exact product link from the tire list above. Never invent URLs.\n- Do not suggest different tires unless explicitly asked.`;
 
   const messages = [
     ...conversationHistory,
