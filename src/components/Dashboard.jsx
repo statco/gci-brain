@@ -98,7 +98,21 @@ export default function Dashboard() {
         </Section>
 
         <Section title="📦 Catalog" subtitle="Seasonal and periodic maintenance">
-          <ToolCard icon="🗂" title="Collection SEO" description="Update SEO titles and descriptions for all 11 Shopify collections" route="/collection-seo" />
+          <ToolCard icon="🗂" title="Collection SEO" description="Update SEO titles and descriptions for all 21 Shopify collections" route="/collection-seo" />
+          <ToolCard icon="🛞" title="Shopify Fix" description="Fix size formats, assign variant images, translate SEO — chunked with auto-continue" route="/fix" />
+          <ToolCard icon="🏷️" title="Fix Titles" description="Bulk-fix product titles to match GCI naming convention" route="/fix-titles" />
+          <ToolCard icon="📝" title="Fix Descriptions" description="Translate and rewrite product body_html descriptions" route="/fix-descriptions" />
+          <ToolCard icon="🖼️" title="Fix Alt Tags" description="Assign SEO alt tags to all product images" route="/fix-alt-tags" />
+        </Section>
+
+        <Section title="🌐 Localisation" subtitle="French content and translation tools">
+          <ToolCard icon="🇫🇷" title="Fix French Content" description="Fix menus, pages, metafields and theme strings for French locale" route="/fix-french" />
+          <ToolCard icon="🎨" title="Fix Theme Content" description="Update theme metafields and content blocks" route="/fix-theme" />
+          <ToolCard icon="🔤" title="Translate Content" description="Translate products, collections, pages and tags via Shopify Translate API" route="/translate" />
+        </Section>
+
+        <Section title="⭐ Reviews" subtitle="Customer review management">
+          <ToolCard icon="💬" title="Reviews Moderation" description="Approve, reject and manage customer product reviews" route="/reviews" />
         </Section>
 
         <Section title="🔗 Quick Links" cols={2}>
