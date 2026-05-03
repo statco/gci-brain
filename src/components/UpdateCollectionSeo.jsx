@@ -112,10 +112,12 @@ export default function UpdateCollectionSeo() {
 
             {/* Info */}
             <div style={{ fontSize: 12, color: "#444", fontFamily: "monospace", marginBottom: 24, lineHeight: 1.6, padding: "10px 12px", background: "#0a0a0a", borderRadius: 8, border: "1px solid #1a1a1a" }}>
-              Targets 11 collections:<br />
+              Targets 21 collections:<br />
               Winter · Summer · All-Season · All-Weather<br />
               SUV & Crossover · Light Truck · All-Terrain<br />
-              Passenger Car · Cooper · Nexen · Vredestein
+              Passenger Car · Cooper · Nexen · Vredestein<br />
+              Maxtrek · Minerva · Ovation · Starfire · Kenda<br />
+              Transeagle · Falken · GT Radial · Kelly · Pirelli
             </div>
 
             {/* Run button */}
