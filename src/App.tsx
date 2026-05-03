@@ -5,6 +5,13 @@ import UpdateCollectionSeo from './components/UpdateCollectionSeo';
 import FixRedirects from './components/FixRedirects';
 import UpdateSeo from './components/UpdateSeo';
 import ShopifyFixDashboard from './components/ShopifyFixDashboard';
+import FixAltTags from './components/FixAltTags';
+import FixFrenchContent from './components/FixFrenchContent';
+import FixProductDescriptions from './components/FixProductDescriptions';
+import FixThemeContent from './components/FixThemeContent';
+import FixTitles from './components/FixTitles';
+import ReviewsModeration from './components/ReviewsModeration';
+import TranslateContentCard from './components/TranslateContentCard';
 import React, { useState, useEffect } from 'react';
 import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
@@ -288,6 +295,13 @@ function App() {
         <Route path="/fix-redirects" element={<FixRedirects />} />
         <Route path="/update-seo" element={<UpdateSeo />} />
         <Route path="/fix" element={<ShopifyFixDashboard />} />
+        <Route path="/fix-alt-tags" element={<FixAltTags />} />
+        <Route path="/fix-french" element={<FixFrenchContent />} />
+        <Route path="/fix-descriptions" element={<FixProductDescriptions />} />
+        <Route path="/fix-theme" element={<FixThemeContent />} />
+        <Route path="/fix-titles" element={<FixTitles />} />
+        <Route path="/reviews" element={<ReviewsModeration />} />
+        <Route path="/translate" element={<TranslateContentCard />} />
       </Routes>
     </BrowserRouter>
   );
