@@ -255,12 +255,19 @@ function transformShopifyProducts(edges: any[]) {
     const resolvedLI = descLI || tagLI || metaLI || titleLI || '94';
     const resolvedSR = descSR || tagSR || metaSR || titleSR || 'H';
 
+    const productUrl = `https://gcitires.ca/products/${product.handle}`;
+    const brand      = extractBrandFromTitle(product.title);
+    const size       = extractSizeFromTitle(product.title);
+    // Strip size + trailing season label from title to get clean model name
+    const model      = extractModelFromTitle(product.title, brand, size);
+
     return {
       id: product.id.split('/').pop(),
       title: product.title,
-      brand: extractBrandFromTitle(product.title),
-      model: product.title,
-      size: extractSizeFromTitle(product.title),
+      brand,
+      model,
+      size,
+      productUrl,
       season: extractSeasonFromTags(product.tags || []),
       pricePerUnit: parseFloat(variant?.priceV2.amount || '0'),
       rating: 4.5,
@@ -274,7 +281,8 @@ function transformShopifyProducts(edges: any[]) {
       loadIndex: resolvedLI,
       shopifyVariantId: variant?.id || '',
       shopifyHandle: product.handle,
-      shopifyProductId: product.id
+      shopifyProductId: product.id,
+      productUrl
     };
   });
 }
@@ -282,17 +290,39 @@ function transformShopifyProducts(edges: any[]) {
 /**
  * Helper: Extract brand from title
  */
+// All GCI-carried brands — checked in priority order (longest match first)
+const ALL_BRANDS = [
+  'Bridgestone', 'Continental', 'Yokohama', 'Hankook', 'Michelin',
+  'Goodyear', 'Dunlop', 'Pirelli', 'Falken', 'GT Radial', 'Transeagle',
+  'Vredestein', 'Starfire', 'Maxtrek', 'Minerva', 'Ovation', 'Cooper',
+  'Nexen', 'Kenda', 'Kelly',
+];
+
 function extractBrandFromTitle(title: string): string {
-  const brands = ['Michelin', 'Goodyear', 'Bridgestone', 'Continental', 'Pirelli', 'Yokohama', 'Hankook', 'Dunlop'];
   const titleUpper = title.toUpperCase();
-  
-  for (const brand of brands) {
+  for (const brand of ALL_BRANDS) {
     if (titleUpper.includes(brand.toUpperCase())) {
       return brand;
     }
   }
-  
-  return title.split(' ')[0]; // First word as fallback
+  return title.split(' ')[0]; // Fallback: first word
+}
+
+/**
+ * Extract clean model name by stripping brand prefix, tire size, and trailing
+ * season/type labels that Canada Tire appends (e.g. "Winter Tire", "Summer Tire").
+ */
+function extractModelFromTitle(title: string, brand: string, size: string): string {
+  let m = title;
+  // Remove size (e.g. "225/45R18")
+  if (size) m = m.replace(size, '');
+  // Remove trailing CT-appended season label
+  m = m.replace(/\s+(Winter|Summer|All-Season)\s+Tire\s*$/i, '');
+  // Remove brand prefix if present
+  if (brand && m.trimStart().toUpperCase().startsWith(brand.toUpperCase())) {
+    m = m.trimStart().slice(brand.length);
+  }
+  return m.trim().replace(/^[-–\s]+/, '');
 }
 
 /**
