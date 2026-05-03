@@ -381,6 +381,24 @@ async function setInventory(inventoryItemId: number, qty: number): Promise<void>
 
 // ─── IMAGE ATTACHMENT ─────────────────────────────────────────────────────────
 
+/**
+ * Build the SEO-optimised image alt text following the GCI convention:
+ * "{Brand} {Model} tire {size} – {category} {vehicle} tire available with free shipping across Canada"
+ * e.g. "Nexen Roadian ATX tire 265/70R17 – all-season light truck/SUV tire available with free shipping across Canada"
+ */
+function buildImageAlt(ct: CTTire): string {
+  const normalizedBrand = normalizeVendor(ct.brand);
+  const size            = parseCTSizeCode(ct.size);
+  const tireType        = classifyTireType(ct.performanceCategory, ct.size);
+
+  const category = ct.isWinter ? 'winter' : 'all-season';
+  const vehicle  = tireType === 'heavy_truck'  ? 'commercial truck'
+                 : tireType === 'light_truck'   ? 'light truck/SUV'
+                 :                               'passenger';
+
+  return `${normalizedBrand} ${ct.model} tire ${size} – ${category} ${vehicle} tire available with free shipping across Canada`;
+}
+
 async function attachProductImage(productId: number, ct: CTTire): Promise<boolean> {
   const lookupKey = `${ct.brand} ${ct.model}`;
   const imageUrl  = getTireImageUrl(lookupKey);
@@ -390,12 +408,14 @@ async function attachProductImage(productId: number, ct: CTTire): Promise<boolea
     return false;
   }
 
+  const alt = buildImageAlt(ct);
+
   try {
     await shopifyFetch(`/products/${productId}/images.json`, {
       method: 'POST',
-      body: JSON.stringify({ image: { src: imageUrl, alt: lookupKey } }),
+      body: JSON.stringify({ image: { src: imageUrl, alt } }),
     });
-    console.log(`🖼️  Image attached for: "${lookupKey}"`);
+    console.log(`🖼️  Image attached for: "${lookupKey}" | alt: "${alt}"`);
     return true;
   } catch (e: any) {
     console.warn(`⚠️  Image attach failed for ${productId} ("${lookupKey}"): ${e.message}`);
