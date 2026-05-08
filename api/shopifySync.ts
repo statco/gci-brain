@@ -1317,6 +1317,166 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'audit-tire-skus', summary:{ totalTireSkuProducts:tireSkuProducts.length, realCtSkuProducts:realSkuByTitle.size, hasRealMatch:hasRealMatch.length, trulyStale:trulyStale.length, note:'hasRealMatch products are safe to delete (real CT product exists). trulyStale have no CT counterpart — investigate before deleting.' }, samples:{ hasRealMatch:hasRealMatch.slice(0,10).map(p=>({tireProduct:{id:p.id,title:p.title,sku:p.tireSku},realProduct:{id:p.realId,sku:p.realSku}})), trulyStale:trulyStale.slice(0,10).map(p=>({id:p.id,title:p.title,sku:p.sku})) } });
       }
 
+      case 'clear-french-handles': {
+        // Clears all French URL handle translations from Translate & Adapt.
+        // When French handles are blank, Shopify automatically uses the English
+        // handle with the /fr-ca/ prefix — no collision, no -1 suffix.
+        //
+        // Uses the Shopify Translations API (GraphQL) to delete the handle
+        // translation resource for every product.
+        //
+        // Query params:
+        //   dryRun=true  (default) — counts affected products, no writes
+        //   dryRun=false           — clears handles in batches of 10
+        //   offset=0               — pagination offset
+        //   limit=100              — products to process per call
+        //
+        // Run repeatedly with increasing offset until done=true.
+        // Usage:
+        //   POST /api/shopifySync?action=clear-french-handles            ← dry run
+        //   POST /api/shopifySync?action=clear-french-handles&dryRun=false&offset=0&limit=100
+
+        const cfhDryRun = (req.query.dryRun ?? 'true') !== 'false';
+        const cfhOffset = parseInt(req.query.offset as string || '0', 10);
+        const cfhLimit  = parseInt(req.query.limit  as string || '100', 10);
+
+        const graphqlUrl = `https://${SHOPIFY.domain}/admin/api/${SHOPIFY.apiVersion}/graphql.json`;
+
+        // Helper: run a GraphQL query
+        async function gql(query: string, variables: Record<string,any> = {}): Promise<any> {
+          const r = await fetch(graphqlUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+            body: JSON.stringify({ query, variables }),
+          });
+          if (r.status === 429) { await delay(2000); return gql(query, variables); }
+          if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}: ${(await r.text()).slice(0,200)}`);
+          return r.json();
+        }
+
+        // Step 1: paginate all products to get their GIDs
+        const allProductGids: Array<{ gid: string; title: string }> = [];
+        let cfhCursor: string | null = null;
+
+        while (true) {
+          const result: any = await gql(`
+            query($cursor: String) {
+              products(first: 250, after: $cursor, query: "tag:ct-sync") {
+                edges {
+                  cursor
+                  node { id title }
+                }
+                pageInfo { hasNextPage }
+              }
+            }
+          `, { cursor: cfhCursor });
+
+          const edges = result?.data?.products?.edges || [];
+          for (const e of edges) {
+            allProductGids.push({ gid: e.node.id, title: e.node.title });
+          }
+          if (!result?.data?.products?.pageInfo?.hasNextPage) break;
+          cfhCursor = edges[edges.length - 1]?.cursor || null;
+          await delay(200);
+        }
+
+        const chunk = allProductGids.slice(cfhOffset, cfhOffset + cfhLimit);
+        const nextOffset = cfhOffset + cfhLimit;
+        const cfhDone = nextOffset >= allProductGids.length;
+
+        console.log(`[clear-french-handles] Total products: ${allProductGids.length}, chunk: ${chunk.length} (offset=${cfhOffset})`);
+
+        if (cfhDryRun) {
+          return res.status(200).json({
+            success: true,
+            mode: 'clear-french-handles',
+            dryRun: true,
+            totalProducts: allProductGids.length,
+            chunkSize: chunk.length,
+            offset: cfhOffset,
+            nextOffset: cfhDone ? null : nextOffset,
+            done: cfhDone,
+            sample: chunk.slice(0, 10).map(p => p.title),
+            note: 'Run with dryRun=false to clear French handles',
+          });
+        }
+
+        // Step 2: for each product, delete the French handle translation
+        let cleared = 0, skipped = 0, cfhErrors = 0;
+        const cfhErrorList: string[] = [];
+
+        for (const product of chunk) {
+          try {
+            // First check if a French handle translation exists
+            const transResult: any = await gql(`
+              query($id: ID!, $locale: String!) {
+                translatableResource(resourceId: $id) {
+                  translations(locale: $locale) {
+                    key
+                    value
+                  }
+                }
+              }
+            `, { id: product.gid, locale: 'fr' });
+
+            const translations: Array<{ key: string; value: string }> =
+              transResult?.data?.translatableResource?.translations || [];
+
+            const handleTranslation = translations.find(t => t.key === 'handle');
+
+            if (!handleTranslation) {
+              skipped++;
+              continue; // no French handle set — nothing to clear
+            }
+
+            // Delete the French handle translation by setting it to empty string
+            // Shopify treats empty/missing translation as "use default language"
+            const removeResult: any = await gql(`
+              mutation($id: ID!, $translations: [TranslationInput!]!) {
+                translationsRemove(resourceId: $id, translationKeys: ["handle"], locales: ["fr"]) {
+                  userErrors { field message }
+                  translations { key value }
+                }
+              }
+            `, { id: product.gid, translations: [] });
+
+            const userErrors = removeResult?.data?.translationsRemove?.userErrors || [];
+            if (userErrors.length > 0) {
+              cfhErrors++;
+              cfhErrorList.push(`${product.title}: ${userErrors.map((e: any) => e.message).join(', ')}`);
+            } else {
+              cleared++;
+              console.log(`✅ Cleared French handle for: "${product.title}"`);
+            }
+
+            await delay(150); // respect API rate limits
+
+          } catch (e: any) {
+            cfhErrors++;
+            cfhErrorList.push(`${product.title}: ${e.message}`);
+            console.error(`[clear-french-handles] Failed "${product.title}":`, e.message);
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          mode: 'clear-french-handles',
+          dryRun: false,
+          totalProducts: allProductGids.length,
+          chunkProcessed: chunk.length,
+          cleared,
+          skipped,
+          errors: cfhErrors,
+          ...(cfhErrorList.length > 0 ? { errorList: cfhErrorList.slice(0, 20) } : {}),
+          offset: cfhOffset,
+          nextOffset: cfhDone ? null : nextOffset,
+          done: cfhDone,
+          nextCommand: cfhDone
+            ? '✅ All French handles cleared'
+            : `Run with offset=${nextOffset} to continue`,
+        });
+      }
+
       case 'daily-sync':
       default: {
         const updateOffset    = parseInt(req.query.updateOffset as string || '0', 10);
