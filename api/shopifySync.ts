@@ -1317,6 +1317,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'audit-tire-skus', summary:{ totalTireSkuProducts:tireSkuProducts.length, realCtSkuProducts:realSkuByTitle.size, hasRealMatch:hasRealMatch.length, trulyStale:trulyStale.length, note:'hasRealMatch products are safe to delete (real CT product exists). trulyStale have no CT counterpart — investigate before deleting.' }, samples:{ hasRealMatch:hasRealMatch.slice(0,10).map(p=>({tireProduct:{id:p.id,title:p.title,sku:p.tireSku},realProduct:{id:p.realId,sku:p.realSku}})), trulyStale:trulyStale.slice(0,10).map(p=>({id:p.id,title:p.title,sku:p.sku})) } });
       }
 
+      case 'debug-translations': {
+        // Inspect what translation keys and locales T&A actually stores for a product.
+        // Usage: POST /api/shopifySync?action=debug-translations&search=cooper+procontrol
+        const searchTerm = (req.query.search as string || 'Cooper Procontrol').trim();
+        const graphqlUrl = `https://${SHOPIFY.domain}/admin/api/${SHOPIFY.apiVersion}/graphql.json`;
+
+        async function gqlDebug(query: string, variables: Record<string,any> = {}): Promise<any> {
+          const r = await fetch(graphqlUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+            body: JSON.stringify({ query, variables }),
+          });
+          if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}: ${(await r.text()).slice(0,200)}`);
+          return r.json();
+        }
+
+        // Find one matching product
+        const findResult: any = await gqlDebug(`
+          query($q: String!) {
+            products(first: 1, query: $q) {
+              edges { node { id title handle } }
+            }
+          }
+        `, { q: searchTerm });
+
+        const product = findResult?.data?.products?.edges?.[0]?.node;
+        if (!product) return res.status(404).json({ error: `No product found matching: ${searchTerm}` });
+
+        // Check all locales
+        const locales = ['fr', 'fr-CA', 'fr_CA', 'fr-ca'];
+        const results: Record<string, any> = {};
+
+        for (const locale of locales) {
+          const transResult: any = await gqlDebug(`
+            query($id: ID!, $locale: String!) {
+              translatableResource(resourceId: $id) {
+                translations(locale: $locale) { key value locale outdated }
+              }
+            }
+          `, { id: product.id, locale });
+          results[locale] = transResult?.data?.translatableResource?.translations || [];
+        }
+
+        // Also check translatableContent to see all available keys
+        const contentResult: any = await gqlDebug(`
+          query($id: ID!) {
+            translatableResource(resourceId: $id) {
+              translatableContent { key value digest locale }
+            }
+          }
+        `, { id: product.id });
+
+        return res.status(200).json({
+          success: true,
+          mode: 'debug-translations',
+          product: { id: product.id, title: product.title, handle: product.handle },
+          translationsByLocale: results,
+          translatableContent: contentResult?.data?.translatableResource?.translatableContent || [],
+        });
+      }
+
       case 'clear-french-handles': {
         // Clears all French URL handle translations from Translate & Adapt.
         // When French handles are blank, Shopify automatically uses the English
