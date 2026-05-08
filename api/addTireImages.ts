@@ -174,6 +174,8 @@ export const IMAGE_MAP: Record<string, string> = {
 
   // ── VREDESTEIN ─────────────────────────────────────────────────────────────
   // Images verified from vredestein.com/content/dam/orbit/syncforce/products/
+  "VREDESTEIN ULTRAC":             "https://cdn.shopify.com/s/files/1/0659/0408/2992/files/vredestein-ultrac-vorti___media_library_original_300_300_701af8f1-e83f-4e4e-8058-aa04c3f5ce62.jpg?v=1777747837",  // ✅ Shopify CDN
+  "VREDESTEIN ULTRAC PRO":         "https://cdn.shopify.com/s/files/1/0659/0408/2992/files/vredestein-ultrac-vorti___media_library_original_300_300_701af8f1-e83f-4e4e-8058-aa04c3f5ce62.jpg?v=1777747837",  // ✅ Shopify CDN
   "VREDESTEIN QUATRAC":             VR("1998", "T0015902"),                  // 🔄 all-season family tile
   "VREDESTEIN QUATRAC PRO PLUS":    VR("1998", "T0015902"),                  // ✅ product 1998 T0015902
   "VREDESTEIN WINTRAC":             VR("1582", "T0017030"),                  // 🔄 winter family tile
