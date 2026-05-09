@@ -88,8 +88,15 @@ async function assignVariantImages(product, dryRun, log) {
 }
 
 async function translateSeo(product, dryRun, log) {
-  const res  = await shopifyFetch(`${BASE}/products/${product.id}/metafields.json?namespace=global`);
-  const json = await res.json();
+  const res = await shopifyFetch(`${BASE}/products/${product.id}/metafields.json?namespace=global`);
+  const mfText = await res.text();
+  let json;
+  try {
+    json = JSON.parse(mfText);
+  } catch (_) {
+    log.push(`  [4] ❌ Non-JSON metafield response for product ${product.id} (status ${res.status}): ${mfText.slice(0, 200)}`);
+    return 0;
+  }
   const mfs  = (json.metafields ?? []).filter(m => ["title_tag", "description_tag"].includes(m.key));
   let count = 0;
   for (const mf of mfs) {
@@ -102,9 +109,11 @@ async function translateSeo(product, dryRun, log) {
   return count;
 }
 
+export const config = { maxDuration: 300 };
+
 export default async function handler(req, res) {
   if (!STORE || !TOKEN) return res.status(500).json({ error: "Missing env vars" });
-  const { dryRun, chunkSize = "20", offset = "0", task = "all" } = req.query;
+  const { dryRun, chunkSize = "5", offset = "0", task = "all" } = req.query;
   const isDryRun = dryRun === "true" || dryRun === "1";
   const CHUNK  = Math.min(parseInt(chunkSize, 10), 50);
   const OFFSET = parseInt(offset, 10);
@@ -114,8 +123,16 @@ export default async function handler(req, res) {
   let skipped = 0, processed = 0;
   try {
     while (url && processed < CHUNK) {
-      const pageRes  = await shopifyFetch(url);
-      const pageJson = await pageRes.json();
+      const pageRes = await shopifyFetch(url);
+      const pageText = await pageRes.text();
+      let pageJson;
+      try {
+        pageJson = JSON.parse(pageText);
+      } catch (_) {
+        log.push(`❌ Non-JSON response from Shopify at offset=${OFFSET + skipped} status=${pageRes.status}\n  Raw: ${pageText.slice(0, 300)}`);
+        stats.errors++;
+        break;
+      }
       for (const product of pageJson.products ?? []) {
         if (processed >= CHUNK) break;
         if (skipped < OFFSET) { skipped++; continue; }

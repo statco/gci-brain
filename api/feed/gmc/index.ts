@@ -3,6 +3,7 @@
 // Fixes: clean English descriptions, proper title normalization,
 //        correct season/vehicle detection, GMC policy compliance.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { cachedResolveImageLink } from '../../../lib/image-cdn';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
@@ -15,7 +16,7 @@ const COLUMNS = [
   'image_link', 'additional_image_link', 'condition', 'availability',
   'price', 'brand', 'mpn', 'google_product_category', 'product_type',
   'custom_label_0', 'custom_label_1', 'custom_label_2',
-  'identifier exists', 'quantity',
+  'identifier exists',
 ] as const;
 type Row = Record<typeof COLUMNS[number], string>;
 
@@ -185,15 +186,16 @@ function isTireProduct(product: ShopifyProduct): boolean {
 }
 
 // ─── Row builder ──────────────────────────────────────────────────────────────
-function buildRows(product: ShopifyProduct): string[] {
+async function buildRows(product: ShopifyProduct): Promise<string[]> {
   const tags        = product.tags.split(',').map(t => t.trim()).filter(Boolean);
   const season      = detectSeason(tags);
   const vehicle     = detectVehicle(tags);
   const brand       = product.vendor || '';
   const cleanTitle  = normalizeTitle(product.title);
   const description = buildDescription(product, season, vehicle, cleanTitle);
-  const mainImage   = product.images[0]?.src ?? '';
   const extraImages = product.images.slice(1, 11).map(i => i.src).join(',');
+
+  const imageLink = await cachedResolveImageLink(product);
 
   // Product type path for GMC taxonomy
   const productTypeParts: string[] = ['Tires'];
@@ -205,7 +207,6 @@ function buildRows(product: ShopifyProduct): string[] {
   function fmtPrice(p: string) { return `${parseFloat(p).toFixed(2)} CAD`; }
 
   return product.variants.map((variant): string => {
-    const variantImage = product.images.find(img => img.id === variant.image_id)?.src ?? mainImage;
     const avail = variant.inventory_quantity > 0 ? 'in_stock' : 'out_of_stock';
 
     // Title: use cleaned product title (variant title is usually "Default Title")
@@ -217,7 +218,7 @@ function buildRows(product: ShopifyProduct): string[] {
       title,
       description:             tsv(description),
       link:                    `${STOREFRONT_URL}/products/${product.handle}`,
-      image_link:              variantImage,
+      image_link:              imageLink,
       additional_image_link:   extraImages,
       condition:               'new',
       availability:            avail,
@@ -230,7 +231,6 @@ function buildRows(product: ShopifyProduct): string[] {
       custom_label_1:          tsv(vehicle.label),
       custom_label_2:          tsv(brand),
       'identifier exists':     'no',
-      quantity:                String(Math.max(0, variant.inventory_quantity)),
     };
     return COLUMNS.map(col => row[col]).join('\t');
   });
@@ -251,7 +251,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!isTireProduct(product)) { skipped++; continue; }
       const validVariants = product.variants.filter(v => parseFloat(v.price) > 0);
       if (validVariants.length === 0) { skipped++; continue; }
-      rows.push(...buildRows({ ...product, variants: validVariants }));
+      rows.push(...await buildRows({ ...product, variants: validVariants }));
     }
     const tsvBody = rows.join('\n');
     console.log(`[feed/gmc] Generated: ${rows.length - 1} rows | Skipped: ${skipped}`);

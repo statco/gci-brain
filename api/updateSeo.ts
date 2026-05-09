@@ -59,7 +59,7 @@ async function generateAiCopy(
   const s = SEASON_LABELS[season]  || 'All-Season';
   const v = VEHICLE_LABELS[vehicle] || 'passenger car';
 
-  const prompt = `You are an e-commerce copywriter specializing in tires for the Canadian market. Generate English content for this tire product.
+  const prompt = `You are an e-commerce copywriter specializing in tires for the Canadian market. Generate English-only content for this tire product.
 
 Product: ${productTitle}
 Type: ${s} tire for ${v}
@@ -68,7 +68,7 @@ Market: Canada (Quebec and all provinces)
 Respond ONLY with a valid JSON object, no markdown, no extra text:
 {
   "description": "<p>2-3 HTML sentences describing the tire compellingly. Mention season, vehicle type, and Canadian driving conditions. Natural tone, no hollow superlatives.</p>",
-  "metaDescription": "SEO meta max 155 chars. Start: Shop the [title] at GCI Tires. [Vehicle cap] fitment. Free shipping across Canada."
+  "metaDescription": "English only. Max 155 chars. No French. Format: The [product title] delivers [season-specific benefit, e.g. winter-ready traction / all-season reliability / all-terrain grip] for [vehicle type] drivers in Canada. Free shipping Canada-wide."
 }`;
 
   try {
@@ -113,11 +113,13 @@ const parsed = JSON.parse(clean);
 // ─── STATIC FALLBACKS ─────────────────────────────────────────────────────────
 
 function metaDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
-  // English GMC-compliant meta: max 155 chars
-  const s = SEASON_LABELS[season]  || 'All-Season';
   const v = VEHICLE_LABELS[vehicle] || 'passenger car';
-  const vCap = v.charAt(0).toUpperCase() + v.slice(1);
-  return `Shop the ${productTitle} at GCI Tires. ${vCap} fitment. Free shipping across Canada.`.slice(0, 155);
+  const benefit = season === 'winter'      ? 'winter-ready traction'
+                : season === 'summer'      ? 'summer performance'
+                : season === 'all-weather' ? 'all-weather capability'
+                : season === 'all-terrain' ? 'all-terrain traction'
+                : 'all-season reliability';
+  return `The ${productTitle} delivers ${benefit} for ${v} drivers in Canada. Free shipping Canada-wide.`.slice(0, 155);
 }
 
 function productDescriptionFallback(productTitle: string, season: string, vehicle: string): string {
