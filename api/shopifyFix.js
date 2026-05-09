@@ -113,14 +113,24 @@ export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   if (!STORE || !TOKEN) return res.status(500).json({ error: "Missing env vars" });
-  const { dryRun, chunkSize = "5", offset = "0", task = "all" } = req.query;
+  const { dryRun, chunkSize = "5", offset = "0", task = "all", pageInfoUrl } = req.query;
   const isDryRun = dryRun === "true" || dryRun === "1";
   const CHUNK  = Math.min(parseInt(chunkSize, 10), 50);
   const OFFSET = parseInt(offset, 10);
   const stats  = { scanned: 0, sizeFixed: 0, variantsFixed: 0, imagesAssigned: 0, seoTranslated: 0, errors: 0 };
-  const log    = [`🚀 GCI Tires Shopify Fix${isDryRun ? " [DRY RUN]" : ""} | task=${task} chunkSize=${CHUNK} offset=${OFFSET}`];
-  let url = `${BASE}/products.json?limit=50&fields=id,title,body_html,images,variants,options`;
+  const log    = [`🚀 GCI Tires Shopify Fix${isDryRun ? " [DRY RUN]" : ""} | task=${task} chunkSize=${CHUNK} offset=${OFFSET}${pageInfoUrl ? " [cursor]" : ""}`];
+
+  // Use cursor URL if provided (avoids re-paging from the start at high offsets).
+  // pageInfoUrl is the Shopify Link rel="next" URL returned by the previous call.
+  let url = pageInfoUrl
+    ? decodeURIComponent(pageInfoUrl)
+    : `${BASE}/products.json?limit=50&fields=id,title,body_html,images,variants,options`;
+
+  // When using a cursor we start from the right page — no skipping needed.
+  const skipCount = pageInfoUrl ? 0 : OFFSET;
   let skipped = 0, processed = 0;
+  let nextPageUrl = null; // cursor URL to pass to the next call
+
   try {
     while (url && processed < CHUNK) {
       const pageRes = await shopifyFetch(url);
@@ -133,9 +143,10 @@ export default async function handler(req, res) {
         stats.errors++;
         break;
       }
+      const pageNextUrl = parseNextLink(pageRes.headers.get("link"));
       for (const product of pageJson.products ?? []) {
         if (processed >= CHUNK) break;
-        if (skipped < OFFSET) { skipped++; continue; }
+        if (skipped < skipCount) { skipped++; continue; }
         processed++; stats.scanned++;
         log.push(`\n[${stats.scanned}] ${product.id} — "${product.title}"`);
         try {
@@ -144,10 +155,19 @@ export default async function handler(req, res) {
           if (task === "all" || task === "seo")    { stats.seoTranslated  += await translateSeo(product, isDryRun, log); }
         } catch (err) { log.push(`  ❌ ${err.message}`); stats.errors++; }
       }
-      url = parseNextLink(pageRes.headers.get("link"));
+      // Save the next-page cursor after processing this page
+      if (processed >= CHUNK) { nextPageUrl = pageNextUrl; break; }
+      url = pageNextUrl;
     }
   } catch (err) { log.push(`❌ Fatal: ${err.message}`); stats.errors++; }
+
   const nextOffset = OFFSET + stats.scanned;
-  log.push(`\n📊 Summary${isDryRun ? " (DRY RUN)" : ""}\n  Scanned: ${stats.scanned} | Fixed: ${stats.sizeFixed} | Variants: ${stats.variantsFixed} | Images: ${stats.imagesAssigned} | SEO: ${stats.seoTranslated} | Errors: ${stats.errors}\n▶ Next: /api/shopifyFix?chunkSize=${CHUNK}&offset=${nextOffset}${isDryRun ? "&dryRun=true" : ""}`);
-  return res.status(200).json({ stats, nextOffset, log });
+  const done = !nextPageUrl && processed < CHUNK;
+  log.push(`\n📊 Summary${isDryRun ? " (DRY RUN)" : ""}\n  Scanned: ${stats.scanned} | Fixed: ${stats.sizeFixed} | Variants: ${stats.variantsFixed} | Images: ${stats.imagesAssigned} | SEO: ${stats.seoTranslated} | Errors: ${stats.errors}${done ? "\n✅ All products processed" : `\n▶ Next: /api/shopifyFix?chunkSize=${CHUNK}&offset=${nextOffset}&pageInfoUrl=${encodeURIComponent(nextPageUrl ?? "")}${isDryRun ? "&dryRun=true" : ""}`}`);
+  return res.status(200).json({
+    stats,
+    nextOffset: done ? null : nextOffset,
+    nextPageUrl: done ? null : nextPageUrl,
+    log,
+  });
 }
