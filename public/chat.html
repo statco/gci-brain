@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>💬 Ask Our AI Tire Expert — GCI Tires</title>
+  <meta name="description" content="Not sure which tires fit your vehicle? Our AI Tire Expert answers in seconds — brand, size, season, and price. Free, no account needed.">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://gcitires.com/chat">
+  <meta property="og:title" content="💬 Ask Our AI Tire Expert — GCI Tires">
+  <meta property="og:description" content="Not sure which tires fit your vehicle? Our AI answers instantly — brand, size, season, price. Free, no login needed.">
+  <meta property="og:image" content="https://gcitires.com/og-chat.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="GCI Tires">
+  <meta property="og:locale" content="en_CA">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="💬 Ask Our AI Tire Expert — GCI Tires">
+  <meta name="twitter:description" content="Not sure which tires fit your vehicle? Our AI answers instantly — free, no login.">
+  <meta name="twitter:image" content="https://gcitires.com/og-chat.png">
+
+  <link rel="canonical" href="https://gcitires.com/chat">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --red: #FF3B00;
+      --red-dark: #CC2F00;
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --surface-2: #1c1c1c;
+      --text: #f0ece3;
+      --text-muted: rgba(240,236,227,0.45);
+      --text-dim: rgba(240,236,227,0.2);
+      --border: rgba(255,255,255,0.07);
+    }
+
+    html, body { height: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Barlow', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem 1.5rem;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 15% 60%, rgba(255,59,0,0.07) 0%, transparent 100%),
+        radial-gradient(ellipse 40% 40% at 85% 20%, rgba(255,59,0,0.04) 0%, transparent 100%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .wordmark {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 3rem;
+    }
+
+    .icon-ring {
+      width: 88px;
+      height: 88px;
+      margin: 0 auto 1.75rem;
+      background: var(--surface);
+      border: 1px solid rgba(255,59,0,0.25);
+      border-radius: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 44px;
+      line-height: 1;
+      animation: breathe 3s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,0,0); border-color: rgba(255,59,0,0.25); }
+      50% { box-shadow: 0 0 24px 4px rgba(255,59,0,0.12); border-color: rgba(255,59,0,0.5); }
+    }
+
+    h1 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: clamp(2.6rem, 10vw, 3.6rem);
+      font-weight: 900;
+      line-height: 0.95;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 em {
+      font-style: normal;
+      color: var(--red);
+    }
+
+    .sub {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+      margin-bottom: 2.25rem;
+    }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--red);
+      color: #fff;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-decoration: none;
+      padding: 1rem 2rem;
+      border-radius: 14px;
+      transition: background 0.15s, transform 0.15s;
+      margin-bottom: 1rem;
+    }
+
+    .cta:hover { background: var(--red-dark); transform: translateY(-2px); }
+    .cta:active { transform: translateY(0); }
+
+    .progress-wrap {
+      height: 2px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--red);
+      width: 0%;
+      border-radius: 2px;
+    }
+
+    .timer-note {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 2.5rem;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 3rem;
+    }
+
+    .chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .footer {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-decoration: none;
+      letter-spacing: 0.05em;
+    }
+    .footer:hover { color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="wordmark">GCI Tires</p>
+
+    <div class="icon-ring">🤖</div>
+
+    <h1>Ask Our<br><em>AI Tire</em><br>Expert</h1>
+
+    <p class="sub">
+      Not sure which tires fit your vehicle?<br>
+      Get instant answers — brand, size, season &amp; price.<br>
+      Free, no account needed.
+    </p>
+
+    <a href="https://match.gcitires.com" class="cta" id="ctaBtn">💬 &nbsp;Start Chatting Now</a>
+
+    <div class="progress-wrap">
+      <div class="progress-bar" id="bar"></div>
+    </div>
+    <p class="timer-note">Redirecting in <span id="count">5</span>s &mdash; or tap the button</p>
+
+    <div class="chips">
+      <span class="chip">✅ Free to use</span>
+      <span class="chip">⚡ Instant answers</span>
+      <span class="chip">🔒 No login needed</span>
+      <span class="chip">🚗 All vehicles</span>
+    </div>
+
+    <a href="https://gcitires.com" class="footer">gcitires.com</a>
+  </div>
+
+  <script>
+    const URL = 'https://match.gcitires.com';
+    const SECS = 5;
+    let remaining = SECS;
+    const bar = document.getElementById('bar');
+    const cnt = document.getElementById('count');
+
+    bar.style.transition = `width ${SECS}s linear`;
+    requestAnimationFrame(() => { bar.style.width = '100%'; });
+
+    const tick = setInterval(() => {
+      remaining--;
+      cnt.textContent = remaining;
+      if (remaining <= 0) { clearInterval(tick); location.href = URL; }
+    }, 1000);
+
+    document.getElementById('ctaBtn').addEventListener('click', e => {
+      clearInterval(tick);
+    });
+  </script>
+</body>
+</html>
