@@ -10,6 +10,7 @@ import FixFrenchContent from './components/FixFrenchContent';
 import FixProductDescriptions from './components/FixProductDescriptions';
 import FixThemeContent from './components/FixThemeContent';
 import FixTitles from './components/FixTitles';
+import DuplicateSkuAudit from './components/DuplicateSkuAudit';
 import ReviewsModeration from './components/ReviewsModeration';
 import TranslateContentCard from './components/TranslateContentCard';
 import React, { useState, useEffect } from 'react';
@@ -300,6 +301,7 @@ function App() {
         <Route path="/fix-descriptions" element={<FixProductDescriptions />} />
         <Route path="/fix-theme" element={<FixThemeContent />} />
         <Route path="/fix-titles" element={<FixTitles />} />
+        <Route path="/duplicate-sku-audit" element={<DuplicateSkuAudit />} />
         <Route path="/reviews" element={<ReviewsModeration />} />
         <Route path="/translate" element={<TranslateContentCard />} />
       </Routes>
