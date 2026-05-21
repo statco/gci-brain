@@ -103,6 +103,7 @@ export default function Dashboard() {
           <ToolCard icon="🏷️" title="Fix Titles" description="Bulk-fix product titles to match GCI naming convention" route="/fix-titles" />
           <ToolCard icon="📝" title="Fix Descriptions" description="Translate and rewrite product body_html descriptions" route="/fix-descriptions" />
           <ToolCard icon="🖼️" title="Fix Alt Tags" description="Assign SEO alt tags to all product images" route="/fix-alt-tags" />
+          <ToolCard icon="🔎" title="Duplicate SKU Audit" description="Find and clear duplicate TIRE- SKUs across Shopify products" route="/duplicate-sku-audit" />
         </Section>
 
         <Section title="🌐 Localisation" subtitle="French content and translation tools">
