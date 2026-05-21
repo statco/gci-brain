@@ -295,9 +295,8 @@ async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
         };
         // Primary index: exact SKU as stored in Shopify
         map.set(v.sku, entry);
-        // Secondary index: strip "TIRE-" prefix so CT part numbers match old products
-        // during the archive-tire-skus transition. Does not overwrite a real product
-        // if both old and new exist simultaneously.
+        // Legacy TIRE- prefix compatibility — can be removed once all
+        // TIRE- prefixed products are retired from Shopify
         if (v.sku.startsWith('TIRE-')) {
           const strippedSku = v.sku.slice(5);
           if (!map.has(strippedSku)) {
