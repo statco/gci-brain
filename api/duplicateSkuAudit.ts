@@ -39,7 +39,7 @@ async function shopifyFetchRaw(url: string, options: RequestInit = {}): Promise<
     },
   });
   if (res.status === 429) { await sleep(2000); return shopifyFetchRaw(url, options); }
-  if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`Shopify ${res.status} on ${url}: ${(await res.text()).slice(0, 1000)}`);
   return res;
 }
 
@@ -157,7 +157,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const action    = (req.query.action as string) || 'scan';
-  const dryRun    = req.query.dry !== 'false';
+  // dryRun defaults to false for action=fix so writes happen unless caller passes dry=true
+  const dryRun    = req.query.dry === 'true';
   const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
   const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
 
@@ -225,7 +226,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     console.log(`✅ Fix done — fixed:${fixed} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
-    return res.status(200).json({
+
+    // Return 207 Multi-Status when some writes succeeded and some failed
+    const httpStatus = !dryRun && errors.length > 0 ? 207 : 200;
+    return res.status(httpStatus).json({
       dryRun,
       totalDuplicateSkus: groups.length,
       fixed,
