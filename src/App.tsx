@@ -13,6 +13,7 @@ import FixTitles from './components/FixTitles';
 import DuplicateSkuAudit from './components/DuplicateSkuAudit';
 import ReviewsModeration from './components/ReviewsModeration';
 import TranslateContentCard from './components/TranslateContentCard';
+import WalmartManualShip from './components/WalmartManualShip';
 import React, { useState, useEffect } from 'react';
 import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
@@ -304,6 +305,7 @@ function App() {
         <Route path="/duplicate-sku-audit" element={<DuplicateSkuAudit />} />
         <Route path="/reviews" element={<ReviewsModeration />} />
         <Route path="/translate" element={<TranslateContentCard />} />
+        <Route path="/walmart-ship" element={<WalmartManualShip />} />
       </Routes>
     </BrowserRouter>
   );
