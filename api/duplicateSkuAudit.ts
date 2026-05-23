@@ -7,6 +7,10 @@
 // GET /api/duplicateSkuAudit?action=fix                        — clear duplicate SKUs (live write)
 // GET /api/duplicateSkuAudit?action=fix&dry=true               — fix dry run (no writes)
 // GET /api/duplicateSkuAudit?action=fix&offset=0&chunkSize=20  — chunked execution
+// GET /api/duplicateSkuAudit?action=remove-tag                 — remove ct-sync from duplicate products (live write)
+// GET /api/duplicateSkuAudit?action=remove-tag&dry=true        — remove-tag dry run (no writes)
+// GET /api/duplicateSkuAudit?action=remove-tag&ctSyncOnly=true — scope fetch to ct-sync products
+// GET /api/duplicateSkuAudit?action=remove-tag&offset=0&chunkSize=20  — chunked execution
 //
 // Only considers SKUs that start with 'TIRE-'.
 // For each duplicate SKU group, the variant on the product with the lowest
@@ -159,7 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const action      = (req.query.action as string) || 'scan';
-  // dryRun defaults to false for action=fix so writes happen unless caller passes dry=true
+  // dryRun defaults to false for action=fix/remove-tag so writes happen unless caller passes dry=true
   const dryRun      = req.query.dry        === 'true';
   const ctSyncOnly  = req.query.ctSyncOnly === 'true';
   const chunkSize   = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
@@ -246,8 +250,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // ── action=remove-tag ─────────────────────────────────────────────────────
+  if (action === 'remove-tag') {
+    // Collect the unique set of higher-productId products to de-tag (one per duplicate group).
+    // A single product may appear as the duplicate in multiple groups; deduplicate by productId
+    // so we only fetch+write it once.
+    const toDetagMap = new Map<number, string>(); // productId → productTitle
+    for (const group of groups) {
+      const sorted = [...group.variants].sort((a, b) => a.productId - b.productId);
+      // Every entry after the first (lowest id) is considered a duplicate import
+      for (const variant of sorted.slice(1)) {
+        if (!toDetagMap.has(variant.productId)) {
+          toDetagMap.set(variant.productId, variant.productTitle);
+        }
+      }
+    }
+
+    const allToDetag = Array.from(toDetagMap.entries()); // [ [productId, title], ... ]
+    const chunk      = allToDetag.slice(offset, offset + chunkSize);
+    const nextOffset = (offset + chunkSize) < allToDetag.length ? offset + chunkSize : null;
+
+    let fixed   = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const changes: Array<{ productId: number; productTitle: string; removedTag: string; newTags: string }> = [];
+
+    for (const [productId, productTitle] of chunk) {
+      console.log(`  [remove-tag] productId:${productId} product:"${productTitle}"`);
+
+      if (!dryRun) {
+        // Fetch current tags for this product
+        let currentTags: string;
+        try {
+          const data: any = await shopifyFetch(`/products/${productId}.json?fields=id,tags`);
+          currentTags = (data.product?.tags as string) ?? '';
+        } catch (err) {
+          const msg = `Product ${productId} ("${productTitle}") fetch tags: ${String(err)}`;
+          console.error(`  ❌ ${msg}`);
+          errors.push(msg);
+          continue;
+        }
+
+        // Strip 'ct-sync' (case-insensitive, trim surrounding commas/spaces)
+        const updatedTags = currentTags
+          .split(',')
+          .map(t => t.trim())
+          .filter(t => t.toLowerCase() !== 'ct-sync')
+          .join(', ');
+
+        if (updatedTags === currentTags.split(',').map(t => t.trim()).join(', ')) {
+          // Tag wasn't present
+          console.log(`  [skip no tag] productId:${productId}`);
+          skipped++;
+          continue;
+        }
+
+        try {
+          await shopifyFetch(`/products/${productId}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({ product: { id: productId, tags: updatedTags } }),
+          });
+          changes.push({ productId, productTitle, removedTag: 'ct-sync', newTags: updatedTags });
+          fixed++;
+        } catch (err) {
+          const msg = `Product ${productId} ("${productTitle}") update tags: ${String(err)}`;
+          console.error(`  ❌ ${msg}`);
+          errors.push(msg);
+          continue;
+        }
+
+        await sleep(500);
+      } else {
+        changes.push({ productId, productTitle, removedTag: 'ct-sync', newTags: '(dry run)' });
+        fixed++;
+      }
+    }
+
+    console.log(`✅ remove-tag done — fixed:${fixed} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
+
+    const httpStatus = !dryRun && errors.length > 0 ? 207 : 200;
+    return res.status(httpStatus).json({
+      dryRun,
+      totalDuplicateProducts: allToDetag.length,
+      fixed,
+      skipped,
+      errors,
+      changes,
+      offset,
+      chunkSize,
+      nextOffset,
+    });
+  }
+
   return res.status(400).json({
     error: 'Unknown action',
-    available: ['scan', 'fix'],
+    available: ['scan', 'fix', 'remove-tag'],
   });
 }
