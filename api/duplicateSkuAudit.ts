@@ -11,6 +11,7 @@
 // GET /api/duplicateSkuAudit?action=remove-tag&dry=true        — remove-tag dry run (no writes)
 // GET /api/duplicateSkuAudit?action=remove-tag&ctSyncOnly=true — scope fetch to ct-sync products
 // GET /api/duplicateSkuAudit?action=remove-tag&offset=0&chunkSize=20  — chunked execution
+// GET /api/duplicateSkuAudit?action=debug-tags&productId=N     — inspect raw tag data for one product
 //
 // Only considers SKUs that start with 'TIRE-'.
 // For each duplicate SKU group, the variant on the product with the lowest
@@ -171,6 +172,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   console.log(`🔍 duplicateSkuAudit — action=${action} dry=${dryRun} ctSyncOnly=${ctSyncOnly} chunkSize=${chunkSize} offset=${offset}`);
 
+  // ── action=debug-tags ────────────────────────────────────────────────────
+  // Handled before fetchAllProducts — only needs a single product fetch.
+  if (action === 'debug-tags') {
+    const productIdParam = req.query.productId as string;
+    if (!productIdParam) {
+      return res.status(400).json({ error: 'productId query param is required for action=debug-tags' });
+    }
+    const productId = parseInt(productIdParam, 10);
+    if (isNaN(productId)) {
+      return res.status(400).json({ error: `Invalid productId: ${productIdParam}` });
+    }
+
+    let data: any;
+    try {
+      data = await shopifyFetch(`/products/${productId}.json?fields=id,tags`);
+    } catch (err) {
+      return res.status(500).json({ error: `Shopify fetch failed: ${String(err)}` });
+    }
+
+    const rawTags = data?.product?.tags;
+    const tagType = typeof rawTags;
+
+    // Parse the same way remove-tag does so discrepancies are obvious
+    const parsed: string[] = tagType === 'string'
+      ? (rawTags as string).split(',').map((t: string) => t.trim()).filter(Boolean)
+      : Array.isArray(rawTags) ? rawTags : [];
+
+    const containsCtSync = parsed.some(t => t.toLowerCase() === 'ct-sync');
+
+    console.log(`  [debug-tags] productId:${productId} type:${tagType} rawTags:${JSON.stringify(rawTags)} containsCtSync:${containsCtSync}`);
+
+    return res.status(200).json({
+      productId,
+      rawTags,
+      type: tagType,
+      parsed,
+      containsCtSync,
+    });
+  }
+
+  // All remaining actions need the full product list
   let allProducts: ShopifyProduct[];
   try {
     allProducts = await fetchAllProducts(ctSyncOnly);
@@ -270,8 +312,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const chunk      = allToDetag.slice(offset, offset + chunkSize);
     const nextOffset = (offset + chunkSize) < allToDetag.length ? offset + chunkSize : null;
 
-    let fixed   = 0;
-    let skipped = 0;
+    let fixed      = 0;
+    let skipped    = 0;
+    let debugLogged = 0;
     const errors: string[] = [];
     const changes: Array<{ productId: number; productTitle: string; removedTag: string; newTags: string }> = [];
 
@@ -283,7 +326,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let currentTags: string;
         try {
           const data: any = await shopifyFetch(`/products/${productId}.json?fields=id,tags`);
-          currentTags = (data.product?.tags as string) ?? '';
+          const rawTags = data.product?.tags;
+
+          // Log exact format for first 3 products to diagnose skip issues
+          if (debugLogged < 3) {
+            console.log(`  [debug-tags] productId:${productId} type:${typeof rawTags} rawTags:${JSON.stringify(rawTags)}`);
+            debugLogged++;
+          }
+
+          // Shopify REST always returns tags as a comma-separated string, but guard for arrays
+          if (Array.isArray(rawTags)) {
+            currentTags = rawTags.join(', ');
+          } else {
+            currentTags = (rawTags as string) ?? '';
+          }
         } catch (err) {
           const msg = `Product ${productId} ("${productTitle}") fetch tags: ${String(err)}`;
           console.error(`  ❌ ${msg}`);
@@ -292,18 +348,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Strip 'ct-sync' (case-insensitive, trim surrounding commas/spaces)
-        const updatedTags = currentTags
-          .split(',')
-          .map(t => t.trim())
-          .filter(t => t.toLowerCase() !== 'ct-sync')
-          .join(', ');
+        const tagList    = currentTags.split(',').map(t => t.trim()).filter(Boolean);
+        const updatedList = tagList.filter(t => t.toLowerCase() !== 'ct-sync');
 
-        if (updatedTags === currentTags.split(',').map(t => t.trim()).join(', ')) {
-          // Tag wasn't present
-          console.log(`  [skip no tag] productId:${productId}`);
+        if (updatedList.length === tagList.length) {
+          // ct-sync was not present in this product's tags
+          console.log(`  [skip no tag] productId:${productId} tags:${JSON.stringify(tagList)}`);
           skipped++;
           continue;
         }
+
+        const updatedTags = updatedList.join(', ');
 
         try {
           await shopifyFetch(`/products/${productId}.json`, {
@@ -344,6 +399,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   return res.status(400).json({
     error: 'Unknown action',
-    available: ['scan', 'fix', 'remove-tag'],
+    available: ['scan', 'fix', 'remove-tag', 'debug-tags'],
   });
 }
