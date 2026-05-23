@@ -163,17 +163,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
-  const action      = (req.query.action as string) || 'scan';
-  // dryRun defaults to false for action=fix/remove-tag so writes happen unless caller passes dry=true
-  const dryRun      = req.query.dry        === 'true';
-  const ctSyncOnly  = req.query.ctSyncOnly === 'true';
-  const chunkSize   = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
-  const offset      = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
+  const action = (req.query.action as string) || 'scan';
 
-  console.log(`🔍 duplicateSkuAudit — action=${action} dry=${dryRun} ctSyncOnly=${ctSyncOnly} chunkSize=${chunkSize} offset=${offset}`);
+  // Log entry point with raw action value in quotes so routing failures are immediately visible
+  console.log(`🔍 duplicateSkuAudit — action="${action}" query:${JSON.stringify(req.query)}`);
 
   // ── action=debug-tags ────────────────────────────────────────────────────
-  // Handled before fetchAllProducts — only needs a single product fetch.
+  // First in the routing chain — needs only a single product fetch, not the full scan.
   if (action === 'debug-tags') {
     const productIdParam = req.query.productId as string;
     if (!productIdParam) {
@@ -213,6 +209,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // All remaining actions need the full product list
+  const dryRun     = req.query.dry        === 'true';
+  const ctSyncOnly = req.query.ctSyncOnly === 'true';
+  const chunkSize  = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
+  const offset     = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
+
   let allProducts: ShopifyProduct[];
   try {
     allProducts = await fetchAllProducts(ctSyncOnly);
@@ -312,8 +313,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const chunk      = allToDetag.slice(offset, offset + chunkSize);
     const nextOffset = (offset + chunkSize) < allToDetag.length ? offset + chunkSize : null;
 
-    let fixed      = 0;
-    let skipped    = 0;
+    let fixed       = 0;
+    let skipped     = 0;
     let debugLogged = 0;
     const errors: string[] = [];
     const changes: Array<{ productId: number; productTitle: string; removedTag: string; newTags: string }> = [];
@@ -348,7 +349,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Strip 'ct-sync' (case-insensitive, trim surrounding commas/spaces)
-        const tagList    = currentTags.split(',').map(t => t.trim()).filter(Boolean);
+        const tagList     = currentTags.split(',').map(t => t.trim()).filter(Boolean);
         const updatedList = tagList.filter(t => t.toLowerCase() !== 'ct-sync');
 
         if (updatedList.length === tagList.length) {
