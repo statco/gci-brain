@@ -2,9 +2,10 @@
 // ============================================================
 // Duplicate SKU Audit — find and optionally clear duplicate TIRE- SKUs
 //
-// GET /api/duplicateSkuAudit?action=scan              — dry run, returns duplicate groups
-// GET /api/duplicateSkuAudit?action=fix               — clear duplicate SKUs (live write)
-// GET /api/duplicateSkuAudit?action=fix&dry=true      — fix dry run (no writes)
+// GET /api/duplicateSkuAudit?action=scan                        — all products
+// GET /api/duplicateSkuAudit?action=scan&ctSyncOnly=true        — ct-sync tagged products only
+// GET /api/duplicateSkuAudit?action=fix                        — clear duplicate SKUs (live write)
+// GET /api/duplicateSkuAudit?action=fix&dry=true               — fix dry run (no writes)
 // GET /api/duplicateSkuAudit?action=fix&offset=0&chunkSize=20  — chunked execution
 //
 // Only considers SKUs that start with 'TIRE-'.
@@ -80,9 +81,10 @@ interface DuplicateGroup {
 
 // ─── FETCH ALL PRODUCTS ───────────────────────────────────────────────────────
 
-async function fetchAllProducts(): Promise<ShopifyProduct[]> {
+async function fetchAllProducts(ctSyncOnly: boolean): Promise<ShopifyProduct[]> {
   const all: ShopifyProduct[] = [];
-  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,status,variants`;
+  const tagParam = ctSyncOnly ? '&tag=ct-sync' : '';
+  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250${tagParam}&fields=id,title,status,variants`;
   let page = 0;
 
   while (url) {
@@ -156,17 +158,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN' });
   }
 
-  const action    = (req.query.action as string) || 'scan';
+  const action      = (req.query.action as string) || 'scan';
   // dryRun defaults to false for action=fix so writes happen unless caller passes dry=true
-  const dryRun    = req.query.dry === 'true';
-  const chunkSize = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
-  const offset    = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
+  const dryRun      = req.query.dry        === 'true';
+  const ctSyncOnly  = req.query.ctSyncOnly === 'true';
+  const chunkSize   = req.query.chunkSize ? parseInt(req.query.chunkSize as string, 10) : 20;
+  const offset      = req.query.offset    ? parseInt(req.query.offset    as string, 10) : 0;
 
-  console.log(`🔍 duplicateSkuAudit — action=${action} dry=${dryRun} chunkSize=${chunkSize} offset=${offset}`);
+  console.log(`🔍 duplicateSkuAudit — action=${action} dry=${dryRun} ctSyncOnly=${ctSyncOnly} chunkSize=${chunkSize} offset=${offset}`);
 
   let allProducts: ShopifyProduct[];
   try {
-    allProducts = await fetchAllProducts();
+    allProducts = await fetchAllProducts(ctSyncOnly);
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch products: ${String(err)}` });
   }
@@ -176,8 +179,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // ── action=scan ───────────────────────────────────────────────────────────
   if (action === 'scan') {
-    console.log(`✅ Scan done — products:${allProducts.length} duplicateSkus:${groups.length} affectedVariants:${totalAffectedVariants}`);
+    console.log(`✅ Scan done — products:${allProducts.length} duplicateSkus:${groups.length} affectedVariants:${totalAffectedVariants} ctSyncOnly:${ctSyncOnly}`);
     return res.status(200).json({
+      ctSyncOnly,
       totalProducts:        allProducts.length,
       totalVariants,
       totalDuplicateSkus:   groups.length,
