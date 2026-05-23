@@ -2,16 +2,20 @@
 // ============================================================
 // Duplicate SKU Audit — find and optionally clear duplicate TIRE- SKUs
 //
-// GET /api/duplicateSkuAudit?action=scan                        — all products
-// GET /api/duplicateSkuAudit?action=scan&ctSyncOnly=true        — ct-sync tagged products only
-// GET /api/duplicateSkuAudit?action=fix                        — clear duplicate SKUs (live write)
-// GET /api/duplicateSkuAudit?action=fix&dry=true               — fix dry run (no writes)
-// GET /api/duplicateSkuAudit?action=fix&offset=0&chunkSize=20  — chunked execution
-// GET /api/duplicateSkuAudit?action=remove-tag                 — remove ct-sync from duplicate products (live write)
-// GET /api/duplicateSkuAudit?action=remove-tag&dry=true        — remove-tag dry run (no writes)
-// GET /api/duplicateSkuAudit?action=remove-tag&ctSyncOnly=true — scope fetch to ct-sync products
-// GET /api/duplicateSkuAudit?action=remove-tag&offset=0&chunkSize=20  — chunked execution
-// GET /api/duplicateSkuAudit?action=debug-tags&productId=N     — inspect raw tag data for one product
+// GET /api/duplicateSkuAudit?action=scan                           — all products
+// GET /api/duplicateSkuAudit?action=scan&ctSyncOnly=true           — ct-sync tagged products only
+// GET /api/duplicateSkuAudit?action=fix                           — clear duplicate SKUs (live write)
+// GET /api/duplicateSkuAudit?action=fix&dry=true                  — fix dry run (no writes)
+// GET /api/duplicateSkuAudit?action=fix&offset=0&chunkSize=20     — chunked execution
+// GET /api/duplicateSkuAudit?action=remove-tag                    — remove ct-sync from duplicate products (live write)
+// GET /api/duplicateSkuAudit?action=remove-tag&dry=true           — remove-tag dry run (no writes)
+// GET /api/duplicateSkuAudit?action=remove-tag&ctSyncOnly=true    — scope fetch to ct-sync products
+// GET /api/duplicateSkuAudit?action=remove-tag&offset=0&chunkSize=20   — chunked execution
+// GET /api/duplicateSkuAudit?action=archive-duplicate             — archive higher-productId duplicate products (live write)
+// GET /api/duplicateSkuAudit?action=archive-duplicate&dry=true    — archive-duplicate dry run (no writes)
+// GET /api/duplicateSkuAudit?action=archive-duplicate&ctSyncOnly=true  — scope fetch to ct-sync products
+// GET /api/duplicateSkuAudit?action=archive-duplicate&offset=0&chunkSize=20  — chunked execution
+// GET /api/duplicateSkuAudit?action=debug-tags&productId=N        — inspect raw tag data for one product
 //
 // Only considers SKUs that start with 'TIRE-'.
 // For each duplicate SKU group, the variant on the product with the lowest
@@ -398,8 +402,78 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // ── action=archive-duplicate ───────────────────────────────────────────────
+  if (action === 'archive-duplicate') {
+    // Collect unique higher-productId products to archive.
+    // VariantEntry already carries `status` from the initial product fetch,
+    // so no extra GET is needed to check for already-archived products.
+    const toArchiveMap = new Map<number, { title: string; status: string }>();
+    for (const group of groups) {
+      const sorted = [...group.variants].sort((a, b) => a.productId - b.productId);
+      for (const variant of sorted.slice(1)) {
+        if (!toArchiveMap.has(variant.productId)) {
+          toArchiveMap.set(variant.productId, { title: variant.productTitle, status: variant.status });
+        }
+      }
+    }
+
+    const allToArchive = Array.from(toArchiveMap.entries()); // [ [productId, { title, status }], ... ]
+    const chunk        = allToArchive.slice(offset, offset + chunkSize);
+    const nextOffset   = (offset + chunkSize) < allToArchive.length ? offset + chunkSize : null;
+
+    let fixed   = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const changes: Array<{ productId: number; productTitle: string; action: 'archived' }> = [];
+
+    for (const [productId, { title: productTitle, status }] of chunk) {
+      if (status === 'archived') {
+        console.log(`  [skip already-archived] productId:${productId} product:"${productTitle}"`);
+        skipped++;
+        continue;
+      }
+
+      console.log(`  [archive-duplicate] productId:${productId} product:"${productTitle}" currentStatus:${status}`);
+
+      if (!dryRun) {
+        try {
+          await shopifyFetch(`/products/${productId}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({ product: { id: productId, status: 'archived' } }),
+          });
+          changes.push({ productId, productTitle, action: 'archived' });
+          fixed++;
+        } catch (err) {
+          const msg = `Product ${productId} ("${productTitle}"): ${String(err)}`;
+          console.error(`  ❌ ${msg}`);
+          errors.push(msg);
+          continue;
+        }
+        await sleep(500);
+      } else {
+        changes.push({ productId, productTitle, action: 'archived' });
+        fixed++;
+      }
+    }
+
+    console.log(`✅ archive-duplicate done — fixed:${fixed} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
+
+    const httpStatus = !dryRun && errors.length > 0 ? 207 : 200;
+    return res.status(httpStatus).json({
+      dryRun,
+      totalDuplicateProducts: allToArchive.length,
+      fixed,
+      skipped,
+      errors,
+      changes,
+      offset,
+      chunkSize,
+      nextOffset,
+    });
+  }
+
   return res.status(400).json({
     error: 'Unknown action',
-    available: ['scan', 'fix', 'remove-tag', 'debug-tags'],
+    available: ['scan', 'fix', 'remove-tag', 'archive-duplicate', 'debug-tags'],
   });
 }
