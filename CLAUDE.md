@@ -389,6 +389,65 @@ Insert the entire new case block BEFORE `case 'status':`:
 
 ---
 
+## STEP 7 — Tiered pricing formula (calculatePrice)
+
+**File:** `api/shopifySync.ts`
+**Why:** The old `calcSellingPrice` added a shipping buffer to COGS before
+applying the margin formula, which double-counted shipping on high-cost tires
+and caused daily-sync timeouts when it triggered `fetchAllCTTires()`. The new
+formula is a simple tiered multiplier on the raw CT cost — no shipping buffer,
+no MSRP floor, no external lookups.
+
+**Function (added after `VENDOR_MAP`, before `CDA_EXCLUSIVE_BRANDS`):**
+```typescript
+function calculatePrice(cost: number): number {
+  let raw: number;
+  if (cost < 100) {
+    raw = Math.max(cost * 2.10, 150);
+  } else if (cost <= 250) {
+    raw = cost * 1.72;
+  } else {
+    raw = cost * 1.58;
+  }
+  const rounded = Math.round(raw);
+  return (rounded - 0.01) >= raw * 0.98
+    ? parseFloat((rounded - 0.01).toFixed(2))
+    : parseFloat(raw.toFixed(2));
+}
+```
+
+**Pricing tiers:**
+| CT cost range | Multiplier | Floor |
+|---------------|-----------|-------|
+| < $100        | 2.10×     | $150 minimum |
+| $100 – $250   | 1.72×     | — |
+| > $250        | 1.58×     | — |
+
+**Rounding:** Raw price is rounded to nearest dollar, then $0.01 is subtracted
+(charm pricing, e.g. $171.99) unless that would drop more than 2% below the
+raw price, in which case the unrounded value is used.
+
+**Callers:** `buildPayload` (create path), `runSync` update loop, `update-chunk`
+case — all pass `rawCost = parseFloat(ct.cost) || 0`.
+
+**Do NOT revert to `calcSellingPrice`.** The old function is still present in
+the file as dead code for reference; it can be deleted once `calculatePrice`
+is confirmed stable in production.
+
+**daily-sync cron fix:** The cron (GET `/api/shopifySync`) now uses a chunked
+approach instead of calling `runSync` (which called `fetchAllCTTires` —
+fetching every CT page before doing any updates). The new flow:
+1. `fetchExistingProducts()` → get all Shopify SKUs
+2. Slice `updateOffset … updateOffset+updateChunkSize` (default 50 SKUs)
+3. Fetch only those SKUs from CT via `partNumber` filter
+4. Update price / inventory / tags for each
+5. Return `nextUrl` for the next chunk
+
+Each cron invocation handles ≤50 SKUs and completes well within the 300 s
+Vercel timeout. Continue calling `nextUrl` until `done: true`.
+
+---
+
 ## Verification checklist
 
 After applying all 6 steps, confirm the following before committing:
