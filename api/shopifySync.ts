@@ -54,7 +54,6 @@ const SHOPIFY = {
   get baseUrl() { return `https://${this.domain}/admin/api/${this.apiVersion}`; },
 };
 
-const CT_VENDOR  = 'Canada Tire';
 const SYNC_TAG   = 'ct-sync';
 const BATCH_SIZE = 5;
 const BATCH_MS   = 300;
@@ -72,11 +71,6 @@ const SHIPPING_BUFFERS: Record<string, number> = {
   heavy_truck: 65,
 };
 
-function calcSellingPrice(netCost: number, shippingBuffer: number, msrp: number): number {
-  const floor = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
-  return parseFloat(Math.max(msrp, floor).toFixed(2));
-}
-
 const VENDOR_MAP: Record<string, string> = {
   'COOPER':     'Cooper',
   'NEXEN':      'Nexen',
@@ -92,6 +86,21 @@ const VENDOR_MAP: Record<string, string> = {
   'FALKEN':      'Falken',
   'KELLY':       'Kelly',
 };
+
+function calculatePrice(cost: number): number {
+  let raw: number;
+  if (cost < 100) {
+    raw = Math.max(cost * 2.10, 150);
+  } else if (cost <= 250) {
+    raw = cost * 1.72;
+  } else {
+    raw = cost * 1.58;
+  }
+  const rounded = Math.round(raw);
+  return (rounded - 0.01) >= raw * 0.98
+    ? parseFloat((rounded - 0.01).toFixed(2))
+    : parseFloat(raw.toFixed(2));
+}
 
 const CDA_EXCLUSIVE_BRANDS = new Set(['Minerva', 'Ovation']);
 
@@ -476,7 +485,7 @@ async function buildPayload(ct: CTTire) {
   const netCost = costLooksValid ? rawCost : msrp * NET_MULTIPLIER;
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const sellingPrice  = calcSellingPrice(netCost, shippingBuffer, msrp);
+  const sellingPrice  = calculatePrice(rawCost);
   const shopifyFloor  = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
   const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
   const aboveMsrp     = sellingPrice > msrp + 0.01;
@@ -676,9 +685,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     const rawCost  = parseFloat(ct.cost) || 0;
     const costOk   = rawCost > 0 && rawCost < msrp * 0.90;
     const netCost  = costOk ? rawCost : msrp * NET_MULTIPLIER;
-    const tireType = classifyTireType(ct.performanceCategory, ct.size);
-    const shipping = getShippingBuffer(ct.performanceCategory, ct.size);
-    const newSellingPrice = calcSellingPrice(netCost, shipping, msrp);
+    const newSellingPrice = calculatePrice(rawCost);
     const newPrice        = newSellingPrice.toFixed(2);
     const priceChanged    = newPrice !== ex.price;
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -917,8 +924,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!ex) continue;
           const msrp=parseFloat(ct.msrp)||0, rawCost=parseFloat(ct.cost)||0;
           const costOk=rawCost>0&&rawCost<msrp*0.90, netCost=costOk?rawCost:msrp*NET_MULTIPLIER;
-          const shipping=getShippingBuffer(ct.performanceCategory,ct.size);
-          const newSellingPrice=calcSellingPrice(netCost,shipping,msrp), newPrice=newSellingPrice.toFixed(2);
+          const newSellingPrice=calculatePrice(rawCost), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
           const existingTagStr=ex.tags||''; let updatedTags=existingTagStr;
@@ -1540,9 +1546,79 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'daily-sync':
       default: {
         const updateOffset    = parseInt(req.query.updateOffset as string || '0', 10);
-        const updateChunkSize = parseInt(req.query.updateChunk  as string || '200', 10);
-        const stats = await runSync('daily', 0, 9999, updateOffset, updateChunkSize);
-        return res.status(200).json({ success:true, mode:'daily-sync', ...stats, nextUrl:stats.updateDone?null:`?action=daily-sync&updateOffset=${stats.nextUpdateOffset}` });
+        const updateChunkSize = parseInt(req.query.updateChunk  as string || '50', 10);
+        const t0 = Date.now();
+
+        // Fetch existing Shopify SKUs and slice a chunk — avoids a full CT fetch
+        const existingMap = await fetchExistingProducts();
+        const allSkus = [...existingMap.keys()].filter(s => !s.startsWith('TIRE-'));
+        const chunk   = allSkus.slice(updateOffset, updateOffset + updateChunkSize);
+        const done    = updateOffset + updateChunkSize >= allSkus.length;
+        const nextOffset = done ? 0 : updateOffset + updateChunkSize;
+
+        if (chunk.length === 0) {
+          return res.status(200).json({ success:true, mode:'daily-sync', done:true, totalSkus:allSkus.length, message:'All SKUs processed' });
+        }
+
+        // Fetch only this chunk from CT API using partNumber filter
+        const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+        const ctRes = await fetch(fullUrl, {
+          method: 'POST',
+          headers: { 'Authorization': buildAuthHeader(), 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            customerId: CT.customerId, customerToken: CT.customerToken,
+            filters: { width:'', rimSize:'', aspectRatio:'', size:'', partNumber: chunk, brand:'', searchKey:'', isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1 },
+          }),
+        });
+        if (!ctRes.ok) throw new Error(`CT API HTTP ${ctRes.status}: ${(await ctRes.text()).slice(0,200)}`);
+        const ctData: any = await ctRes.json();
+        if (!ctData.success) throw new Error(`CT API error: ${JSON.stringify(ctData.error)}`);
+        const ctTires = (ctData.data || []) as CTTire[];
+
+        let updated=0, errors=0;
+        const errorList: string[] = [];
+        for (const sku of chunk) {
+          const ct = ctTires.find(t => t.partNumber === sku);
+          if (!ct) continue;
+          const ex = existingMap.get(sku);
+          if (!ex) continue;
+          const rawCost = parseFloat(ct.cost) || 0;
+          const newSellingPrice = calculatePrice(rawCost);
+          const newPrice = newSellingPrice.toFixed(2);
+          const priceChanged = newPrice !== ex.price;
+          const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
+          const existingTagStr = ex.tags || '';
+          let updatedTags = existingTagStr;
+          if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
+          if (upSR && !existingTagStr.includes('speedrating:')) updatedTags = [updatedTags, `speedrating:${upSR}`].filter(Boolean).join(', ');
+          const tagsChanged = updatedTags !== existingTagStr;
+          try {
+            await shopifyFetch(`/variants/${ex.variantId}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: rawCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
+            });
+            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+              method: 'PUT',
+              body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
+            }).catch(() => {});
+            await setInventory(ex.inventoryItemId, getTotalQty(ct));
+            if (!ex.hasImages) await attachProductImage(ex.productId, ct);
+            updated++;
+          } catch (e: any) {
+            errors++;
+            errorList.push(`UPDATE ${sku}: ${e.message}`);
+          }
+        }
+
+        return res.status(200).json({
+          success: true, mode: 'daily-sync',
+          totalSkus: allSkus.length, chunkOffset: updateOffset, chunkSize: chunk.length,
+          updated, errors,
+          ...(errorList.length ? { errorList } : {}),
+          done,
+          nextUrl: done ? null : `?action=daily-sync&updateOffset=${nextOffset}&updateChunk=${updateChunkSize}`,
+          duration: `${((Date.now()-t0)/1000).toFixed(1)}s`,
+        });
       }
     }
   } catch (e: any) {
