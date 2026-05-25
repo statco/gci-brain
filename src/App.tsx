@@ -14,6 +14,7 @@ import DuplicateSkuAudit from './components/DuplicateSkuAudit';
 import ReviewsModeration from './components/ReviewsModeration';
 import TranslateContentCard from './components/TranslateContentCard';
 import WalmartManualShip from './components/WalmartManualShip';
+import TagBackfillCtSync from './components/TagBackfillCtSync';
 import React, { useState, useEffect } from 'react';
 import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
@@ -306,6 +307,7 @@ function App() {
         <Route path="/reviews" element={<ReviewsModeration />} />
         <Route path="/translate" element={<TranslateContentCard />} />
         <Route path="/walmart-ship" element={<WalmartManualShip />} />
+        <Route path="/tag-backfill-ct-sync" element={<TagBackfillCtSync />} />
       </Routes>
     </BrowserRouter>
   );
