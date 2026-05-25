@@ -565,7 +565,7 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
 }
 
 // ─── CALCULATE PRICE — WALMART MARGIN MODEL ──────────────────────────────────
-// Formula: floor = (netCost + shippingBuffer) / (1 - 0.12 - 0.14)
+// Formula: floor = (netCost + shippingBuffer) / (1 - WALMART_FEE - 0.14)
 //          selling_price = floor * 1.08  (8% competitiveness markup)
 
 interface PriceRecommendation {
@@ -607,7 +607,9 @@ function calculatePrice(
     reason = `Manual override → $${manualOverride.toFixed(2)}`;
   } else {
     // Full margin model: break-even covers Walmart fee + target margin, then apply 8% competitiveness markup
-    const WALMART_FEE = 0.12;
+    // Walmart CA referral fee: 2.5% (75% discount, effective until Jan 31 2027)
+    // Standard rate: 10%. Do not reduce existing prices — improved margin only.
+    const WALMART_FEE = 0.025;
     const TARGET_MARGIN = 0.14;
     const MARKUP = 1.08;
     const floorPrice = (netCost + effectiveShipping) / (1 - WALMART_FEE - TARGET_MARGIN);
@@ -898,7 +900,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           dryRun: true,
-          pricingModel: `Walmart margin model: (cost + ship) / (1 - 0.12 - 0.14) × 1.08`,
+          pricingModel: `Walmart margin model: (cost + ship) / (1 - 0.025 - 0.14) × 1.08`,
           summary: {
             totalProducts: result.totalProducts,
             priceChanges: result.priceChanges,
