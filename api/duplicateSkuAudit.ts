@@ -15,6 +15,9 @@
 // GET /api/duplicateSkuAudit?action=archive-duplicate&dry=true    — archive-duplicate dry run (no writes)
 // GET /api/duplicateSkuAudit?action=archive-duplicate&ctSyncOnly=true  — scope fetch to ct-sync products
 // GET /api/duplicateSkuAudit?action=archive-duplicate&offset=0&chunkSize=20  — chunked execution
+// GET /api/duplicateSkuAudit?action=archive-null-sku              — archive ct-sync products where ALL variants have blank/null SKU (live write)
+// GET /api/duplicateSkuAudit?action=archive-null-sku&dry=true     — archive-null-sku dry run (no writes)
+// GET /api/duplicateSkuAudit?action=archive-null-sku&offset=0&chunkSize=20  — chunked execution
 // GET /api/duplicateSkuAudit?action=debug-tags&productId=N        — inspect raw tag data for one product
 //
 // Only considers SKUs that start with 'TIRE-'.
@@ -472,8 +475,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // ── action=archive-null-sku ───────────────────────────────────────────────
+  if (action === 'archive-null-sku') {
+    // Products where every variant has a blank or null SKU are never picked up
+    // by archive-duplicate (which only scans TIRE- SKUs), so they must be
+    // handled separately. These products cannot be synced to any channel.
+    const nullSkuProducts = allProducts.filter(p =>
+      p.variants.length > 0 &&
+      p.variants.every(v => !(v.sku || '').trim())
+    );
+
+    const chunk      = nullSkuProducts.slice(offset, offset + chunkSize);
+    const nextOffset = (offset + chunkSize) < nullSkuProducts.length ? offset + chunkSize : null;
+
+    let fixed   = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const changes: Array<{ productId: number; productTitle: string; action: 'archived' }> = [];
+
+    for (const product of chunk) {
+      if (product.status === 'archived') {
+        console.log(`  [skip already-archived] productId:${product.id} product:"${product.title}"`);
+        skipped++;
+        continue;
+      }
+
+      console.log(`  [archive-null-sku] productId:${product.id} product:"${product.title}" currentStatus:${product.status}`);
+
+      if (!dryRun) {
+        try {
+          await shopifyFetch(`/products/${product.id}.json`, {
+            method: 'PUT',
+            body: JSON.stringify({ product: { id: product.id, status: 'archived' } }),
+          });
+          changes.push({ productId: product.id, productTitle: product.title, action: 'archived' });
+          fixed++;
+        } catch (err) {
+          const msg = `Product ${product.id} ("${product.title}"): ${String(err)}`;
+          console.error(`  ❌ ${msg}`);
+          errors.push(msg);
+          continue;
+        }
+        await sleep(500);
+      } else {
+        changes.push({ productId: product.id, productTitle: product.title, action: 'archived' });
+        fixed++;
+      }
+    }
+
+    console.log(`✅ archive-null-sku done — total:${nullSkuProducts.length} fixed:${fixed} skipped:${skipped} errors:${errors.length} nextOffset:${nextOffset}`);
+
+    const httpStatus = !dryRun && errors.length > 0 ? 207 : 200;
+    return res.status(httpStatus).json({
+      dryRun,
+      totalNullSkuProducts: nullSkuProducts.length,
+      fixed,
+      skipped,
+      errors,
+      changes,
+      offset,
+      chunkSize,
+      nextOffset,
+    });
+  }
+
   return res.status(400).json({
     error: 'Unknown action',
-    available: ['scan', 'fix', 'remove-tag', 'archive-duplicate', 'debug-tags'],
+    available: ['scan', 'fix', 'remove-tag', 'archive-duplicate', 'archive-null-sku', 'debug-tags'],
   });
 }
