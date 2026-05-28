@@ -27,7 +27,7 @@ async function callGemini(systemPrompt: string, messages: {role: string; content
     }
   );
   if (!res.ok) throw new Error(`Gemini ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as any;
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
@@ -43,7 +43,7 @@ async function callDeepseek(systemPrompt: string, messages: {role: string; conte
     }),
   });
   if (!res.ok) throw new Error(`Deepseek ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as any;
   return data.choices?.[0]?.message?.content ?? '';
 }
 
