@@ -34,6 +34,7 @@ export default defineConfig(({ mode }) => {
           manualChunks: {
             'react-vendor': ['react', 'react-dom', 'react-router-dom'],
             'ai-services': ['@google/generative-ai'],
+            'maps': ['@maptiler/sdk', '@react-google-maps/api'],
           },
         },
       },

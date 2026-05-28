@@ -163,7 +163,7 @@ function buildDescription(product: ShopifyProduct, season: string, vehicle: { la
   // Build a clean template description
   const vehicleStr = vehicle.label || 'Passenger car';
   const seasonStr  = season ? season.toLowerCase() : 'all-season';
-  const desc = `Shop the ${cleanTitle} at GCI Tires. ${vehicleStr} fitment. Free shipping across Canada. Available online with fast delivery to Quebec and all Canadian provinces.`;
+  const desc = `Shop the ${cleanTitle} at GCI Tires. ${seasonStr} ${vehicleStr} fitment. Free shipping across Canada. Available online with fast delivery to Quebec and all Canadian provinces.`;
   return desc.slice(0, 4999);
 }
 

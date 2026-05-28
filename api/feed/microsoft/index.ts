@@ -110,7 +110,7 @@ function buildDescription(product: ShopifyProduct, season: string, vehicle: { la
     raw.includes('Stock:') || raw.includes('Part #:') || raw.includes('nearest:');
   if (!isRawSync && raw.length > 50) return raw.slice(0, 4999);
   const vehicleStr = vehicle.label || 'Passenger car';
-  return `Shop the ${cleanTitle} at GCI Tires. ${vehicleStr} fitment. Free shipping across Canada. Available online with fast delivery to Quebec and all Canadian provinces.`.slice(0, 4999);
+  return `Shop the ${cleanTitle} at GCI Tires. ${season ? season.toLowerCase() + ' ' : ''}${vehicleStr} fitment. Free shipping across Canada. Available online with fast delivery to Quebec and all Canadian provinces.`.slice(0, 4999);
 }
 
 const EXCLUDE_VENDORS        = new Set(['nuprozone']);

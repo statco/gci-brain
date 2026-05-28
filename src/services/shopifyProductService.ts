@@ -255,7 +255,7 @@ function transformShopifyProducts(edges: any[]) {
     const resolvedLI = descLI || tagLI || metaLI || titleLI || '94';
     const resolvedSR = descSR || tagSR || metaSR || titleSR || 'H';
 
-    const productUrl = `https://gcitires.ca/products/${product.handle}`;
+    const productUrl = `https://gcitires.com/products/${product.handle}`;
     const brand      = extractBrandFromTitle(product.title);
     const size       = extractSizeFromTitle(product.title);
     // Strip size + trailing season label from title to get clean model name
@@ -282,7 +282,6 @@ function transformShopifyProducts(edges: any[]) {
       shopifyVariantId: variant?.id || '',
       shopifyHandle: product.handle,
       shopifyProductId: product.id,
-      productUrl
     };
   });
 }

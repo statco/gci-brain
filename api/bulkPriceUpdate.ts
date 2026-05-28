@@ -164,7 +164,7 @@ async function shopifyFetch<T>(
   }
 
   if (res.status === 204 || res.headers.get('content-length') === '0') return {} as T;
-  return res.json();
+  return res.json() as T;
 }
 
 // ─── GOOGLE SHEETS — RAW FETCH (zero dependencies) ───────────────────────────
