@@ -60,7 +60,6 @@ const BATCH_MS   = 300;
 
 // ─── PRICING CONFIG ───────────────────────────────────────────────────────────
 
-const NET_MULTIPLIER      = 0.50;
 const SHOPIFY_PAYMENT_FEE = 0.029;
 const TARGET_NET_MARGIN   = 0.15;
 const WALMART_FEE         = 0.12;
@@ -847,7 +846,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       case 'status': {
         const existing = await fetchExistingProducts();
-        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ netMultiplier:NET_MULTIPLIER, shippingBuffers:SHIPPING_BUFFERS, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
+        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ shippingBuffers:SHIPPING_BUFFERS, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
       }
 
       case 'cost-analysis': {
