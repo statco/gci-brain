@@ -512,6 +512,8 @@ async function buildPayload(ct: CTTire) {
     .join(', ');
   const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [
     { namespace:'canada_tire', key:'cost',                value:(parseFloat(ct.cost)||0).toFixed(2),  type:'number_decimal' },
+    // Cost-freshness stamp — read by gci-order-hub cost-integrity-audit to flag stale cost.
+    { namespace:'canada_tire', key:'cost_synced_at',     value:new Date().toISOString(),             type:'date_time' },
     { namespace:'canada_tire', key:'part_number',         value:ct.partNumber,                        type:'single_line_text_field' },
     { namespace:'gci',         key:'net_cost',             value:netCost.toFixed(2),                   type:'number_decimal' },
     { namespace:'gci',         key:'shopify_floor_price',  value:shopifyFloor.toFixed(2),              type:'number_decimal' },
@@ -1600,6 +1602,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
               method: 'PUT',
               body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
+            }).catch(() => {});
+            // Stamp cost freshness (upsert by owner+namespace+key) — read by
+            // gci-order-hub cost-integrity-audit to flag stale cost. Non-fatal.
+            await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
+              method: 'POST',
+              body: JSON.stringify({ metafield: { namespace: 'canada_tire', key: 'cost_synced_at', value: new Date().toISOString(), type: 'date_time' } }),
             }).catch(() => {});
             await setInventory(ex.inventoryItemId, getTotalQty(ct));
             if (!ex.hasImages) await attachProductImage(ex.productId, ct);
