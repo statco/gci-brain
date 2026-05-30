@@ -60,7 +60,6 @@ const BATCH_MS   = 300;
 
 // ─── PRICING CONFIG ───────────────────────────────────────────────────────────
 
-const NET_MULTIPLIER      = 0.50;
 const SHOPIFY_PAYMENT_FEE = 0.029;
 const TARGET_NET_MARGIN   = 0.15;
 const WALMART_FEE         = 0.12;
@@ -100,6 +99,17 @@ function calculatePrice(cost: number): number {
   return (rounded - 0.01) >= raw * 0.98
     ? parseFloat((rounded - 0.01).toFixed(2))
     : parseFloat(raw.toFixed(2));
+}
+
+// ─── CT DEALER COST (no substitution) ──────────────────────────────────────
+// Returns the real CT dealer cost as a number, or null when CT provides no
+// cost or a non-numeric / non-positive value. Callers MUST skip + flag a null
+// SKU. We never substitute MSRP and never halve — Shopify "Cost per item" is
+// always the unmodified CT dealer cost.
+function parseCTDealerCost(raw: unknown): number | null {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 const CDA_EXCLUSIVE_BRANDS = new Set(['Minerva', 'Ovation']);
@@ -480,12 +490,12 @@ async function buildPayload(ct: CTTire) {
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
   const msrp    = parseFloat(ct.msrp) || 0;
-  const rawCost = parseFloat(ct.cost) || 0;
-  const costLooksValid = rawCost > 0 && rawCost < msrp * 0.90;
-  const netCost = costLooksValid ? rawCost : msrp * NET_MULTIPLIER;
+  const dealerCost = parseCTDealerCost(ct.cost);
+  if (dealerCost === null) return null; // no/invalid CT cost — caller skips + flags this SKU
+  const netCost = dealerCost; // real CT dealer cost, stored unmodified — never MSRP, never halved
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const sellingPrice  = calculatePrice(rawCost);
+  const sellingPrice  = calculatePrice(netCost);
   const shopifyFloor  = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
   const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
   const aboveMsrp     = sellingPrice > msrp + 0.01;
@@ -511,7 +521,7 @@ async function buildPayload(ct: CTTire) {
     .filter((t, i, arr) => arr.indexOf(t) === i)
     .join(', ');
   const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [
-    { namespace:'canada_tire', key:'cost',                value:(parseFloat(ct.cost)||0).toFixed(2),  type:'number_decimal' },
+    { namespace:'canada_tire', key:'cost',                value:netCost.toFixed(2),                   type:'number_decimal' },
     // Cost-freshness stamp — read by gci-order-hub cost-integrity-audit to flag stale cost.
     { namespace:'canada_tire', key:'cost_synced_at',     value:new Date().toISOString(),             type:'date_time' },
     { namespace:'canada_tire', key:'part_number',         value:ct.partNumber,                        type:'single_line_text_field' },
@@ -580,6 +590,7 @@ interface SyncStats {
   created:number; updated:number; skipped:number; errors:number;
   skippedNoStock:number; skippedDuplicate:number; skippedDuplicateTitles:string[];
   errorList:string[]; duration:string; timestamp:string;
+  skippedNoCost?:number; noCostSkus?:string[];
   totalCT?:number; inStock?:number; createPoolSize?:number;
   offset?:number; chunkSize?:number; done?:boolean;
 }
@@ -589,6 +600,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   const stats: SyncStats & { updateDone?: boolean; nextUpdateOffset?: number } = {
     created:0, updated:0, skipped:0, errors:0,
     skippedNoStock:0, skippedDuplicate:0, skippedDuplicateTitles:[],
+    skippedNoCost:0, noCostSkus:[],
     errorList:[], duration:'', timestamp:new Date().toISOString(),
   };
 
@@ -631,6 +643,12 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   // ─────────────────────────────────────────────────────────────────────────
   await processBatches(createChunk, async (ct) => {
     const payload   = await buildPayload(ct);
+    if (!payload) {
+      stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
+      (stats.noCostSkus ??= []).push(ct.partNumber);
+      console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+      return;
+    }
     const normTitle = normalizeTitle(payload.product.title);
 
     // Guard before API call — catches active + archived + draft duplicates
@@ -684,10 +702,15 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   await processBatches(updateChunk, async (ct) => {
     const ex = existingMap.get(ct.partNumber)!;
     const msrp     = parseFloat(ct.msrp) || 0;
-    const rawCost  = parseFloat(ct.cost) || 0;
-    const costOk   = rawCost > 0 && rawCost < msrp * 0.90;
-    const netCost  = costOk ? rawCost : msrp * NET_MULTIPLIER;
-    const newSellingPrice = calculatePrice(rawCost);
+    const dealerCost = parseCTDealerCost(ct.cost);
+    if (dealerCost === null) {
+      stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
+      (stats.noCostSkus ??= []).push(ct.partNumber);
+      console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+      return;
+    }
+    const netCost  = dealerCost; // real CT dealer cost, stored unmodified
+    const newSellingPrice = calculatePrice(netCost);
     const newPrice        = newSellingPrice.toFixed(2);
     const priceChanged    = newPrice !== ex.price;
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -704,10 +727,14 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             variant: { id: ex.variantId, cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' },
           }),
         });
-        if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+        // Refresh canada_tire.cost with the same strict-parsed real cost
+        // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
+        // when changed. Not swallowed — a failure must surface so Cost per item
+        // and canada_tire.cost never diverge.
+        await shopifyFetch(`/products/${ex.productId}.json`, {
           method: 'PUT',
-          body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-        }).catch(() => {});
+          body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+        });
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
         if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
@@ -730,10 +757,14 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           },
         }),
       });
-      if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+      // Refresh canada_tire.cost with the same strict-parsed real cost
+      // (overwrites any MSRP-poisoned cache). Always runs; tags folded in when
+      // changed. Not swallowed — a failure must surface so Cost per item and
+      // canada_tire.cost never diverge.
+      await shopifyFetch(`/products/${ex.productId}.json`, {
         method: 'PUT',
-        body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-      }).catch(() => {});
+        body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+      });
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
@@ -815,7 +846,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       case 'status': {
         const existing = await fetchExistingProducts();
-        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ netMultiplier:NET_MULTIPLIER, shippingBuffers:SHIPPING_BUFFERS, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
+        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ shippingBuffers:SHIPPING_BUFFERS, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
       }
 
       case 'cost-analysis': {
@@ -869,12 +900,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const rcTires = (ctData.data || []) as CTTire[];
         const [rcExisting, rcTitles] = await Promise.all([fetchExistingProducts(), fetchExistingProductTitles()]);
         let rcCreated=0, rcSkipped=0, rcErrors=0;
-        const rcErrorList: string[]=[], notFoundInCT: string[]=[], alreadyInShopify: string[]=[];
+        const rcErrorList: string[]=[], notFoundInCT: string[]=[], alreadyInShopify: string[]=[], noCostSkus: string[]=[];
         for (const sku of rawSkus) {
           const ct = rcTires.find(t => t.partNumber===sku);
           if (!ct) { notFoundInCT.push(sku); continue; }
           if (rcExisting.has(sku)) { alreadyInShopify.push(sku); rcSkipped++; continue; }
           const payload=await buildPayload(ct);
+          if (!payload) { noCostSkus.push(sku); console.log(`⏭️  retry-create: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
           const normTitle=normalizeTitle(payload.product.title);
           if (rcTitles.has(normTitle)) { console.log(`⏭️  retry-create: duplicate title skipped: "${normTitle}"`); rcSkipped++; rcErrorList.push(`SKIP ${sku}: duplicate title "${normTitle}"`); continue; }
           try {
@@ -895,7 +927,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`✅ retry-create: created ${sku} — "${payload.product.title}"`);
           } catch (e: any) { rcErrors++; rcErrorList.push(`CREATE ${sku}: ${e.message}`); console.error(`❌ retry-create: failed ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'retry-create', skusRequested:rawSkus.length, ctFound:rcTires.length, created:rcCreated, skipped:rcSkipped, errors:rcErrors, ...(notFoundInCT.length>0?{notFoundInCT}:{}), ...(alreadyInShopify.length>0?{alreadyInShopify}:{}), ...(rcErrorList.length>0?{errorList:rcErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'retry-create', skusRequested:rawSkus.length, ctFound:rcTires.length, created:rcCreated, skipped:rcSkipped, errors:rcErrors, ...(notFoundInCT.length>0?{notFoundInCT}:{}), ...(alreadyInShopify.length>0?{alreadyInShopify}:{}), ...(noCostSkus.length>0?{noCostSkus}:{}), ...(rcErrorList.length>0?{errorList:rcErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'list-skus': {
@@ -918,15 +950,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ctTires=(ctData.data||[]) as CTTire[];
         const existingMap=await fetchExistingProducts();
         let ucUpdated=0,ucErrors=0;
-        const ucErrorList: string[]=[], notFoundInCT: string[]=[];
+        const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[];
         for (const sku of skus) {
           const ct=ctTires.find(t=>t.partNumber===sku);
           if (!ct) { notFoundInCT.push(sku); continue; }
           const ex=existingMap.get(sku);
           if (!ex) continue;
-          const msrp=parseFloat(ct.msrp)||0, rawCost=parseFloat(ct.cost)||0;
-          const costOk=rawCost>0&&rawCost<msrp*0.90, netCost=costOk?rawCost:msrp*NET_MULTIPLIER;
-          const newSellingPrice=calculatePrice(rawCost), newPrice=newSellingPrice.toFixed(2);
+          const msrp=parseFloat(ct.msrp)||0;
+          const dealerCost=parseCTDealerCost(ct.cost);
+          if (dealerCost===null) { ucNoCost.push(sku); console.log(`⏭️  update-chunk: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
+          const netCost=dealerCost; // real CT dealer cost, stored unmodified
+          const newSellingPrice=calculatePrice(netCost), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
           const existingTagStr=ex.tags||''; let updatedTags=existingTagStr;
@@ -935,13 +969,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const tagsChanged=updatedTags!==existingTagStr;
           try {
             await shopifyFetch(`/variants/${ex.variantId}.json`,{ method:'PUT', body:JSON.stringify({ variant:{ id:ex.variantId, ...(priceChanged?{ price:newPrice, compare_at_price:newSellingPrice>msrp+0.01?null:msrp.toFixed(2) }:{}), cost:netCost.toFixed(2), inventory_management:'shopify', inventory_policy:'deny' } }) });
-            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`,{ method:'PUT', body:JSON.stringify({ product:{ id:ex.productId, tags:updatedTags } }) }).catch(()=>{});
+            // Refresh canada_tire.cost with the same strict-parsed real cost (overwrites MSRP-poisoned cache). Always runs; not swallowed so the two fields never diverge.
+            await shopifyFetch(`/products/${ex.productId}.json`,{ method:'PUT', body:JSON.stringify({ product:{ id:ex.productId, ...(tagsChanged?{ tags:updatedTags }:{}), metafields:[{ namespace:'canada_tire', key:'cost', value:netCost.toFixed(2), type:'number_decimal' }] } }) });
             await setInventory(ex.inventoryItemId,getTotalQty(ct));
             if (!ex.hasImages) await attachProductImage(ex.productId,ct);
             ucUpdated++;
           } catch (e: any) { ucErrors++; ucErrorList.push(`UPDATE ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, errors:ucErrors, ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, errors:ucErrors, ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'missing-images': {
@@ -1579,13 +1614,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         let updated=0, errors=0;
         const errorList: string[] = [];
+        const noCostSkus: string[] = [];
         for (const sku of chunk) {
           const ct = ctTires.find(t => t.partNumber === sku);
           if (!ct) continue;
           const ex = existingMap.get(sku);
           if (!ex) continue;
-          const rawCost = parseFloat(ct.cost) || 0;
-          const newSellingPrice = calculatePrice(rawCost);
+          const dealerCost = parseCTDealerCost(ct.cost);
+          if (dealerCost === null) { noCostSkus.push(sku); console.log(`⏭️  daily-sync: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
+          const netCost = dealerCost; // real CT dealer cost, stored unmodified
+          const newSellingPrice = calculatePrice(netCost);
           const newPrice = newSellingPrice.toFixed(2);
           const priceChanged = newPrice !== ex.price;
           const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -1597,12 +1635,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           try {
             await shopifyFetch(`/variants/${ex.variantId}.json`, {
               method: 'PUT',
-              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: rawCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
+              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
             });
-            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+            // Refresh canada_tire.cost with the same strict-parsed real cost
+            // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
+            // when changed. Not swallowed — Cost per item and canada_tire.cost
+            // must never diverge.
+            await shopifyFetch(`/products/${ex.productId}.json`, {
               method: 'PUT',
-              body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-            }).catch(() => {});
+              body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+            });
             // Stamp cost freshness (upsert by owner+namespace+key) — read by
             // gci-order-hub cost-integrity-audit to flag stale cost. Non-fatal.
             await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
@@ -1622,6 +1664,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           success: true, mode: 'daily-sync',
           totalSkus: allSkus.length, chunkOffset: updateOffset, chunkSize: chunk.length,
           updated, errors,
+          skippedNoCost: noCostSkus.length,
+          ...(noCostSkus.length ? { noCostSkus } : {}),
           ...(errorList.length ? { errorList } : {}),
           done,
           nextUrl: done ? null : `?action=daily-sync&updateOffset=${nextOffset}&updateChunk=${updateChunkSize}`,
