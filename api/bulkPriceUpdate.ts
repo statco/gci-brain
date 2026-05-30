@@ -881,6 +881,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ── Read-only: raw CT cost lookup for specific part numbers ───────
+      // GET /api/bulkPriceUpdate?action=ct-cost-lookup&parts=PN1,PN2,...
+      // Returns UNFILTERED raw CT cost + msrp (unlike fetchCTCostMap, which
+      // drops cost>=msrp*0.90 and only reads page 1). Strips a TIRE- prefix.
+      case 'ct-cost-lookup': {
+        const partsParam = (req.query.parts as string) || '';
+        const parts = partsParam.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length === 0) {
+          return res.status(400).json({ success: false, error: 'Provide ?parts=PN1,PN2,...' });
+        }
+        const ctKeys = parts.map(p => p.replace(/^TIRE-/i, '').trim());
+        const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+        const ctRes = await fetch(fullUrl, {
+          method: 'POST',
+          headers: { 'Authorization': buildAuthHeader(), 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            customerId: CT.customerId, customerToken: CT.customerToken,
+            filters: { width: '', rimSize: '', aspectRatio: '', size: '',
+              partNumber: ctKeys, brand: '', searchKey: '',
+              isWinter: '', isRunFlat: '', isTire: true, isWheel: false, page: 1 },
+          }),
+        });
+        const text = await ctRes.text();
+        if (!ctRes.ok) {
+          return res.status(502).json({ success: false, error: `CT API HTTP ${ctRes.status}: ${text.slice(0, 300)}` });
+        }
+        const data: any = JSON.parse(text);
+        const tires: any[] = data.data || [];
+        const byPN = new Map<string, any>();
+        for (const t of tires) byPN.set(String(t.partNumber).trim().toUpperCase(), t);
+        const results = parts.map((orig, i) => {
+          const key = ctKeys[i].toUpperCase();
+          const t = byPN.get(key);
+          const cost = t ? parseFloat(t.cost) : null;
+          const msrp = t ? parseFloat(t.msrp) : null;
+          return {
+            requested: orig,
+            ctPartNumber: key,
+            found: !!t,
+            ctCost: cost,
+            msrp,
+            costPctOfMsrp: (cost && msrp) ? `${((cost / msrp) * 100).toFixed(1)}%` : null,
+            name: t?.name ?? null,
+          };
+        });
+        return res.status(200).json({
+          success: true,
+          mode: 'ct-cost-lookup',
+          requested: parts.length,
+          returnedByCT: tires.length,
+          envCheck: { hasConsumerKey: !!CT.consumerKey, hasCustomerToken: !!CT.customerToken, sandbox: CT.useSandbox },
+          results,
+        });
+      }
+
       // ── Preview price changes (dry run) ───────────────────────────────
       case 'price-preview': {
         console.log('👀 Running price update preview...');
