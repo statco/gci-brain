@@ -728,10 +728,14 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
             variant: { id: ex.variantId, cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' },
           }),
         });
-        if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+        // Refresh canada_tire.cost with the same strict-parsed real cost
+        // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
+        // when changed. Not swallowed — a failure must surface so Cost per item
+        // and canada_tire.cost never diverge.
+        await shopifyFetch(`/products/${ex.productId}.json`, {
           method: 'PUT',
-          body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-        }).catch(() => {});
+          body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+        });
         await setInventory(ex.inventoryItemId, getTotalQty(ct));
         if (!ex.hasImages) await attachProductImage(ex.productId, ct);
         stats.updated++;
@@ -754,10 +758,14 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
           },
         }),
       });
-      if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+      // Refresh canada_tire.cost with the same strict-parsed real cost
+      // (overwrites any MSRP-poisoned cache). Always runs; tags folded in when
+      // changed. Not swallowed — a failure must surface so Cost per item and
+      // canada_tire.cost never diverge.
+      await shopifyFetch(`/products/${ex.productId}.json`, {
         method: 'PUT',
-        body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-      }).catch(() => {});
+        body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+      });
       await setInventory(ex.inventoryItemId, getTotalQty(ct));
       if (!ex.hasImages) await attachProductImage(ex.productId, ct);
       stats.updated++;
@@ -962,7 +970,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const tagsChanged=updatedTags!==existingTagStr;
           try {
             await shopifyFetch(`/variants/${ex.variantId}.json`,{ method:'PUT', body:JSON.stringify({ variant:{ id:ex.variantId, ...(priceChanged?{ price:newPrice, compare_at_price:newSellingPrice>msrp+0.01?null:msrp.toFixed(2) }:{}), cost:netCost.toFixed(2), inventory_management:'shopify', inventory_policy:'deny' } }) });
-            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`,{ method:'PUT', body:JSON.stringify({ product:{ id:ex.productId, tags:updatedTags } }) }).catch(()=>{});
+            // Refresh canada_tire.cost with the same strict-parsed real cost (overwrites MSRP-poisoned cache). Always runs; not swallowed so the two fields never diverge.
+            await shopifyFetch(`/products/${ex.productId}.json`,{ method:'PUT', body:JSON.stringify({ product:{ id:ex.productId, ...(tagsChanged?{ tags:updatedTags }:{}), metafields:[{ namespace:'canada_tire', key:'cost', value:netCost.toFixed(2), type:'number_decimal' }] } }) });
             await setInventory(ex.inventoryItemId,getTotalQty(ct));
             if (!ex.hasImages) await attachProductImage(ex.productId,ct);
             ucUpdated++;
@@ -1606,13 +1615,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         let updated=0, errors=0;
         const errorList: string[] = [];
+        const noCostSkus: string[] = [];
         for (const sku of chunk) {
           const ct = ctTires.find(t => t.partNumber === sku);
           if (!ct) continue;
           const ex = existingMap.get(sku);
           if (!ex) continue;
-          const rawCost = parseFloat(ct.cost) || 0;
-          const newSellingPrice = calculatePrice(rawCost);
+          const dealerCost = parseCTDealerCost(ct.cost);
+          if (dealerCost === null) { noCostSkus.push(sku); console.log(`⏭️  daily-sync: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
+          const netCost = dealerCost; // real CT dealer cost, stored unmodified
+          const newSellingPrice = calculatePrice(netCost);
           const newPrice = newSellingPrice.toFixed(2);
           const priceChanged = newPrice !== ex.price;
           const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -1624,12 +1636,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           try {
             await shopifyFetch(`/variants/${ex.variantId}.json`, {
               method: 'PUT',
-              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: rawCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
+              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
             });
-            if (tagsChanged) await shopifyFetch(`/products/${ex.productId}.json`, {
+            // Refresh canada_tire.cost with the same strict-parsed real cost
+            // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
+            // when changed. Not swallowed — Cost per item and canada_tire.cost
+            // must never diverge.
+            await shopifyFetch(`/products/${ex.productId}.json`, {
               method: 'PUT',
-              body: JSON.stringify({ product: { id: ex.productId, tags: updatedTags } }),
-            }).catch(() => {});
+              body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
+            });
             // Stamp cost freshness (upsert by owner+namespace+key) — read by
             // gci-order-hub cost-integrity-audit to flag stale cost. Non-fatal.
             await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
@@ -1649,6 +1665,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           success: true, mode: 'daily-sync',
           totalSkus: allSkus.length, chunkOffset: updateOffset, chunkSize: chunk.length,
           updated, errors,
+          skippedNoCost: noCostSkus.length,
+          ...(noCostSkus.length ? { noCostSkus } : {}),
           ...(errorList.length ? { errorList } : {}),
           done,
           nextUrl: done ? null : `?action=daily-sync&updateOffset=${nextOffset}&updateChunk=${updateChunkSize}`,
