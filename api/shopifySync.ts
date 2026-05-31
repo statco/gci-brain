@@ -996,6 +996,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const skus: string[]=Array.isArray(body?.skus)?body.skus:[];
         if (skus.length===0) return res.status(400).json({ error:'POST body must include skus: string[]' });
         if (skus.length>50)  return res.status(400).json({ error:'Max 50 SKUs per chunk' });
+        // Optional manual dealer-cost overrides (stopgap until the CT/NetSuite
+        // RESTlet exposes a real vendor cost field — it currently returns MSRP
+        // in `cost`). Shape: { "MB5027": 226.00, ... }. An override is STILL
+        // band-checked against CT's MSRP before writing, so a bad number can't
+        // slip through; only the cost source changes, not the safety gate.
+        const rawOverrides=(body?.costOverrides && typeof body.costOverrides==='object') ? body.costOverrides as Record<string,unknown> : {};
+        const costOverrides=new Map<string,number>();
+        const badOverrides: string[]=[];
+        for (const [k,v] of Object.entries(rawOverrides)) {
+          const n=parseCTDealerCost(v);
+          if (n===null) { badOverrides.push(`${k} (non-numeric/non-positive: ${JSON.stringify(v)})`); continue; }
+          costOverrides.set(k, n);
+        }
         const t0=Date.now();
         const fullUrl=`${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
         const ctRes=await fetch(fullUrl,{ method:'POST', headers:{ 'Authorization':buildAuthHeader(),'Content-Type':'application/json','Accept':'application/json' }, body:JSON.stringify({ customerId:CT.customerId, customerToken:CT.customerToken, filters:{ width:'',rimSize:'',aspectRatio:'',size:'',partNumber:skus,brand:'',searchKey:'',isWinter:'',isRunFlat:'',isTire:true,isWheel:false,page:1 } }) });
@@ -1004,7 +1017,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!ctData.success) throw new Error(`CT API error: ${JSON.stringify(ctData.error)}`);
         const ctTires=(ctData.data||[]) as CTTire[];
         const existingMap=await fetchExistingProducts();
-        let ucUpdated=0,ucErrors=0;
+        let ucUpdated=0,ucErrors=0,ucOverridden=0;
         const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[], ucOutOfBand: string[]=[];
         for (const sku of skus) {
           const ct=ctTires.find(t=>t.partNumber===sku);
@@ -1012,13 +1025,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const ex=existingMap.get(sku);
           if (!ex) continue;
           const msrp=parseFloat(ct.msrp)||0;
-          const costCheck=checkCTDealerCost(ct.cost, ct.msrp);
+          // Source cost from the manual override when provided, else CT. Either
+          // way it is band-checked against CT's MSRP before writing.
+          const override=costOverrides.get(sku);
+          const costSource=override!==undefined ? 'override' : 'ct';
+          const costCheck=checkCTDealerCost(override!==undefined ? override : ct.cost, ct.msrp);
           if (!costCheck.ok) {
-            if (costCheck.reason==='out_of_band') { ucOutOfBand.push(`${sku} (cost $${costCheck.cost} outside $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`); console.log(`⏭️  update-chunk: out-of-band CT cost — skipped + flagged: ${sku}`); }
-            else { ucNoCost.push(sku); console.log(`⏭️  update-chunk: no/invalid CT cost — skipped + flagged: ${sku}`); }
+            if (costCheck.reason==='out_of_band') { ucOutOfBand.push(`${sku} (${costSource} cost $${costCheck.cost} outside $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`); console.log(`⏭️  update-chunk: out-of-band ${costSource} cost — skipped + flagged: ${sku}`); }
+            else { ucNoCost.push(sku); console.log(`⏭️  update-chunk: no/invalid ${costSource} cost — skipped + flagged: ${sku}`); }
             continue;
           }
-          const netCost=costCheck.cost; // real CT dealer cost, stored unmodified
+          const netCost=costCheck.cost; // real dealer cost (override or CT), stored unmodified
+          if (costSource==='override') { ucOverridden++; console.log(`✏️  update-chunk: ${sku} using override cost $${netCost} (CT returned $${ct.cost})`); }
           const newSellingPrice=calculatePrice(netCost), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
@@ -1035,7 +1053,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ucUpdated++;
           } catch (e: any) { ucErrors++; ucErrorList.push(`UPDATE ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, errors:ucErrors, ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucOutOfBand.length>0?{outOfBandSkus:ucOutOfBand}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, overridden:ucOverridden, errors:ucErrors, ...(badOverrides.length>0?{badOverrides}:{}), ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucOutOfBand.length>0?{outOfBandSkus:ucOutOfBand}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'missing-images': {
