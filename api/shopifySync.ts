@@ -112,6 +112,37 @@ function parseCTDealerCost(raw: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+// Plausible dealer-cost band as a ratio of MSRP. A valid cost must satisfy
+//   msrp * COST_MSRP_FLOOR <= cost < msrp * COST_MSRP_CEIL
+// Below the floor → implausibly low (clearance / bad pull); at or above the
+// ceiling → looks like MSRP, not dealer cost. Out-of-band cost is skipped +
+// flagged, NEVER written or substituted. Tunable via env without a code change.
+const COST_MSRP_FLOOR = parseFloat(process.env.COST_MSRP_FLOOR || '') || 0.25;
+const COST_MSRP_CEIL  = parseFloat(process.env.COST_MSRP_CEIL  || '') || 0.90;
+
+type CostCheck =
+  | { ok: true;  cost: number }
+  | { ok: false; reason: 'no_cost' }
+  | { ok: false; reason: 'out_of_band'; cost: number; min: number; max: number };
+
+// Validate the CT dealer cost against the MSRP-ratio band.
+//  - no_cost:     CT gave no / non-numeric / non-positive value → skip + flag.
+//  - out_of_band: MSRP is usable and cost is outside the band → skip + flag.
+//  - ok:          returns the unmodified real cost to write.
+// When MSRP is missing / 0 the band can't be evaluated, so any positive cost
+// passes — we write the real cost rather than mass-skip un-validatable tires.
+function checkCTDealerCost(rawCost: unknown, rawMsrp: unknown): CostCheck {
+  const cost = parseCTDealerCost(rawCost);
+  if (cost === null) return { ok: false, reason: 'no_cost' };
+  const msrp = Number(rawMsrp);
+  if (Number.isFinite(msrp) && msrp > 0) {
+    const min = msrp * COST_MSRP_FLOOR;
+    const max = msrp * COST_MSRP_CEIL;
+    if (cost < min || cost >= max) return { ok: false, reason: 'out_of_band', cost, min, max };
+  }
+  return { ok: true, cost };
+}
+
 const CDA_EXCLUSIVE_BRANDS = new Set(['Minerva', 'Ovation']);
 
 function normalizeVendor(vendor: string): string {
@@ -490,9 +521,13 @@ async function buildPayload(ct: CTTire) {
   const qty     = getTotalQty(ct);
   const closest = getClosestWarehouse(ct);
   const msrp    = parseFloat(ct.msrp) || 0;
-  const dealerCost = parseCTDealerCost(ct.cost);
-  if (dealerCost === null) return null; // no/invalid CT cost — caller skips + flags this SKU
-  const netCost = dealerCost; // real CT dealer cost, stored unmodified — never MSRP, never halved
+  const costCheck = checkCTDealerCost(ct.cost, ct.msrp);
+  if (!costCheck.ok) {
+    return costCheck.reason === 'out_of_band'
+      ? { skip: 'out_of_band' as const, cost: costCheck.cost, min: costCheck.min, max: costCheck.max }
+      : { skip: 'no_cost' as const };
+  }
+  const netCost = costCheck.cost; // real CT dealer cost, stored unmodified — never MSRP, never halved
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
   const sellingPrice  = calculatePrice(netCost);
@@ -591,6 +626,7 @@ interface SyncStats {
   skippedNoStock:number; skippedDuplicate:number; skippedDuplicateTitles:string[];
   errorList:string[]; duration:string; timestamp:string;
   skippedNoCost?:number; noCostSkus?:string[];
+  skippedOutOfBand?:number; outOfBandSkus?:string[];
   totalCT?:number; inStock?:number; createPoolSize?:number;
   offset?:number; chunkSize?:number; done?:boolean;
 }
@@ -601,6 +637,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     created:0, updated:0, skipped:0, errors:0,
     skippedNoStock:0, skippedDuplicate:0, skippedDuplicateTitles:[],
     skippedNoCost:0, noCostSkus:[],
+    skippedOutOfBand:0, outOfBandSkus:[],
     errorList:[], duration:'', timestamp:new Date().toISOString(),
   };
 
@@ -642,13 +679,20 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   //   auto-appending its own -1 on a second collision
   // ─────────────────────────────────────────────────────────────────────────
   await processBatches(createChunk, async (ct) => {
-    const payload   = await buildPayload(ct);
-    if (!payload) {
-      stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
-      (stats.noCostSkus ??= []).push(ct.partNumber);
-      console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+    const built = await buildPayload(ct);
+    if ('skip' in built) {
+      if (built.skip === 'out_of_band') {
+        stats.skippedOutOfBand = (stats.skippedOutOfBand ?? 0) + 1;
+        (stats.outOfBandSkus ??= []).push(`${ct.partNumber} (cost $${built.cost} outside $${built.min.toFixed(2)}-$${built.max.toFixed(2)})`);
+        console.log(`⏭️  Out-of-band CT cost — skipped + flagged: ${ct.partNumber} ($${built.cost} vs $${built.min.toFixed(2)}-$${built.max.toFixed(2)})`);
+      } else {
+        stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
+        (stats.noCostSkus ??= []).push(ct.partNumber);
+        console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+      }
       return;
     }
+    const payload = built;
     const normTitle = normalizeTitle(payload.product.title);
 
     // Guard before API call — catches active + archived + draft duplicates
@@ -702,14 +746,20 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   await processBatches(updateChunk, async (ct) => {
     const ex = existingMap.get(ct.partNumber)!;
     const msrp     = parseFloat(ct.msrp) || 0;
-    const dealerCost = parseCTDealerCost(ct.cost);
-    if (dealerCost === null) {
-      stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
-      (stats.noCostSkus ??= []).push(ct.partNumber);
-      console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+    const costCheck = checkCTDealerCost(ct.cost, ct.msrp);
+    if (!costCheck.ok) {
+      if (costCheck.reason === 'out_of_band') {
+        stats.skippedOutOfBand = (stats.skippedOutOfBand ?? 0) + 1;
+        (stats.outOfBandSkus ??= []).push(`${ct.partNumber} (cost $${costCheck.cost} outside $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`);
+        console.log(`⏭️  Out-of-band CT cost — skipped + flagged: ${ct.partNumber} ($${costCheck.cost} vs $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`);
+      } else {
+        stats.skippedNoCost = (stats.skippedNoCost ?? 0) + 1;
+        (stats.noCostSkus ??= []).push(ct.partNumber);
+        console.log(`⏭️  No/invalid CT cost — skipped + flagged: ${ct.partNumber}`);
+      }
       return;
     }
-    const netCost  = dealerCost; // real CT dealer cost, stored unmodified
+    const netCost  = costCheck.cost; // real CT dealer cost, stored unmodified
     const newSellingPrice = calculatePrice(netCost);
     const newPrice        = newSellingPrice.toFixed(2);
     const priceChanged    = newPrice !== ex.price;
@@ -772,7 +822,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
   });
 
   stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
-  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} skippedDuplicate:${stats.skippedDuplicate} errors:${stats.errors} done:${stats.done}`);
+  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} skippedDuplicate:${stats.skippedDuplicate} skippedNoCost:${stats.skippedNoCost} skippedOutOfBand:${stats.skippedOutOfBand} errors:${stats.errors} done:${stats.done}`);
   if (stats.skippedDuplicateTitles.length > 0) {
     console.log(`⏭️  Skipped duplicate titles (${stats.skippedDuplicateTitles.length}): ${stats.skippedDuplicateTitles.join(', ')}`);
   }
@@ -846,7 +896,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       case 'status': {
         const existing = await fetchExistingProducts();
-        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ shippingBuffers:SHIPPING_BUFFERS, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
+        return res.status(200).json({ success:true, shopifyProductCount:existing.size, domain:SHOPIFY.domain, ctEnvironment:CT.useSandbox?'SANDBOX':'PRODUCTION', nextCron:'3:00 AM ET daily', pricingConfig:{ shippingBuffers:SHIPPING_BUFFERS, costBand:{ msrpFloor:COST_MSRP_FLOOR, msrpCeil:COST_MSRP_CEIL, note:'CT cost must satisfy msrp*floor <= cost < msrp*ceil, else skipped+flagged' }, note:'Use /api/bulkPriceUpdate?action=price-preview to see competitive pricing' } });
       }
 
       case 'cost-analysis': {
@@ -900,13 +950,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const rcTires = (ctData.data || []) as CTTire[];
         const [rcExisting, rcTitles] = await Promise.all([fetchExistingProducts(), fetchExistingProductTitles()]);
         let rcCreated=0, rcSkipped=0, rcErrors=0;
-        const rcErrorList: string[]=[], notFoundInCT: string[]=[], alreadyInShopify: string[]=[], noCostSkus: string[]=[];
+        const rcErrorList: string[]=[], notFoundInCT: string[]=[], alreadyInShopify: string[]=[], noCostSkus: string[]=[], outOfBandSkus: string[]=[];
         for (const sku of rawSkus) {
           const ct = rcTires.find(t => t.partNumber===sku);
           if (!ct) { notFoundInCT.push(sku); continue; }
           if (rcExisting.has(sku)) { alreadyInShopify.push(sku); rcSkipped++; continue; }
-          const payload=await buildPayload(ct);
-          if (!payload) { noCostSkus.push(sku); console.log(`⏭️  retry-create: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
+          const built=await buildPayload(ct);
+          if ('skip' in built) {
+            if (built.skip === 'out_of_band') { outOfBandSkus.push(`${sku} (cost $${built.cost} outside $${built.min.toFixed(2)}-$${built.max.toFixed(2)})`); console.log(`⏭️  retry-create: out-of-band CT cost — skipped + flagged: ${sku}`); }
+            else { noCostSkus.push(sku); console.log(`⏭️  retry-create: no/invalid CT cost — skipped + flagged: ${sku}`); }
+            continue;
+          }
+          const payload=built;
           const normTitle=normalizeTitle(payload.product.title);
           if (rcTitles.has(normTitle)) { console.log(`⏭️  retry-create: duplicate title skipped: "${normTitle}"`); rcSkipped++; rcErrorList.push(`SKIP ${sku}: duplicate title "${normTitle}"`); continue; }
           try {
@@ -927,7 +982,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`✅ retry-create: created ${sku} — "${payload.product.title}"`);
           } catch (e: any) { rcErrors++; rcErrorList.push(`CREATE ${sku}: ${e.message}`); console.error(`❌ retry-create: failed ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'retry-create', skusRequested:rawSkus.length, ctFound:rcTires.length, created:rcCreated, skipped:rcSkipped, errors:rcErrors, ...(notFoundInCT.length>0?{notFoundInCT}:{}), ...(alreadyInShopify.length>0?{alreadyInShopify}:{}), ...(noCostSkus.length>0?{noCostSkus}:{}), ...(rcErrorList.length>0?{errorList:rcErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'retry-create', skusRequested:rawSkus.length, ctFound:rcTires.length, created:rcCreated, skipped:rcSkipped, errors:rcErrors, ...(notFoundInCT.length>0?{notFoundInCT}:{}), ...(alreadyInShopify.length>0?{alreadyInShopify}:{}), ...(noCostSkus.length>0?{noCostSkus}:{}), ...(outOfBandSkus.length>0?{outOfBandSkus}:{}), ...(rcErrorList.length>0?{errorList:rcErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'list-skus': {
@@ -950,16 +1005,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ctTires=(ctData.data||[]) as CTTire[];
         const existingMap=await fetchExistingProducts();
         let ucUpdated=0,ucErrors=0;
-        const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[];
+        const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[], ucOutOfBand: string[]=[];
         for (const sku of skus) {
           const ct=ctTires.find(t=>t.partNumber===sku);
           if (!ct) { notFoundInCT.push(sku); continue; }
           const ex=existingMap.get(sku);
           if (!ex) continue;
           const msrp=parseFloat(ct.msrp)||0;
-          const dealerCost=parseCTDealerCost(ct.cost);
-          if (dealerCost===null) { ucNoCost.push(sku); console.log(`⏭️  update-chunk: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
-          const netCost=dealerCost; // real CT dealer cost, stored unmodified
+          const costCheck=checkCTDealerCost(ct.cost, ct.msrp);
+          if (!costCheck.ok) {
+            if (costCheck.reason==='out_of_band') { ucOutOfBand.push(`${sku} (cost $${costCheck.cost} outside $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`); console.log(`⏭️  update-chunk: out-of-band CT cost — skipped + flagged: ${sku}`); }
+            else { ucNoCost.push(sku); console.log(`⏭️  update-chunk: no/invalid CT cost — skipped + flagged: ${sku}`); }
+            continue;
+          }
+          const netCost=costCheck.cost; // real CT dealer cost, stored unmodified
           const newSellingPrice=calculatePrice(netCost), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
@@ -976,7 +1035,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ucUpdated++;
           } catch (e: any) { ucErrors++; ucErrorList.push(`UPDATE ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, errors:ucErrors, ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, errors:ucErrors, ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucOutOfBand.length>0?{outOfBandSkus:ucOutOfBand}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'missing-images': {
@@ -1615,14 +1674,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let updated=0, errors=0;
         const errorList: string[] = [];
         const noCostSkus: string[] = [];
+        const outOfBandSkus: string[] = [];
         for (const sku of chunk) {
           const ct = ctTires.find(t => t.partNumber === sku);
           if (!ct) continue;
           const ex = existingMap.get(sku);
           if (!ex) continue;
-          const dealerCost = parseCTDealerCost(ct.cost);
-          if (dealerCost === null) { noCostSkus.push(sku); console.log(`⏭️  daily-sync: no/invalid CT cost — skipped + flagged: ${sku}`); continue; }
-          const netCost = dealerCost; // real CT dealer cost, stored unmodified
+          const costCheck = checkCTDealerCost(ct.cost, ct.msrp);
+          if (!costCheck.ok) {
+            if (costCheck.reason === 'out_of_band') { outOfBandSkus.push(`${sku} (cost $${costCheck.cost} outside $${costCheck.min.toFixed(2)}-$${costCheck.max.toFixed(2)})`); console.log(`⏭️  daily-sync: out-of-band CT cost — skipped + flagged: ${sku}`); }
+            else { noCostSkus.push(sku); console.log(`⏭️  daily-sync: no/invalid CT cost — skipped + flagged: ${sku}`); }
+            continue;
+          }
+          const netCost = costCheck.cost; // real CT dealer cost, stored unmodified
           const newSellingPrice = calculatePrice(netCost);
           const newPrice = newSellingPrice.toFixed(2);
           const priceChanged = newPrice !== ex.price;
@@ -1665,7 +1729,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           totalSkus: allSkus.length, chunkOffset: updateOffset, chunkSize: chunk.length,
           updated, errors,
           skippedNoCost: noCostSkus.length,
+          skippedOutOfBand: outOfBandSkus.length,
           ...(noCostSkus.length ? { noCostSkus } : {}),
+          ...(outOfBandSkus.length ? { outOfBandSkus } : {}),
           ...(errorList.length ? { errorList } : {}),
           done,
           nextUrl: done ? null : `?action=daily-sync&updateOffset=${nextOffset}&updateChunk=${updateChunkSize}`,
