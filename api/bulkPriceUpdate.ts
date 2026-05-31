@@ -911,6 +911,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const tires: any[] = data.data || [];
         const byPN = new Map<string, any>();
         for (const t of tires) byPN.set(String(t.partNumber).trim().toUpperCase(), t);
+        // raw=1 → return the COMPLETE unmodified CT/NetSuite object per part,
+        // no projection — to see which field (if any) holds true dealer cost
+        // vs the out-of-band value in the default `cost` field.
+        if (req.query.raw === '1' || req.query.raw === 'true') {
+          const rawResults = parts.map((orig, i) => {
+            const key = ctKeys[i].toUpperCase();
+            return { requested: orig, ctPartNumber: key, found: byPN.has(key), raw: byPN.get(key) ?? null };
+          });
+          return res.status(200).json({
+            success: true,
+            mode: 'ct-cost-lookup',
+            raw: true,
+            requested: parts.length,
+            returnedByCT: tires.length,
+            envCheck: { hasConsumerKey: !!CT.consumerKey, hasCustomerToken: !!CT.customerToken, sandbox: CT.useSandbox },
+            results: rawResults,
+          });
+        }
         const results = parts.map((orig, i) => {
           const key = ctKeys[i].toUpperCase();
           const t = byPN.get(key);
