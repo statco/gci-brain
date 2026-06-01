@@ -526,6 +526,14 @@ const FLOTATION_TITLE_OVERRIDES: Record<string, string> = {
   '18943NXK': 'Nexen Roadian MTX 37X12.50R17',
   'TSWH04':   'Transeagle TRA06 11R22.5',
   'TSWH15':   'Transeagle TRA06 11R24.5',
+  // Cooper Discoverer AT3 XLT flotation sizes
+  'TIRE-170028027': 'Cooper Discoverer AT3 XLT 33X12.50R15',
+  'TIRE-170049002': 'Cooper Discoverer AT3 XLT 35X12.50R18',
+  'TIRE-170041002': 'Cooper Discoverer AT3 XLT 37X12.50R17',
+  // Cooper Discoverer Rugged Trek LT flotation sizes
+  'TIRE-170220007': 'Cooper Discoverer Rugged Trek LT 33X12.50R20',
+  'TIRE-170059007': 'Cooper Discoverer Rugged Trek LT 35X12.50R20',
+  'TIRE-170213007': 'Cooper Discoverer Rugged Trek LT 37X12.50R17',
 };
 
 async function buildPayload(ct: CTTire) {
