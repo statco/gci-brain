@@ -515,6 +515,19 @@ async function fetchExistingProductTitles(): Promise<Set<string>> {
 
 // ─── BUILD SHOPIFY PAYLOAD ────────────────────────────────────────────────────
 
+// Flotation / special-format titles that formatTireSize() can't derive from the
+// CT size code (e.g. 33X12.50R20, 11R22.5). Keyed by variant SKU (ct.partNumber).
+// When a SKU is present here, its value is used verbatim as the final product
+// title instead of the formatTireSize()-derived one.
+const FLOTATION_TITLE_OVERRIDES: Record<string, string> = {
+  '18733NXK': 'Nexen Roadian ATX LT 33X12.50R20',
+  '18761NXK': 'Nexen Roadian ATX LT 35X12.50R17',
+  '18942NXK': 'Nexen Roadian MTX RM7 35X12.50R17',
+  '18943NXK': 'Nexen Roadian MTX 37X12.50R17',
+  'TSWH04':   'Transeagle TRA06 11R22.5',
+  'TSWH15':   'Transeagle TRA06 11R24.5',
+};
+
 async function buildPayload(ct: CTTire) {
   const size    = parseCTSizeCode(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
@@ -535,6 +548,9 @@ async function buildPayload(ct: CTTire) {
   const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
   const aboveMsrp     = sellingPrice > msrp + 0.01;
   const title = formatTireSize(toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()));
+  // Use a hardcoded override as the final title when this SKU has one (flotation
+  // / special sizes formatTireSize can't build); otherwise keep the derived title.
+  const finalTitle = FLOTATION_TITLE_OVERRIDES[ct.partNumber] ?? title;
   const { season: classifiedSeason, vehicleType, brand: classifiedBrand } = classifyTire(title);
   const { loadIndex: ctLoadIndex, speedRating: ctSpeedRating } = parseLoadIndexAndSpeedRating(ct.name || '');
   const normalizedVendor = normalizeVendor(ct.brand);
@@ -572,7 +588,7 @@ async function buildPayload(ct: CTTire) {
   if (ctSpeedRating) metafields.push({ namespace:'canada_tire', key:'speed_rating', value:ctSpeedRating, type:'single_line_text_field' });
   return {
     product: {
-      title,
+      title: finalTitle,
       body_html: [
         `<p><strong>${ct.brand} ${ct.model}</strong> — ${size}</p>`,
         `<ul>`,
