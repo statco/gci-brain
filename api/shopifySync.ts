@@ -309,56 +309,201 @@ async function shopifyFetch<T>(path: string, options: RequestInit = {}): Promise
     },
   });
   if (res.status === 429) { await delay(2000); return shopifyFetch<T>(path, options); }
-  if (!res.ok) throw new Error(`Shopify ${res.status} on ${path}: ${(await res.text()).slice(0,200)}`);
+  if (!res.ok) {
+    // Attach the HTTP status so callers can branch on it (e.g. treat a 404 from
+    // an individual update as a stale-ID skip rather than a hard error).
+    const err = new Error(`Shopify ${res.status} on ${path}: ${(await res.text()).slice(0,200)}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   if (res.status === 204 || res.headers.get('content-length') === '0') return {} as T;
   return res.json() as Promise<T>;
 }
 
+// ─── SHOPIFY GRAPHQL ──────────────────────────────────────────────────────────
+// Cursor-based product pagination uses the GraphQL Admin API. Unlike REST
+// `since_id`, the GraphQL cursor (pageInfo.endCursor) is opaque and does NOT
+// break when a previously-returned product is deleted or archived between pages
+// — the root cause of the chunk-54 `404 on /products.json?...&since_id=…` crash.
+const SHOPIFY_GRAPHQL_URL = () => `https://${SHOPIFY.domain}/admin/api/${SHOPIFY.apiVersion}/graphql.json`;
+
+async function shopifyGraphQL<T>(query: string, variables: Record<string, any> = {}): Promise<T> {
+  const res = await fetch(SHOPIFY_GRAPHQL_URL(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY.token },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (res.status === 429) { await delay(2000); return shopifyGraphQL<T>(query, variables); }
+  if (!res.ok) {
+    const err = new Error(`Shopify GraphQL ${res.status}: ${(await res.text()).slice(0,200)}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  const json: any = await res.json();
+  if (json.errors) throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors).slice(0,300)}`);
+  return json.data as T;
+}
+
+// Extract the trailing numeric id from a Shopify GID
+// (e.g. "gid://shopify/ProductVariant/123" → 123). The rest of this file works
+// with numeric REST ids, so GraphQL results are normalized back to numbers.
+function gidToNumericId(gid: string): number {
+  const m = String(gid || '').match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 interface ExistingProduct { productId:number; variantId:number; inventoryItemId:number; price:string; hasImages:boolean; tags:string; }
 
+// Build an ExistingProduct map entry from one GraphQL product node + variant.
+function entryFromGraphQLNode(node: any, variant: any): ExistingProduct {
+  return {
+    productId:       gidToNumericId(node.id),
+    variantId:       gidToNumericId(variant.id),
+    inventoryItemId: gidToNumericId(variant.inventoryItem?.id || ''),
+    price:           variant.price,
+    hasImages:       !!node.featuredImage,
+    tags:            Array.isArray(node.tags) ? node.tags.join(', ') : (node.tags || ''),
+  };
+}
+
 // ─── FIX 2: fetchExistingProducts ────────────────────────────────────────────
-// Added secondary map entry stripping "TIRE-" prefix so CT part numbers
-// (e.g. "166429021") can find old products keyed as "TIRE-166429021".
-// This allows inventory + price updates to reach old products during the
-// transition window while archive-tire-skus runs in batches.
-// Once all TIRE- products are archived this branch is never hit.
+// Switched from REST `since_id` pagination to GraphQL cursor pagination
+// (pageInfo.endCursor). The REST cursor is the id of the last product on the
+// previous page; if that product is deleted/archived before the next page is
+// requested, Shopify can return `404 Not Found` and abort the whole run
+// (the chunk-54 failure). The GraphQL cursor is opaque and unaffected.
+//
+// Still keeps the secondary map entry that strips the "TIRE-" prefix so CT part
+// numbers (e.g. "166429021") can reach legacy products keyed as
+// "TIRE-166429021" during the transition window. Once all TIRE- products are
+// archived that branch is never hit.
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchExistingProducts(): Promise<Map<string,ExistingProduct>> {
   const map = new Map<string,ExistingProduct>();
-  let sinceId = 0;
+  let cursor: string | null = null;
   while (true) {
-    const q = `tag=${SYNC_TAG}&status=active&limit=250&fields=id,variants,images,tags${sinceId?`&since_id=${sinceId}`:''}`;
-    const data: any = await shopifyFetch<any>(`/products.json?${q}`);
-    const products = data.products || [];
-    for (const p of products) {
-      const hasImages = Array.isArray(p.images) && p.images.length > 0;
-      const existingTags: string = p.tags || '';
-      for (const v of p.variants) {
+    const data: any = await shopifyGraphQL<any>(`
+      query($cursor: String) {
+        products(first: 250, after: $cursor, query: "tag:${SYNC_TAG} status:active") {
+          edges {
+            node {
+              id
+              tags
+              featuredImage { id }
+              variants(first: 100) {
+                edges { node { id sku price inventoryItem { id } } }
+              }
+            }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    `, { cursor });
+    const conn  = data?.products;
+    const edges = conn?.edges || [];
+    for (const edge of edges) {
+      const node = edge.node;
+      for (const ve of (node.variants?.edges || [])) {
+        const v = ve.node;
         if (!v.sku) continue;
-        const entry: ExistingProduct = {
-          productId:       p.id,
-          variantId:       v.id,
-          inventoryItemId: v.inventory_item_id,
-          price:           v.price,
-          hasImages,
-          tags:            existingTags,
-        };
+        const entry = entryFromGraphQLNode(node, v);
         // Primary index: exact SKU as stored in Shopify
         map.set(v.sku, entry);
         // Legacy TIRE- prefix compatibility — can be removed once all
         // TIRE- prefixed products are retired from Shopify
         if (v.sku.startsWith('TIRE-')) {
           const strippedSku = v.sku.slice(5);
-          if (!map.has(strippedSku)) {
-            map.set(strippedSku, entry);
+          if (!map.has(strippedSku)) map.set(strippedSku, entry);
+        }
+      }
+    }
+    if (!conn?.pageInfo?.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+    await delay(200);
+  }
+  return map;
+}
+
+// Re-look-up fresh Shopify ids for a single SKU via GraphQL. Returns null when
+// no ACTIVE product carries the SKU — i.e. the product/variant was deleted or
+// archived, so a stored id pointing at it is permanently stale. Used to refresh
+// (or retire) a stale id after an individual update 404s, so it stops recurring.
+async function refreshExistingProductBySku(sku: string): Promise<ExistingProduct | null> {
+  const data: any = await shopifyGraphQL<any>(`
+    query($q: String!) {
+      products(first: 1, query: $q) {
+        edges {
+          node {
+            id
+            tags
+            featuredImage { id }
+            variants(first: 100) {
+              edges { node { id sku price inventoryItem { id } } }
+            }
           }
         }
       }
     }
-    if (products.length < 250) break;
-    sinceId = products[products.length-1].id;
+  `, { q: `sku:${sku} status:active` });
+  const node = data?.products?.edges?.[0]?.node;
+  if (!node) return null;
+  const variants = (node.variants?.edges || []).map((e: any) => e.node);
+  const variant  = variants.find((v: any) => v.sku === sku) || variants[0];
+  if (!variant) return null;
+  return entryFromGraphQLNode(node, variant);
+}
+
+// Result of a 404-aware per-SKU update.
+//   'ok'    — the writes (or a refreshed retry) succeeded
+//   'stale' — the stored id was a deleted/archived product; skipped + cleared
+type UpdateResult = 'ok' | 'stale';
+
+// Runs the standard per-SKU Shopify write sequence (variant PUT → product PUT →
+// inventory → optional image) and survives a stale stored id. A 404 on the
+// variant or product PUT means the product/variant no longer exists; instead of
+// aborting the run we refresh the id by re-looking-up the SKU and retry once. If
+// the SKU is truly gone we return 'stale' (caller skips + logs) and clear the
+// stale entry from `existingMap` so it can't recur later in the same run.
+// setInventory / attachProductImage already swallow their own errors, so only a
+// genuinely stale variant/product id surfaces here.
+async function syncOneProduct(
+  sku: string,
+  ex: ExistingProduct,
+  ct: CTTire,
+  buildVariant: (e: ExistingProduct) => any,
+  buildProduct: (e: ExistingProduct) => any,
+  existingMap: Map<string, ExistingProduct>,
+): Promise<UpdateResult> {
+  const writes = async (e: ExistingProduct) => {
+    await shopifyFetch(`/variants/${e.variantId}.json`, { method: 'PUT', body: JSON.stringify({ variant: buildVariant(e) }) });
+    await shopifyFetch(`/products/${e.productId}.json`, { method: 'PUT', body: JSON.stringify({ product: buildProduct(e) }) });
+    await setInventory(e.inventoryItemId, getTotalQty(ct));
+    if (!e.hasImages) await attachProductImage(e.productId, ct);
+  };
+  try {
+    await writes(ex);
+    return 'ok';
+  } catch (e: any) {
+    if (e?.status !== 404) throw e; // real error — let the caller record it
+    console.warn(`⚠️ Stale Shopify id for ${sku} (product ${ex.productId}/variant ${ex.variantId}) — refreshing`);
+    const fresh = await refreshExistingProductBySku(sku);
+    if (fresh && (fresh.variantId !== ex.variantId || fresh.productId !== ex.productId)) {
+      existingMap.set(sku, fresh); // refresh the stored id for the rest of the run
+      try {
+        await writes(fresh);
+        console.log(`🔄 Refreshed ${sku}: stale id replaced with product ${fresh.productId}/variant ${fresh.variantId}`);
+        return 'ok';
+      } catch (e2: any) {
+        if (e2?.status !== 404) throw e2;
+      }
+    }
+    // Truly gone (no active product with this SKU, or still 404 after refresh).
+    // Clear the stale entry so it isn't retried (e.g. via the TIRE- alias) and
+    // tell the caller to skip + log rather than count an error.
+    existingMap.delete(sku);
+    console.warn(`⏭️  Skipping ${sku}: no active Shopify product/variant for this SKU (stale id cleared)`);
+    return 'stale';
   }
-  return map;
 }
 
 let _locationId: number | null = null;
@@ -651,6 +796,7 @@ interface SyncStats {
   errorList:string[]; duration:string; timestamp:string;
   skippedNoCost?:number; noCostSkus?:string[];
   skippedOutOfBand?:number; outOfBandSkus?:string[];
+  skippedStale?:number; staleSkus?:string[];
   totalCT?:number; inStock?:number; createPoolSize?:number;
   offset?:number; chunkSize?:number; done?:boolean;
 }
@@ -662,6 +808,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     skippedNoStock:0, skippedDuplicate:0, skippedDuplicateTitles:[],
     skippedNoCost:0, noCostSkus:[],
     skippedOutOfBand:0, outOfBandSkus:[],
+    skippedStale:0, staleSkus:[],
     errorList:[], duration:'', timestamp:new Date().toISOString(),
   };
 
@@ -793,60 +940,42 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
     if (upSR && !existingTagStr.includes('speedrating:')) updatedTags = [updatedTags, `speedrating:${upSR}`].filter(Boolean).join(', ');
     const tagsChanged = updatedTags !== existingTagStr;
-    if (!priceChanged && mode === 'daily') {
-      try {
-        await shopifyFetch(`/variants/${ex.variantId}.json`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            variant: { id: ex.variantId, cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' },
-          }),
-        });
-        // Refresh canada_tire.cost with the same strict-parsed real cost
-        // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
-        // when changed. Not swallowed — a failure must surface so Cost per item
-        // and canada_tire.cost never diverge.
-        await shopifyFetch(`/products/${ex.productId}.json`, {
-          method: 'PUT',
-          body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
-        });
-        await setInventory(ex.inventoryItemId, getTotalQty(ct));
-        if (!ex.hasImages) await attachProductImage(ex.productId, ct);
-        stats.updated++;
-      } catch (e: any) { stats.errors++; stats.errorList.push(`COST ${ct.partNumber}: ${e.message}`); }
-      return;
-    }
+    // Build the variant body. When the price hasn't changed only cost is
+    // refreshed (matches the old daily cost-only path); when it has changed,
+    // price + compare_at_price are included too. Uses the (possibly refreshed)
+    // entry `e` so a stale id replaced mid-write is honored.
+    const buildVariant = (e: ExistingProduct) => ({
+      id: e.variantId,
+      ...(priceChanged ? {
+        price:            newPrice,
+        compare_at_price: newSellingPrice > msrp + 0.01 ? null : msrp.toFixed(2),
+      } : {}),
+      cost:                 netCost.toFixed(2),
+      inventory_management: 'shopify',
+      inventory_policy:     'deny',
+    });
+    // Refresh canada_tire.cost with the same strict-parsed real cost
+    // (overwrites any MSRP-poisoned cache). Always runs; tags folded in when
+    // changed — so Cost per item and canada_tire.cost never diverge.
+    const buildProduct = (e: ExistingProduct) => ({
+      id: e.productId,
+      ...(tagsChanged ? { tags: updatedTags } : {}),
+      metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }],
+    });
     try {
-      await shopifyFetch(`/variants/${ex.variantId}.json`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          variant: {
-            id: ex.variantId,
-            ...(priceChanged ? {
-              price:            newPrice,
-              compare_at_price: newSellingPrice > msrp + 0.01 ? null : msrp.toFixed(2),
-            } : {}),
-            cost:                 netCost.toFixed(2),
-            inventory_management: 'shopify',
-            inventory_policy:     'deny',
-          },
-        }),
-      });
-      // Refresh canada_tire.cost with the same strict-parsed real cost
-      // (overwrites any MSRP-poisoned cache). Always runs; tags folded in when
-      // changed. Not swallowed — a failure must surface so Cost per item and
-      // canada_tire.cost never diverge.
-      await shopifyFetch(`/products/${ex.productId}.json`, {
-        method: 'PUT',
-        body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
-      });
-      await setInventory(ex.inventoryItemId, getTotalQty(ct));
-      if (!ex.hasImages) await attachProductImage(ex.productId, ct);
-      stats.updated++;
+      const result = await syncOneProduct(ct.partNumber, ex, ct, buildVariant, buildProduct, existingMap);
+      if (result === 'stale') {
+        // Deleted/archived product — non-fatal: skip + log, don't count an error.
+        stats.skippedStale = (stats.skippedStale ?? 0) + 1;
+        (stats.staleSkus ??= []).push(ct.partNumber);
+      } else {
+        stats.updated++;
+      }
     } catch (e: any) { stats.errors++; stats.errorList.push(`UPDATE ${ct.partNumber}: ${e.message}`); }
   });
 
   stats.duration = `${((Date.now()-t0)/1000).toFixed(1)}s`;
-  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} skippedDuplicate:${stats.skippedDuplicate} skippedNoCost:${stats.skippedNoCost} skippedOutOfBand:${stats.skippedOutOfBand} errors:${stats.errors} done:${stats.done}`);
+  console.log(`✅ Chunk done in ${stats.duration} — created:${stats.created} updated:${stats.updated} skipped:${stats.skipped} skippedNoStock:${stats.skippedNoStock} skippedDuplicate:${stats.skippedDuplicate} skippedNoCost:${stats.skippedNoCost} skippedOutOfBand:${stats.skippedOutOfBand} skippedStale:${stats.skippedStale} errors:${stats.errors} done:${stats.done}`);
   if (stats.skippedDuplicateTitles.length > 0) {
     console.log(`⏭️  Skipped duplicate titles (${stats.skippedDuplicateTitles.length}): ${stats.skippedDuplicateTitles.join(', ')}`);
   }
@@ -1042,7 +1171,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ctTires=(ctData.data||[]) as CTTire[];
         const existingMap=await fetchExistingProducts();
         let ucUpdated=0,ucErrors=0,ucOverridden=0;
-        const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[], ucOutOfBand: string[]=[];
+        const ucErrorList: string[]=[], notFoundInCT: string[]=[], ucNoCost: string[]=[], ucOutOfBand: string[]=[], ucStale: string[]=[];
         for (const sku of skus) {
           const ct=ctTires.find(t=>t.partNumber===sku);
           if (!ct) { notFoundInCT.push(sku); continue; }
@@ -1068,16 +1197,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (upLI&&!existingTagStr.includes('loadindex:'))   updatedTags=[updatedTags,`loadindex:${upLI}`].filter(Boolean).join(', ');
           if (upSR&&!existingTagStr.includes('speedrating:')) updatedTags=[updatedTags,`speedrating:${upSR}`].filter(Boolean).join(', ');
           const tagsChanged=updatedTags!==existingTagStr;
+          // Refresh canada_tire.cost with the same strict-parsed real cost (overwrites MSRP-poisoned cache) so Cost per item and canada_tire.cost never diverge.
+          const buildVariant=(e: ExistingProduct)=>({ id:e.variantId, ...(priceChanged?{ price:newPrice, compare_at_price:newSellingPrice>msrp+0.01?null:msrp.toFixed(2) }:{}), cost:netCost.toFixed(2), inventory_management:'shopify', inventory_policy:'deny' });
+          const buildProduct=(e: ExistingProduct)=>({ id:e.productId, ...(tagsChanged?{ tags:updatedTags }:{}), metafields:[{ namespace:'canada_tire', key:'cost', value:netCost.toFixed(2), type:'number_decimal' }] });
           try {
-            await shopifyFetch(`/variants/${ex.variantId}.json`,{ method:'PUT', body:JSON.stringify({ variant:{ id:ex.variantId, ...(priceChanged?{ price:newPrice, compare_at_price:newSellingPrice>msrp+0.01?null:msrp.toFixed(2) }:{}), cost:netCost.toFixed(2), inventory_management:'shopify', inventory_policy:'deny' } }) });
-            // Refresh canada_tire.cost with the same strict-parsed real cost (overwrites MSRP-poisoned cache). Always runs; not swallowed so the two fields never diverge.
-            await shopifyFetch(`/products/${ex.productId}.json`,{ method:'PUT', body:JSON.stringify({ product:{ id:ex.productId, ...(tagsChanged?{ tags:updatedTags }:{}), metafields:[{ namespace:'canada_tire', key:'cost', value:netCost.toFixed(2), type:'number_decimal' }] } }) });
-            await setInventory(ex.inventoryItemId,getTotalQty(ct));
-            if (!ex.hasImages) await attachProductImage(ex.productId,ct);
+            const result=await syncOneProduct(sku, ex, ct, buildVariant, buildProduct, existingMap);
+            if (result==='stale') { ucStale.push(sku); continue; } // deleted/archived — non-fatal skip
             ucUpdated++;
           } catch (e: any) { ucErrors++; ucErrorList.push(`UPDATE ${sku}: ${e.message}`); }
         }
-        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, overridden:ucOverridden, errors:ucErrors, ...(badOverrides.length>0?{badOverrides}:{}), ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucOutOfBand.length>0?{outOfBandSkus:ucOutOfBand}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
+        return res.status(200).json({ success:true, mode:'update-chunk', skusRequested:skus.length, ctFound:ctTires.length, ...(notFoundInCT.length>0?{notFoundInCT}:{}), updated:ucUpdated, overridden:ucOverridden, errors:ucErrors, skippedStale:ucStale.length, ...(badOverrides.length>0?{badOverrides}:{}), ...(ucNoCost.length>0?{noCostSkus:ucNoCost}:{}), ...(ucOutOfBand.length>0?{outOfBandSkus:ucOutOfBand}:{}), ...(ucStale.length>0?{staleSkus:ucStale}:{}), ...(ucErrorList.length>0?{errorList:ucErrorList}:{}), duration:`${((Date.now()-t0)/1000).toFixed(1)}s` });
       }
 
       case 'missing-images': {
@@ -1717,6 +1846,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const errorList: string[] = [];
         const noCostSkus: string[] = [];
         const outOfBandSkus: string[] = [];
+        const staleSkus: string[] = [];
         for (const sku of chunk) {
           const ct = ctTires.find(t => t.partNumber === sku);
           if (!ct) continue;
@@ -1738,27 +1868,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (upLI && !existingTagStr.includes('loadindex:'))   updatedTags = [updatedTags, `loadindex:${upLI}`].filter(Boolean).join(', ');
           if (upSR && !existingTagStr.includes('speedrating:')) updatedTags = [updatedTags, `speedrating:${upSR}`].filter(Boolean).join(', ');
           const tagsChanged = updatedTags !== existingTagStr;
+          const buildVariant = (e: ExistingProduct) => ({ id: e.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' });
+          // Refresh canada_tire.cost with the same strict-parsed real cost
+          // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
+          // when changed — Cost per item and canada_tire.cost must never diverge.
+          const buildProduct = (e: ExistingProduct) => ({ id: e.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] });
           try {
-            await shopifyFetch(`/variants/${ex.variantId}.json`, {
-              method: 'PUT',
-              body: JSON.stringify({ variant: { id: ex.variantId, ...(priceChanged ? { price: newPrice } : {}), cost: netCost.toFixed(2), inventory_management: 'shopify', inventory_policy: 'deny' } }),
-            });
-            // Refresh canada_tire.cost with the same strict-parsed real cost
-            // (overwrites any MSRP-poisoned cache). Always runs; tags folded in
-            // when changed. Not swallowed — Cost per item and canada_tire.cost
-            // must never diverge.
-            await shopifyFetch(`/products/${ex.productId}.json`, {
-              method: 'PUT',
-              body: JSON.stringify({ product: { id: ex.productId, ...(tagsChanged ? { tags: updatedTags } : {}), metafields: [{ namespace: 'canada_tire', key: 'cost', value: netCost.toFixed(2), type: 'number_decimal' }] } }),
-            });
+            const result = await syncOneProduct(sku, ex, ct, buildVariant, buildProduct, existingMap);
+            if (result === 'stale') {
+              // Deleted/archived product (stale stored id) — non-fatal: skip +
+              // log, don't count it as an error or abort the run.
+              staleSkus.push(sku);
+              continue;
+            }
             // Stamp cost freshness (upsert by owner+namespace+key) — read by
             // gci-order-hub cost-integrity-audit to flag stale cost. Non-fatal.
-            await shopifyFetch(`/products/${ex.productId}/metafields.json`, {
+            // Uses the (possibly refreshed) product id from the map.
+            const cur = existingMap.get(sku) ?? ex;
+            await shopifyFetch(`/products/${cur.productId}/metafields.json`, {
               method: 'POST',
               body: JSON.stringify({ metafield: { namespace: 'canada_tire', key: 'cost_synced_at', value: new Date().toISOString(), type: 'date_time' } }),
             }).catch(() => {});
-            await setInventory(ex.inventoryItemId, getTotalQty(ct));
-            if (!ex.hasImages) await attachProductImage(ex.productId, ct);
             updated++;
           } catch (e: any) {
             errors++;
@@ -1772,8 +1902,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           updated, errors,
           skippedNoCost: noCostSkus.length,
           skippedOutOfBand: outOfBandSkus.length,
+          skippedStale: staleSkus.length,
           ...(noCostSkus.length ? { noCostSkus } : {}),
           ...(outOfBandSkus.length ? { outOfBandSkus } : {}),
+          ...(staleSkus.length ? { staleSkus } : {}),
           ...(errorList.length ? { errorList } : {}),
           done,
           nextUrl: done ? null : `?action=daily-sync&updateOffset=${nextOffset}&updateChunk=${updateChunkSize}`,
