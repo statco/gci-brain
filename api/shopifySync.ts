@@ -1493,53 +1493,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'archive-orphans': {
         const dryRun2=(req.query.dryRun??'true')!=='false', aoLimit=parseInt(req.query.limit as string||'100',10);
         const ctTires2=await fetchAllCTTires(), ctPNs=new Set(ctTires2.map((t: any)=>t.partNumber));
-        const aoOrphans: Array<{id:number;title:string;handle:string;sku:string}>=[];
+        const aoOrphans: Array<{id:number;title:string;handle:string;sku:string;invItemId:number}>=[];
         let aoUrl: string|null=`${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,handle,variants,tags`;
         while (aoUrl) {
           const r: Response=await fetch(aoUrl,{headers:{'Content-Type':'application/json','X-Shopify-Access-Token':SHOPIFY.token}});
           if (!r.ok) throw new Error(`Shopify ${r.status}`);
           const data: any=await r.json();
-          for (const p of (data.products||[])) { const sku=p.variants?.[0]?.sku||''; if (sku&&!ctPNs.has(sku)) aoOrphans.push({id:p.id,title:p.title,handle:p.handle||'',sku}); }
+          for (const p of (data.products||[])) { const v=p.variants?.[0]; const sku=v?.sku||''; if (sku&&!ctPNs.has(sku)) aoOrphans.push({id:p.id,title:p.title,handle:p.handle||'',sku,invItemId:v?.inventory_item_id||0}); }
           const lnk: string|null=r.headers.get('link'), lm=lnk?lnk.match(/<([^>]+)>;\s*rel="next"/):null;
           aoUrl=lm?lm[1]:null;
         }
         const aoChunk=aoOrphans.slice(0,aoLimit);
         if (dryRun2) return res.status(200).json({ success:true, mode:'archive-orphans', dryRun:true, totalOrphans:aoOrphans.length, willArchive:aoChunk.length, sample:aoChunk.slice(0,10).map(p=>({title:p.title,sku:p.sku})) });
-        let aoArchived=0,aoRedirected=0,aoErrors=0;
+        let aoArchived=0,aoRedirected=0,aoErrors=0,aoZeroed=0;
         for (const p of aoChunk) {
           try {
+            // Zero inventory + push Walmart 0 BEFORE archiving (never strand stock)
+            if (p.invItemId) { await setInventory(p.invItemId, 0); aoZeroed++; }
+            await pushWalmartZeros([p.sku]).catch(() => {});
             if (p.handle) { await shopifyFetch('/redirects.json',{method:'POST',body:JSON.stringify({redirect:{path:`/products/${p.handle}`,target:'/collections/all'}})}).catch(()=>{}); aoRedirected++; }
             await shopifyFetch(`/products/${p.id}.json`,{method:'PUT',body:JSON.stringify({product:{id:p.id,status:'archived'}})}); aoArchived++;
             await delay(300);
           } catch (e: any) { console.error('[archive-orphans] Failed',p.id,e.message); aoErrors++; }
         }
-        return res.status(200).json({ success:true, mode:'archive-orphans', dryRun:false, totalOrphans:aoOrphans.length, archived:aoArchived, redirected:aoRedirected, errors:aoErrors, remaining:aoOrphans.length-aoChunk.length });
+        return res.status(200).json({ success:true, mode:'archive-orphans', dryRun:false, totalOrphans:aoOrphans.length, archived:aoArchived, inventoryZeroed:aoZeroed, redirected:aoRedirected, errors:aoErrors, remaining:aoOrphans.length-aoChunk.length });
       }
 
       case 'archive-tire-skus': {
         const atsDryRun=(req.query.dryRun??'true')!=='false', atsLimit=Math.max(1,parseInt(req.query.limit as string||'100',10));
-        const tireSKUProducts: Array<{id:number;title:string;handle:string;sku:string}>=[];
+        const tireSKUProducts: Array<{id:number;title:string;handle:string;sku:string;invItemId:number}>=[];
         let atsUrl: string|null=`${SHOPIFY.baseUrl}/products.json?status=active&limit=250&fields=id,title,handle,variants`;
         while (atsUrl) {
           const r: Response=await fetch(atsUrl,{headers:{'Content-Type':'application/json','X-Shopify-Access-Token':SHOPIFY.token}});
           if (!r.ok) throw new Error(`Shopify ${r.status} while paginating for archive-tire-skus`);
           const data: any=await r.json();
-          for (const p of (data.products||[])) { const sku=p.variants?.[0]?.sku||''; if (sku.startsWith('TIRE-')) tireSKUProducts.push({id:p.id,title:p.title,handle:p.handle||'',sku}); }
+          for (const p of (data.products||[])) { const v=p.variants?.[0]; const sku=v?.sku||''; if (sku.startsWith('TIRE-')) tireSKUProducts.push({id:p.id,title:p.title,handle:p.handle||'',sku,invItemId:v?.inventory_item_id||0}); }
           const lnk: string|null=r.headers.get('link'), lm=lnk?lnk.match(/<([^>]+)>;\s*rel="next"/):null;
           atsUrl=lm?lm[1]:null;
         }
         const atsChunk=tireSKUProducts.slice(0,atsLimit);
         if (atsDryRun) return res.status(200).json({ success:true, mode:'archive-tire-skus', dryRun:true, totalFound:tireSKUProducts.length, willArchive:atsChunk.length, sample:atsChunk.slice(0,10).map(p=>({id:p.id,title:p.title,sku:p.sku,handle:p.handle})) });
-        let atsArchived=0,atsRedirected=0,atsErrors=0;
+        let atsArchived=0,atsRedirected=0,atsErrors=0,atsZeroed=0;
         for (const p of atsChunk) {
           try {
+            // Zero inventory + push Walmart 0 BEFORE archiving (never strand stock)
+            if (p.invItemId) { await setInventory(p.invItemId, 0); atsZeroed++; }
+            await pushWalmartZeros([p.sku]).catch(() => {});
             if (p.handle) { await shopifyFetch('/redirects.json',{method:'POST',body:JSON.stringify({redirect:{path:`/products/${p.handle}`,target:'/collections/all'}})}).catch(()=>{}); atsRedirected++; }
             await shopifyFetch(`/products/${p.id}.json`,{method:'PUT',body:JSON.stringify({product:{id:p.id,status:'archived'}})}); atsArchived++;
             console.log(`🗑️  archive-tire-skus: archived ${p.sku} — "${p.title}"`);
             await delay(300);
           } catch (e: any) { console.error(`[archive-tire-skus] Failed ${p.id} (${p.sku}): ${e.message}`); atsErrors++; }
         }
-        return res.status(200).json({ success:true, mode:'archive-tire-skus', dryRun:false, totalFound:tireSKUProducts.length, archived:atsArchived, redirected:atsRedirected, errors:atsErrors, remaining:tireSKUProducts.length-atsChunk.length });
+        return res.status(200).json({ success:true, mode:'archive-tire-skus', dryRun:false, totalFound:tireSKUProducts.length, archived:atsArchived, inventoryZeroed:atsZeroed, redirected:atsRedirected, errors:atsErrors, remaining:tireSKUProducts.length-atsChunk.length });
       }
 
       case 'dedup': {
