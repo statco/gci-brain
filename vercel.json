@@ -42,6 +42,10 @@
   ],
   "crons": [
     {
+      "path": "/api/shopifySync?action=inventory-reconcile",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/feed/gmc",
       "schedule": "0 */6 * * *"
     },
