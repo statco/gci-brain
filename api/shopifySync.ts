@@ -530,6 +530,38 @@ async function setInventory(inventoryItemId: number, qty: number): Promise<void>
   } catch (e) { console.warn(`⚠️ Inventory update failed for ${inventoryItemId}:`, e); }
 }
 
+// ─── REACTIVE WALMART ZERO-PUSH ─────────────────────────────────────────────────
+// Fire-and-forget notifier: asks gci-order-hub to push quantity 0 to Walmart for
+// the given SKUs — the reactive companion to the scheduled inventory writer in
+// the inventory-reconcile action. Dormant until BOTH env vars are set, and it
+// NEVER throws: any failure (missing config, network, non-2xx) is swallowed and
+// returned as data so a Walmart hiccup can never break a Shopify reconcile.
+async function pushWalmartZeros(
+  skus: string[],
+): Promise<{ ok: boolean; status?: number; skipped?: boolean; pushed?: number; error?: string; body?: any }> {
+  const url    = process.env.ORDER_HUB_ZERO_URL;
+  const secret = process.env.ORDER_HUB_ZERO_SECRET;
+  if (!url || !secret) {
+    console.log('ℹ️ pushWalmartZeros: ORDER_HUB_ZERO_URL / ORDER_HUB_ZERO_SECRET not set — skipping (dormant).');
+    return { ok: false, skipped: true, error: 'ORDER_HUB_ZERO_URL / ORDER_HUB_ZERO_SECRET not set' };
+  }
+  if (!skus || skus.length === 0) return { ok: true, skipped: true, pushed: 0 };
+  try {
+    const r = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` },
+      body:    JSON.stringify({ skus }),
+    });
+    let body: any = null;
+    try { body = await r.json(); } catch { /* non-JSON / empty body — ignore */ }
+    if (!r.ok) console.warn(`⚠️ pushWalmartZeros: order-hub returned HTTP ${r.status} (non-fatal)`);
+    return { ok: r.ok, status: r.status, pushed: skus.length, body };
+  } catch (e: any) {
+    console.warn(`⚠️ pushWalmartZeros failed (non-fatal): ${e?.message || e}`);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 // ─── IMAGE ATTACHMENT ─────────────────────────────────────────────────────────
 
 function buildImageAlt(ct: CTTire): string {
@@ -1044,6 +1076,140 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           success:true, mode:'debug-ct-pages',
           summary:{ totalPages:pageSizes.length, totalTires, stoppedEarlyAtPage:stoppedEarly?maxPages:null, pageSizes, note:stoppedEarly?`Stopped at maxPages=${maxPages}. Re-run with ?maxPages=50 if you expect more pages.`:'All pages fetched — this is the complete CT catalog.' },
           brands:{ total:Object.keys(brandCounts).length, sortedByCount:sortedBrands, unmappedBrands:unmappedBrands.length>0?{ count:unmappedBrands.length, brands:unmappedBrands, action:'Add these to VENDOR_MAP in shopifySync.ts' }:{ count:0, message:'✅ All brands are already in VENDOR_MAP' } },
+        });
+      }
+
+      // ── NEW: inventory-reconcile ────────────────────────────────────────────
+      // Authoritative, scheduled inventory writer (Shopify is the source of truth
+      // this corrects). Runs hourly via cron. It exists because clearance items at
+      // Canada Tire vanish from the feed or report out-of-band cost — the price
+      // paths' cost gate then skips them BEFORE the inventory write, so Shopify
+      // stock freezes at a stale non-zero value and oversells propagate to Walmart.
+      //
+      // This action does NOT touch price, tags, titles, or the create/update
+      // paths — it only writes inventory (setInventory) and, when a SKU is newly
+      // zeroed, notifies gci-order-hub to push 0 to Walmart (reactive, non-fatal).
+      //
+      // Target qty per Shopify ct-sync SKU:
+      //   • CT in-stock                                   → getTotalQty(ct)
+      //   • CT qty 0 or SKU absent from CT feed           → 0
+      //   • checkCTDealerCost == out_of_band | no_cost    → 0   (cost gate ⇒ zero)
+      // SKUs already at their target are skipped. Zeros are processed first.
+      //
+      // Usage: GET/POST /api/shopifySync?action=inventory-reconcile
+      //   ?dryRun=true   compute only, write nothing, push nothing
+      //   ?offset=0&limit=800   process a window of pending changes; follow the
+      //                         returned nextUrl until done:true for large runs.
+      case 'inventory-reconcile': {
+        const irDryRunRaw = (req.body as any)?.dryRun ?? req.query.dryRun;
+        const irDryRun = irDryRunRaw === true || irDryRunRaw === 'true';
+        const irOffset = Math.max(0, parseInt((req.body as any)?.offset ?? req.query.offset as string ?? '0', 10) || 0);
+        const irLimit  = Math.max(1, parseInt((req.body as any)?.limit  ?? req.query.limit  as string ?? '800', 10) || 800);
+
+        // 1) Read-only REST scan of active ct-sync products → sku → { inventory_item_id, qty }.
+        //    Mirrors the Link-header pagination used by find-orphans / archive-orphans.
+        //    Deliberately does NOT reuse fetchExistingProducts (GraphQL, no live qty).
+        const shopBySku = new Map<string, { inventory_item_id: number; qty: number }>();
+        let irUrl: string | null = `${SHOPIFY.baseUrl}/products.json?tag=${SYNC_TAG}&status=active&limit=250&fields=id,title,variants`;
+        let irPages = 0;
+        while (irUrl) {
+          const r: Response = await fetch(irUrl, { headers: { 'Content-Type':'application/json', 'X-Shopify-Access-Token': SHOPIFY.token } });
+          if (r.status === 429) { await delay(2000); continue; }
+          if (!r.ok) throw new Error(`Shopify ${r.status} during inventory-reconcile scan`);
+          const data: any = await r.json();
+          for (const p of (data.products || [])) {
+            const v = p.variants?.[0];
+            const sku = (v?.sku || '').trim();
+            const invId = v?.inventory_item_id;
+            if (!sku || !invId) continue;
+            shopBySku.set(sku, { inventory_item_id: invId, qty: Number(v?.inventory_quantity) || 0 });
+          }
+          irPages++;
+          const lnk: string | null = r.headers.get('link');
+          const lm = lnk ? lnk.match(/<([^>]+)>;\s*rel="next"/) : null;
+          irUrl = lm ? lm[1] : null;
+        }
+
+        // 2) Full CT catalog → partNumber → CTTire.
+        const ctTires = await fetchAllCTTires();
+        const ctBySku = new Map<string, CTTire>();
+        for (const t of ctTires) ctBySku.set(t.partNumber, t);
+
+        // 3) Decide the target qty for every Shopify SKU and collect the changes.
+        type IRChange = { sku: string; inventory_item_id: number; current: number; target: number; reason: string };
+        const pending: IRChange[] = [];
+        let zeroTargets = 0;
+        for (const [sku, { inventory_item_id, qty: current }] of shopBySku) {
+          const ct = ctBySku.get(sku);
+          let target: number;
+          let reason: string;
+          if (!ct) {
+            target = 0; reason = 'absent_from_ct';
+          } else {
+            const cc = checkCTDealerCost(ct.cost, ct.msrp);
+            if (!cc.ok) {
+              target = 0; reason = cc.reason; // 'out_of_band' | 'no_cost'
+            } else {
+              target = getTotalQty(ct); // 0 if CT reports no stock
+              reason = target > 0 ? 'in_stock' : 'ct_qty_zero';
+            }
+          }
+          if (target === 0) zeroTargets++;
+          if (current === target) continue; // already correct — skip
+          pending.push({ sku, inventory_item_id, current, target, reason });
+        }
+
+        // Sort zeros first (de-risk oversells before any restock writes).
+        pending.sort((a, b) => (a.target === 0 ? 0 : 1) - (b.target === 0 ? 0 : 1));
+
+        // 4) Process only the requested window; chain via nextUrl for large runs.
+        const slice = pending.slice(irOffset, irOffset + irLimit);
+        const done  = irOffset + irLimit >= pending.length;
+
+        const newlyZeroed: string[] = [];
+        let zeroed = 0, restocked = 0, adjusted = 0, errors = 0;
+        for (const c of slice) {
+          if (c.target === 0 && c.current > 0) newlyZeroed.push(c.sku);
+          if (!irDryRun) {
+            try {
+              await setInventory(c.inventory_item_id, c.target); // ONLY write performed
+              await delay(120); // gentle on Shopify's inventory endpoint
+            } catch (e: any) { errors++; console.warn(`⚠️ inventory-reconcile setInventory failed for ${c.sku}: ${e?.message || e}`); continue; }
+          }
+          if (c.target === 0)        zeroed++;
+          else if (c.current === 0)  restocked++;
+          else                       adjusted++;
+        }
+
+        // 5) Reactive Walmart zero-push for SKUs we just zeroed (real runs only,
+        //    non-fatal — dormant until ORDER_HUB_ZERO_* env vars are set).
+        let walmartPush: Awaited<ReturnType<typeof pushWalmartZeros>> | undefined;
+        if (!irDryRun && newlyZeroed.length > 0) {
+          walmartPush = await pushWalmartZeros(newlyZeroed);
+        }
+
+        console.log(`🔁 inventory-reconcile ${irDryRun ? '(dryRun)' : ''}: scanned ${shopBySku.size} SKUs, ${pending.length} pending, window ${irOffset}–${irOffset + slice.length}, newlyZeroed ${newlyZeroed.length}, done:${done}`);
+
+        return res.status(200).json({
+          success: true,
+          mode: 'inventory-reconcile',
+          dryRun: irDryRun,
+          scannedSkus: shopBySku.size,
+          scanPages: irPages,
+          ctTires: ctBySku.size,
+          pendingChanges: pending.length,
+          zeroTargets,
+          offset: irOffset,
+          limit: irLimit,
+          processed: slice.length,
+          applied: irDryRun ? 0 : (zeroed + restocked + adjusted),
+          zeroed, restocked, adjusted, errors,
+          newlyZeroed: newlyZeroed.length,
+          newlyZeroedSample: newlyZeroed.slice(0, 25),
+          ...(irDryRun ? { pendingSample: slice.slice(0, 25).map(c => ({ sku: c.sku, current: c.current, target: c.target, reason: c.reason })) } : {}),
+          ...(walmartPush ? { walmartPush } : {}),
+          nextUrl: done ? null : `?action=inventory-reconcile&offset=${irOffset + irLimit}&limit=${irLimit}${irDryRun ? '&dryRun=true' : ''}`,
+          done,
         });
       }
 
