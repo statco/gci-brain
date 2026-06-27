@@ -113,13 +113,13 @@ async function fetchCTCostMap(): Promise<Map<string, CTCostEntry>> {
 }
 
 const PRICING = {
-  netMultiplier: 0.50,
-  fixedProfit: 30,        // $30 fixed profit per tire — non-negotiable
+  netMultiplier: 0.50,    // fallback estimate when CT API unavailable — not used in formula
 
   shippingBuffers: {
-    passenger:   40,
-    light_truck: 50,
-    heavy_truck: 65,
+    passenger:   27,   // was 40 — GCI's actual CT rate table cost
+    light_truck: 43,   // was 50 — LT 13-18" zones 1-6
+    lt_large:    51,   //     NEW — LT 19-22" zones 1-6 (ON/QC sweet-spot, ~70% of LT volume)
+    heavy_truck: 67,   // was 65
   } as Record<string, number>,
 };
 
@@ -529,7 +529,16 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
           }
         }
 
-        const shippingBuffer = PRICING.shippingBuffers[tireType] ?? 35;
+        // Upgrade light_truck → lt_large when rim diameter is ≥ 19"
+        // CT size format: "275/35R21", "265/50R20", "LT265/75R16"
+        if (tireType === 'light_truck') {
+          const sizeStr = (ctEntry?.size || v.sku || '').toString();
+          const rimMatch = sizeStr.match(/R(\d{2})/i);
+          const rimDiam = rimMatch ? parseInt(rimMatch[1], 10) : 0;
+          if (rimDiam >= 19) tireType = 'lt_large';
+        }
+
+        const shippingBuffer = PRICING.shippingBuffers[tireType] ?? PRICING.shippingBuffers['lt_large'];
         const floorPrice = netCost + shippingBuffer;
 
         products.push({
@@ -593,7 +602,7 @@ function calculatePrice(
 ): PriceRecommendation {
   const msrp = product.compareAtPrice || product.currentPrice;
   const { netCost, shippingBuffer } = product;
-  const profit = PRICING.fixedProfit;
+  const profit = 0; // no longer a fixed per-tire profit — margin is baked into formula
 
   // NUPROZ- SKUs are CJDropshipping products — CJ ships directly to customer, no shipping cost to us
   const isNuproz = product.sku.startsWith('NUPROZ-');
@@ -606,15 +615,18 @@ function calculatePrice(
     sellingPrice = manualOverride;
     reason = `Manual override → $${manualOverride.toFixed(2)}`;
   } else {
-    // Full margin model: break-even covers Walmart fee + target margin, then apply 8% competitiveness markup
-    // Walmart CA referral fee: 2.5% (75% discount, effective until Jan 31 2027)
-    // Standard rate: 10%. Do not reduce existing prices — improved margin only.
-    const WALMART_FEE = 0.025;
-    const TARGET_MARGIN = 0.14;
-    const MARKUP = 1.08;
-    const floorPrice = (netCost + effectiveShipping) / (1 - WALMART_FEE - TARGET_MARGIN);
-    sellingPrice = floorPrice * MARKUP;
-    reason = `$${netCost.toFixed(0)} cost + $${effectiveShipping} ship${isNuproz ? ' (CJ dropship)' : ''} → floor $${floorPrice.toFixed(2)} × ${MARKUP} markup`;
+    // Walmart margin model — single formula, no tiered multiplier, no markup.
+    // WALMART_FEE       = 0.10 (standard rate — lock in now, bank the promo 2.5% as bonus margin)
+    // TARGET_MARGIN     = 0.20 (net margin after all fees)
+    // TAX_ON_COGS       = 0.12 (avg GST+PST paid to CT on invoice — non-recoverable below $30k GST threshold)
+    // Formula: (cost × 1.12 + shipping) ÷ (1 − 0.10 − 0.20)
+    // Shopify buyers pay the same price → GCI nets a bonus 7.1% margin (10% vs 2.9% fee gap)
+    const WALMART_FEE   = 0.10;   // was 0.025
+    const TARGET_MARGIN = 0.20;   // was 0.14
+    const TAX_ON_COGS   = 0.12;
+    const floorPrice    = (netCost * (1 + TAX_ON_COGS) + effectiveShipping) / (1 - WALMART_FEE - TARGET_MARGIN);
+    sellingPrice        = floorPrice;   // removed × 1.08 markup — formula already targets 20% net
+    reason = `$${netCost.toFixed(0)} cost × 1.12 tax + $${effectiveShipping} ship${isNuproz ? ' (CJ dropship)' : ''} → floor $${floorPrice.toFixed(2)} (20% net margin)`;
   }
 
   // Round to .99 for cleaner retail look
@@ -996,7 +1008,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           dryRun: false,
-          pricingModel: `Real CT cost + $${PRICING.fixedProfit} profit + shipping`,
+          pricingModel: `Walmart margin model: (cost × 1.12 + shipping) ÷ 0.70 → 20% net margin`,
           summary: {
             totalProducts: result.totalProducts,
             priceChanges: result.priceChanges,

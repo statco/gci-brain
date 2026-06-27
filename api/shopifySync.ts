@@ -60,14 +60,16 @@ const BATCH_MS   = 300;
 
 // ─── PRICING CONFIG ───────────────────────────────────────────────────────────
 
-const SHOPIFY_PAYMENT_FEE = 0.029;
-const TARGET_NET_MARGIN   = 0.15;
-const WALMART_FEE         = 0.12;
+const SHOPIFY_PAYMENT_FEE  = 0.029;
+const TARGET_NET_MARGIN    = 0.20;   // was 0.15
+const WALMART_FEE          = 0.10;   // was 0.12 — standard rate (bank the promo 2.5% as bonus margin)
+const TAX_RATE_ON_COGS     = 0.12;   // avg GST+PST paid to CT on invoice (non-recoverable below $30k GST threshold)
 
 const SHIPPING_BUFFERS: Record<string, number> = {
-  passenger:   40,
-  light_truck: 50,
-  heavy_truck: 65,
+  passenger:   27,   // was 40 — GCI's actual cost from CT rate table (customer price ÷ 2)
+  light_truck: 43,   // was 50 — LT 13-18" zones 1-6
+  lt_large:    51,   //     NEW — LT 19-22" zones 1-6 (ON/QC sweet-spot, ~70% of LT volume)
+  heavy_truck: 67,   // was 65
 };
 
 const VENDOR_MAP: Record<string, string> = {
@@ -86,19 +88,24 @@ const VENDOR_MAP: Record<string, string> = {
   'KELLY':       'Kelly',
 };
 
-function calculatePrice(cost: number): number {
-  let raw: number;
-  if (cost < 100) {
-    raw = Math.max(cost * 2.10, 150);
-  } else if (cost <= 250) {
-    raw = cost * 1.72;
-  } else {
-    raw = cost * 1.58;
-  }
+// ─── PRICING — WALMART MARGIN MODEL ─────────────────────────────────────────
+// Formula: (cost × 1.12 + shipping) ÷ (1 − WALMART_FEE − TARGET_NET_MARGIN)
+//   • cost × 1.12       = CT dealer cost + avg 12% tax GCI pays on CT invoice (non-recoverable)
+//   • WALMART_FEE       = 0.10  (standard rate — lock in now, bank the promo 2.5% as bonus)
+//   • TARGET_NET_MARGIN = 0.20  (net margin after all fees)
+//   • Shopify buyers pay the same price → net GCI a 7.1% bonus margin (10% vs 2.9% fee gap)
+//
+// tireType: 'passenger' | 'light_truck' | 'lt_large' | 'heavy_truck'
+// Pass 'lt_large' for LT tires with rim diameter ≥ 19" (e.g. 275/35R21, 265/50R20).
+// All call sites have ct.performanceCategory and ct.size in scope to derive this.
+function calculatePrice(cost: number, tireType: string = 'light_truck'): number {
+  const ship = SHIPPING_BUFFERS[tireType] ?? SHIPPING_BUFFERS['lt_large'];
+  const raw  = (cost * (1 + TAX_RATE_ON_COGS) + ship) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
+  // Charm pricing: nearest dollar − $0.01 (e.g. $653.99)
+  // Guard: only apply if result is ≥ 98% of raw (prevents under-pricing on high-cost tires)
   const rounded = Math.round(raw);
-  return (rounded - 0.01) >= raw * 0.98
-    ? parseFloat((rounded - 0.01).toFixed(2))
-    : parseFloat(raw.toFixed(2));
+  const charmed = rounded - 0.01;
+  return parseFloat((charmed >= raw * 0.98 ? charmed : raw).toFixed(2));
 }
 
 // ─── CT DEALER COST (no substitution) ──────────────────────────────────────
@@ -728,7 +735,11 @@ async function buildPayload(ct: CTTire) {
   const netCost = costCheck.cost; // real CT dealer cost, stored unmodified — never MSRP, never halved
   const tireType       = classifyTireType(ct.performanceCategory, ct.size);
   const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  const sellingPrice  = calculatePrice(netCost);
+  // For lt_large: LT tires with rim ≥ 19" use the $51 buffer instead of $43
+  const rimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
+  const rimDiam  = rimMatch ? parseInt(rimMatch[1], 10) : 0;
+  const priceTireType = (tireType === 'light_truck' && rimDiam >= 19) ? 'lt_large' : tireType;
+  const sellingPrice  = calculatePrice(netCost, priceTireType);
   const shopifyFloor  = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
   const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
   const aboveMsrp     = sellingPrice > msrp + 0.01;
@@ -963,7 +974,11 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
       return;
     }
     const netCost  = costCheck.cost; // real CT dealer cost, stored unmodified
-    const newSellingPrice = calculatePrice(netCost);
+    const upTireType  = classifyTireType(ct.performanceCategory, ct.size);
+    const upRimMatch  = (ct.size || '').toString().match(/R(\d{2})/i);
+    const upRimDiam   = upRimMatch ? parseInt(upRimMatch[1], 10) : 0;
+    const upPriceTT   = (upTireType === 'light_truck' && upRimDiam >= 19) ? 'lt_large' : upTireType;
+    const newSellingPrice = calculatePrice(netCost, upPriceTT);
     const newPrice        = newSellingPrice.toFixed(2);
     const priceChanged    = newPrice !== ex.price;
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -1356,7 +1371,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           const netCost=costCheck.cost; // real dealer cost (override or CT), stored unmodified
           if (costSource==='override') { ucOverridden++; console.log(`✏️  update-chunk: ${sku} using override cost $${netCost} (CT returned $${ct.cost})`); }
-          const newSellingPrice=calculatePrice(netCost), newPrice=newSellingPrice.toFixed(2);
+          const ucTireType = classifyTireType(ct.performanceCategory, ct.size);
+          const ucRimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
+          const ucRimDiam  = ucRimMatch ? parseInt(ucRimMatch[1], 10) : 0;
+          const ucPriceTT  = (ucTireType === 'light_truck' && ucRimDiam >= 19) ? 'lt_large' : ucTireType;
+          const newSellingPrice=calculatePrice(netCost, ucPriceTT), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
           const existingTagStr=ex.tags||''; let updatedTags=existingTagStr;
@@ -2031,7 +2050,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             continue;
           }
           const netCost = costCheck.cost; // real CT dealer cost, stored unmodified
-          const newSellingPrice = calculatePrice(netCost);
+          const dsTireType = classifyTireType(ct.performanceCategory, ct.size);
+          const dsRimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
+          const dsRimDiam  = dsRimMatch ? parseInt(dsRimMatch[1], 10) : 0;
+          const dsPriceTT  = (dsTireType === 'light_truck' && dsRimDiam >= 19) ? 'lt_large' : dsTireType;
+          const newSellingPrice = calculatePrice(netCost, dsPriceTT);
           const newPrice = newSellingPrice.toFixed(2);
           const priceChanged = newPrice !== ex.price;
           const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
