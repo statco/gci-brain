@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   try {
-    const { to, name, orderNumber, tire, quantity, total, withInstallation, installerName } = req.body;
+    const { to, name, orderNumber, tire, quantity, total, withInstallation, installerName, couponCode } = req.body;
 
     // Validate required fields
     if (!to || !name || !orderNumber) {
@@ -48,6 +48,7 @@ export default async function handler(req, res) {
         total,
         withInstallation,
         installerName,
+        couponCode,
         lang
       })
     });
@@ -74,8 +75,51 @@ export default async function handler(req, res) {
 }
 
 // Generate email HTML (bilingual support)
-function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInstallation, installerName, lang }) {
+function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInstallation, installerName, couponCode, lang }) {
   const isFrench = lang === 'fr';
+
+  // Loyalty coupon block — only rendered when a code was issued.
+  const couponBlock = couponCode ? `
+          <!-- Loyalty Coupon -->
+          <tr>
+            <td style="padding: 0 40px 30px 40px;">
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #1f2937; border-radius: 8px;">
+                <tr>
+                  <td style="padding: 28px 32px; text-align: center;">
+                    <p style="margin: 0 0 6px 0; color: #fbbf24; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+                      ${isFrench ? 'Cadeau de remerciement' : 'A thank-you gift'}
+                    </p>
+                    <h3 style="margin: 0 0 12px 0; color: #ffffff; font-size: 22px; font-weight: bold;">
+                      ${isFrench ? '30 $ de rabais sur votre prochaine commande de pneus' : '$30 off your next tire order'}
+                    </h3>
+                    <p style="margin: 0 0 20px 0; color: #d1d5db; font-size: 14px; line-height: 1.6;">
+                      ${isFrench
+                        ? "Merci d'avoir choisi l'installation professionnelle. Utilisez ce code lors de votre prochain achat sur gcitires.ca (achat minimum 200 $)."
+                        : 'Thanks for choosing professional installation. Use this code on your next purchase at gcitires.ca (minimum order $200).'
+                      }
+                    </p>
+                    <div style="background-color: #111827; border: 1px dashed #4b5563; border-radius: 6px; padding: 14px 20px; display: inline-block;">
+                      <span style="font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: bold; color: #ffffff; letter-spacing: 3px;">
+                        ${couponCode}
+                      </span>
+                    </div>
+                    <div style="margin-top: 20px;">
+                      <a href="https://gcitires.ca" style="display: inline-block; background-color: #ffffff; color: #1f2937; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: bold; font-size: 15px;">
+                        ${isFrench ? 'Magasiner maintenant →' : 'Shop Now →'}
+                      </a>
+                    </div>
+                    <p style="margin: 18px 0 0 0; color: #6b7280; font-size: 11px; line-height: 1.5;">
+                      ${isFrench
+                        ? "Valide sur gcitires.ca seulement. Non cumulable avec d'autres offres. Expire dans 2 ans."
+                        : 'Valid on gcitires.ca only. Not combinable with other offers. Expires in 2 years.'
+                      }
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+` : '';
 
   return `
 <!DOCTYPE html>
@@ -218,7 +262,7 @@ function generateEmailHTML({ name, orderNumber, tire, quantity, total, withInsta
               </ul>
             </td>
           </tr>
-
+${couponBlock}
           <!-- CTA Button -->
           <tr>
             <td style="padding: 0 40px 30px 40px; text-align: center;">
