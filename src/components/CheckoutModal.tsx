@@ -43,11 +43,20 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     try {
       const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
-      
+
+      // Resolve the installer's loyalty coupon (cached on the installer object,
+      // otherwise fetched from Airtable). Non-blocking — null if unavailable.
+      let installerCouponCode: string | null = null;
+      if (withInstallation && selectedInstaller?.id) {
+        installerCouponCode =
+          selectedInstaller.couponCode ||
+          (await airtableService.getInstallerCouponCode(selectedInstaller.id));
+      }
+
       // Create installation job in Airtable
       if (withInstallation && selectedInstaller) {
         console.log('📝 Creating installation job in Airtable...');
-        
+
         await airtableService.createInstallationJob({
           CustomerName: customerInfo.name,
           CustomerEmail: customerInfo.email,
@@ -59,8 +68,9 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
           Status: 'Pending',
           ShopifyOrderId: orderNumber,
           Notes: `Auto-created from AI Match Checkout`,
+          CouponIssued: installerCouponCode || undefined,
         });
-        
+
         console.log('✅ Installation job created successfully');
       }
 
@@ -76,9 +86,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         total,
         withInstallation,
         installerName: selectedInstaller?.name,
+        couponCode: installerCouponCode || undefined,
         lang,
       });
-      
+
       console.log('✅ Email sent successfully');
 
       // Simulate checkout delay
@@ -294,6 +305,7 @@ async function sendConfirmationEmail(data: {
   total: number;
   withInstallation: boolean;
   installerName?: string;
+  couponCode?: string;
   lang: string;
 }): Promise<void> {
   try {
@@ -310,6 +322,7 @@ async function sendConfirmationEmail(data: {
         total: data.total,
         withInstallation: data.withInstallation,
         installerName: data.installerName,
+        couponCode: data.couponCode,
         lang: data.lang,
       }),
     });

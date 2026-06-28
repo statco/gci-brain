@@ -120,6 +120,7 @@ export const airtableService = {
           calendlyLink: fields['Calendar Link'] || fields.CalendlyLink || fields.Link,
           pricePerTire: fields.PricePerTire || fields['Price Per Tire'],
           rating: fields.Rating,
+          couponCode: fields.CouponCode || null,
           distance: dist,
           lat: hasValidCoords ? lat : undefined,
           lng: hasValidCoords ? lng : undefined
@@ -152,12 +153,27 @@ export const airtableService = {
     Status: string;
     ShopifyOrderId: string;
     Notes?: string;
+    CouponIssued?: string;
   }) {
     try {
       return await airtableRequest('POST', 'Installation Jobs', data);
     } catch (error) {
       console.error('createInstallationJob failed:', error);
       // Non-blocking — log but don't throw so checkout still completes
+      return null;
+    }
+  },
+
+  /**
+   * Fetch the loyalty CouponCode stored on an Installers record.
+   * Non-throwing — returns null on any error so checkout is never blocked.
+   */
+  async getInstallerCouponCode(recordId: string): Promise<string | null> {
+    try {
+      const data = await airtableRequest('GET', INSTALLERS_TABLE, undefined, undefined, recordId);
+      return data?.fields?.CouponCode || null;
+    } catch (error) {
+      console.error('getInstallerCouponCode failed:', error);
       return null;
     }
   }
