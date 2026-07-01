@@ -143,7 +143,7 @@ Respond ONLY with valid JSON, no additional text.
    * Get real-time market insights from Perplexity
    */
   private async getMarketInsights(
-    query: string,
+    _query: string,
     vehicle: VehicleData
   ): Promise<MarketInsight> {
     try {
@@ -301,7 +301,7 @@ Respond ONLY with valid JSON, no additional text.
   /**
    * Fallback recommendations when APIs fail
    */
-  private getFallbackRecommendations(vehicle: VehicleData): TireRecommendation[] {
+  private getFallbackRecommendations(_vehicle: VehicleData): TireRecommendation[] {
     return [
       {
         size: 'P215/55R17',

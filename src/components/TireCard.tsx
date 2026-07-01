@@ -110,7 +110,7 @@ const TireCard: React.FC<TireCardProps> = ({
                 )}
                 {tire.imageUrl && (
                     <button 
-                        onClick={(e) => { e.stopPropagation(); setActiveImage(tire.imageUrl); }}
+                        onClick={(e) => { e.stopPropagation(); setActiveImage(tire.imageUrl!); }}
                         className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${activeImage === tire.imageUrl ? 'border-red-600 scale-110 shadow-sm' : 'border-slate-200 opacity-60 hover:opacity-100'}`}
                         title="View Product"
                     >
@@ -173,14 +173,14 @@ const TireCard: React.FC<TireCardProps> = ({
                 <p className="text-red-600 font-bold">{tire.model}</p>
             </div>
             {/* Reviews */}
-            {tire.rating > 0 && tire.reviews > 0 && (
+            {(tire.rating ?? 0) > 0 && (tire.reviews ?? 0) > 0 && (
               <div 
                   className="flex flex-col items-end cursor-pointer group/reviews"
                   onClick={() => onShowReviews(tire)}
               >
                   <div className="flex text-yellow-500 text-sm gap-0.5">
-                      {'★'.repeat(Math.round(tire.rating))}
-                      <span className="text-slate-200">{'★'.repeat(5 - Math.round(tire.rating))}</span>
+                      {'★'.repeat(Math.round(tire.rating ?? 0))}
+                      <span className="text-slate-200">{'★'.repeat(5 - Math.round(tire.rating ?? 0))}</span>
                   </div>
                   <span className="text-xs text-slate-400 group-hover/reviews:text-red-600 transition-colors underline decoration-dotted font-medium">
                       {tire.reviews} {t.reviews}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const ORDER_HUB = 'https://gci-order-hub.vercel.app';
 

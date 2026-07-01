@@ -89,14 +89,14 @@ export async function fetchProductsByTag(tag: string = 'ai-match') {
         }),
       });
 
-      const result = await response.json();
+      const result: any = await response.json();
 
       if (result.errors) {
         console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
         break;
       }
 
-      const pageData = result.data?.products;
+      const pageData: any = result.data?.products;
       const edges = pageData?.edges || [];
       allEdges = allEdges.concat(edges);
 
@@ -174,14 +174,14 @@ export async function fetchProductsByType(productType: string = 'Tires') {
         }),
       });
 
-      const result = await response.json();
+      const result: any = await response.json();
 
       if (result.errors) {
         console.error(`❌ GraphQL errors on page ${page}:`, result.errors);
         break;
       }
 
-      const pageData = result.data?.products;
+      const pageData: any = result.data?.products;
       const edges = pageData?.edges || [];
       allEdges = allEdges.concat(edges);
 
@@ -337,7 +337,7 @@ function extractSizeFromTitle(title: string): string {
 /**
  * Helper: Extract season from tags
  */
-function extractSeasonFromTags(tags: string[]): string {
+function extractSeasonFromTags(tags: string[]): 'All-Season' | 'Winter' | 'Summer' {
   const tagString = tags.join(' ').toLowerCase();
   
   if (tagString.includes('winter') || tagString.includes('snow')) return 'Winter';

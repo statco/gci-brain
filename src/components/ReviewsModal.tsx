@@ -14,8 +14,10 @@ const ReviewsModal: React.FC<ReviewsModalProps> = ({ tire, onClose }) => {
           <div>
             <h3 className="text-xl font-bold text-slate-800">{tire.brand} {tire.model} Reviews</h3>
             <div className="flex items-center gap-2 mt-1">
-               <span className="text-yellow-400 text-lg">{'★'.repeat(Math.round(tire.averageRating))}</span>
-               <span className="text-slate-500 text-sm">{tire.averageRating}/5 ({tire.reviewCount} reviews)</span>
+               <span className="text-yellow-400 text-lg">{'★'.repeat(Math.round(tire.rating ?? 0))}</span>
+               <span className="text-slate-500 text-sm">
+                 {tire.rating ? `${tire.rating}/5 (${tire.reviews ?? 0} reviews)` : 'No ratings yet'}
+               </span>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2">
@@ -24,9 +26,9 @@ const ReviewsModal: React.FC<ReviewsModalProps> = ({ tire, onClose }) => {
         </div>
         
         <div className="p-6 overflow-y-auto">
-          {tire.reviews && tire.reviews.length > 0 ? (
+          {tire.reviewsList && tire.reviewsList.length > 0 ? (
             <div className="space-y-6">
-              {tire.reviews.map((review) => (
+              {tire.reviewsList.map((review) => (
                 <div key={review.id} className="border-b border-slate-100 last:border-0 pb-6 last:pb-0">
                   <div className="flex justify-between items-start mb-2">
                     <div className="font-bold text-slate-800">{review.user}</div>

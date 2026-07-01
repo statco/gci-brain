@@ -143,9 +143,6 @@ export async function generateAIContent(req: AIRequest): Promise<AIResponse> {
       return result;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      const providerName = lastError.message.includes('Gemini')
-        || lastError.message.includes('Deepseek') 
-        ? '' : '';
       console.warn(`⚠️ AI provider failed — trying next...`, lastError.message);
       // Record failure for the appropriate provider
       if (lastError.message.toLowerCase().includes('gemini') ||

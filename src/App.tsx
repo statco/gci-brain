@@ -15,7 +15,7 @@ import ReviewsModeration from './components/ReviewsModeration';
 import TranslateContentCard from './components/TranslateContentCard';
 import WalmartManualShip from './components/WalmartManualShip';
 import TagBackfillCtSync from './components/TagBackfillCtSync';
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import '@maptiler/sdk/dist/maptiler-sdk.css';
 import InputForm from './components/InputForm';
 import ProcessingOverlay from './components/ProcessingOverlay';
@@ -82,6 +82,31 @@ function TireMatchApp() {
       } catch (e) { console.error('Load state failed', e); }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist favorites/compareList alongside the rest of gci_app_state_v2.
+  // (Load side already existed above -- this save side was the missing half.)
+  useEffect(() => {
+    const savedState = localStorage.getItem('gci_app_state_v2');
+    const parsed = savedState ? JSON.parse(savedState) : {};
+    localStorage.setItem('gci_app_state_v2', JSON.stringify({ ...parsed, favorites, compareList }));
+  }, [favorites, compareList]);
+
+  const toggleFavorite = (tire: TireProduct) => {
+    setFavorites(prev =>
+      prev.some(f => f.id === tire.id) ? prev.filter(f => f.id !== tire.id) : [...prev, tire]
+    );
+  };
+
+  const toggleCompare = (tire: TireProduct) => {
+    setCompareList(prev =>
+      prev.some(c => c.id === tire.id) ? prev.filter(c => c.id !== tire.id) : [...prev, tire]
+    );
+  };
+
+  const showReviews = (tire: TireProduct) => {
+    setReviewTire(tire);
+    setActiveModal('reviews');
+  };
 
   const t = translations[lang];
 
@@ -152,7 +177,17 @@ function TireMatchApp() {
                   <text x="56" y="42" fontFamily="'Arial Narrow','Arial',sans-serif" fontSize="10" fontWeight="400" fill="#444466" letterSpacing="3">BY GCI TIRES</text>
                 </svg>
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-4 items-center">
+                {appState === AppStates.RESULTS && favorites.length > 0 && (
+                    <button
+                        onClick={() => setActiveModal('favorites')}
+                        className="flex items-center gap-1.5 text-sm font-bold text-white/80 hover:text-white"
+                        title={lang === 'fr' ? 'Favoris' : 'Favorites'}
+                    >
+                        <svg className="w-5 h-5" fill="currentColor" stroke="none" viewBox="0 0 24 24"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+                        {favorites.length}
+                    </button>
+                )}
                 {appState !== AppStates.IDLE && (
                     <button onClick={resetApp} className="text-sm font-bold text-slate-500 uppercase">{t.startOver}</button>
                 )}
@@ -178,10 +213,26 @@ function TireMatchApp() {
                       setAppState(AppStates.CHECKOUT);
                     }
                   }}
+                  isFavorite={favorites.some(f => f.id === tire.id)}
+                  onToggleFavorite={toggleFavorite}
+                  isCompareSelected={compareList.some(c => c.id === tire.id)}
+                  onToggleCompare={toggleCompare}
+                  onShowReviews={showReviews}
                   lang={lang}
                 />
               ))}
             </div>
+
+            {compareList.length > 0 && (
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
+                <button
+                  onClick={() => setActiveModal('compare')}
+                  className="bg-slate-900 text-white font-bold px-6 py-3 rounded-full shadow-xl hover:bg-slate-800 transition-colors uppercase text-sm tracking-wide"
+                >
+                  {lang === 'fr' ? 'Comparer' : 'Compare'} ({compareList.length})
+                </button>
+              </div>
+            )}
 
             {recommendations.length > 0 && (
               <div style={{ maxWidth: 720, margin: '48px auto 0', borderTop: '1px solid #e2e8f0', paddingTop: 28 }}>
@@ -277,6 +328,33 @@ function TireMatchApp() {
             another flow still uses it; safe to remove in a follow-up cleanup pass. */}
         {appState === AppStates.SUCCESS && selectedTire && (
            <SuccessView selectedTire={selectedTire} onReset={resetApp} lang={lang} />
+        )}
+
+        {activeModal === 'reviews' && reviewTire && (
+          <ReviewsModal tire={reviewTire} onClose={() => setActiveModal(null)} />
+        )}
+        {activeModal === 'compare' && (
+          <ComparisonModal
+            tires={compareList}
+            onClose={() => setActiveModal(null)}
+            onSelect={(tire) => {
+              setSelectedTire({ tire, quantity: 1, withInstallation: false, total: tire.pricePerUnit });
+              setActiveModal(null);
+              setAppState(AppStates.CHECKOUT);
+            }}
+          />
+        )}
+        {activeModal === 'favorites' && (
+          <FavoritesModal
+            favorites={favorites}
+            onClose={() => setActiveModal(null)}
+            onSelect={(tire) => {
+              setSelectedTire({ tire, quantity: 1, withInstallation: false, total: tire.pricePerUnit });
+              setActiveModal(null);
+              setAppState(AppStates.CHECKOUT);
+            }}
+            onRemove={(id) => setFavorites(prev => prev.filter(f => f.id !== id))}
+          />
         )}
       </main>
     </div>
