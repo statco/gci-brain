@@ -1,6 +1,5 @@
 // Proxy all Airtable calls through /api/airtable serverless function
 const INSTALLERS_TABLE = 'Installers';
-const APPLICATIONS_TABLE = 'Installer Applications';
 
 // Mock data fallback to prevent 500 errors if Airtable is unreachable
 const MOCK_DATA = [
@@ -19,18 +18,12 @@ const MOCK_DATA = [
 ];
 
 /**
- * Calculates the Haversine distance between two points on Earth
+ * Proxy call to /api/airtable (server-to-server auth only as of 2026-07 --
+ * see that file. Still used by createInstallationJob below, which is
+ * itself currently dead/unused from the app, and getInstallerCouponCode,
+ * also dead. Neither is wired to anything today; left as-is rather than
+ * removed, since deleting working-but-unused code wasn't asked for here.
  */
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Earth radius in km
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
-}
 
 async function airtableRequest(
   method: string,
@@ -63,16 +56,6 @@ export async function submitInstallerApplication(formData: {
   city: string;
   province: string;
   postalCode: string;
-  yearsInBusiness?: number;
-  insuranceCoverage?: boolean;
-  certifications?: string;
-  additionalInfo?: string;
-  // Sent by InstallerApplicationForm.tsx but NOT currently mapped into the
-  // Airtable `fields` payload below -- flagged as a separate real bug
-  // (silent data loss on every real application) during the 2026-07 type
-  // cleanup. Typed here only to make the actual call-site accurate; not
-  // wired into the Airtable write, which needs the real table schema
-  // confirmed first before adding new columns to write to.
   serviceRadius?: number;
   licenseNumber?: string;
   insuranceExpiry?: string;
@@ -82,73 +65,44 @@ export async function submitInstallerApplication(formData: {
   hourlyRate?: number;
   notes?: string;
 }): Promise<{ success: boolean; recordId?: string; error?: string }> {
+  // FIXED 2026-07: previously posted to APPLICATIONS_TABLE ('Installer
+  // Applications'), a table that does not exist in this Airtable base and
+  // wasn't even in the proxy's allowed-table list -- every real
+  // application failed outright. Now calls a purpose-built endpoint that
+  // writes to the real Installers table with the real field names.
   try {
-    const data = await airtableRequest('POST', APPLICATIONS_TABLE, {
-      fields: {
-        'Business Name': formData.businessName,
-        'Contact Name': formData.contactName,
-        'Email': formData.email,
-        'Phone': formData.phone,
-        'Address': formData.address,
-        'City': formData.city,
-        'Province': formData.province,
-        'Postal Code': formData.postalCode,
-        'Years in Business': formData.yearsInBusiness || 0,
-        'Insurance Coverage': formData.insuranceCoverage || false,
-        'Certifications': formData.certifications || '',
-        'Additional Info': formData.additionalInfo || '',
-        'Status': 'Pending Review',
-        'Submitted Date': new Date().toISOString()
-      }
+    const res = await fetch('/api/submit-installer-application', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData),
     });
-    return { success: true, recordId: data.id };
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to submit application. Please try again.' };
+    }
+    return { success: true, recordId: data.recordId };
   } catch (error) {
-    console.error("Failed to submit installer application:", error);
-    throw new Error("Failed to submit application. Please try again.");
+    console.error('Failed to submit installer application:', error);
+    return { success: false, error: 'Erreur de connexion. Veuillez réessayer.' };
   }
 }
 
 export const airtableService = {
+  // FIXED 2026-07: previously fetched the FULL Installers table record set
+  // (via the generic /api/airtable proxy) directly into the browser, then
+  // filtered client-side. Every field on the table -- including Bank Info,
+  // License Number, Insurance Expiry, Payment Method, Hourly Rate, and
+  // internal Notes -- was visible in the raw network response to any real
+  // customer's browser during a normal AI Match booking flow, regardless
+  // of which fields the UI actually displayed. Now calls a purpose-built
+  // endpoint that does the filtering server-side and returns only the
+  // fields this component actually uses.
   async findNearbyInstallers(userLat: number, userLng: number, radiusKm: number = 100) {
     try {
-      const data = await airtableRequest('GET', INSTALLERS_TABLE, undefined, "{Status}='Active'");
-
-      // Transform and map Airtable records to the flattened structure SuccessView expects
-      const records = (data.records || []).map((record: any) => {
-        const fields = record.fields;
-        const lat = Number(fields.Latitude);
-        const lng = Number(fields.Longitude);
-
-        // Validate coordinates to prevent Map crashes
-        const hasValidCoords = !isNaN(lat) && !isNaN(lng);
-        const dist = hasValidCoords ? calculateDistance(userLat, userLng, lat, lng) : 999;
-
-        return {
-          id: record.id,
-          name: fields.Name || 'Certified Partner',
-          address: fields.Address || '',
-          city: fields.City || '',
-          province: fields.Province || '',
-          phone: fields.Phone || '',
-          // Support multiple potential field names for Calendly
-          calendlyLink: fields['Calendar Link'] || fields.CalendlyLink || fields.Link,
-          pricePerTire: fields.PricePerTire || fields['Price Per Tire'],
-          rating: fields.Rating,
-          couponCode: fields.CouponCode || null,
-          distance: dist,
-          lat: hasValidCoords ? lat : undefined,
-          lng: hasValidCoords ? lng : undefined
-        };
-      });
-
-      // Filter by radius and sort by distance
-      const filtered = records
-        .filter((r: any) => r.lat !== undefined && r.lng !== undefined && r.distance <= radiusKm)
-        .sort((a: any, b: any) => a.distance - b.distance);
-
-      // Final safety: if no real records found, return Mock data to show something on the map
-      return filtered.length > 0 ? filtered : MOCK_DATA;
-
+      const res = await fetch(`/api/nearby-installers?lat=${userLat}&lng=${userLng}&radiusKm=${radiusKm}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch installers');
+      return data.installers;
     } catch (error) {
       console.error("Airtable Fetch Failed:", error);
       // Critical fallback: Return Mock Data so the SuccessView UI never breaks
