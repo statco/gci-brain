@@ -18,6 +18,14 @@ interface CheckoutMetadata {
   tireModel?: string;
   tireSize?: string;
   quantity?: number;
+  // Installer dispatch fields — read by gci-order-hub's order-router webhook
+  // AFTER payment is confirmed (orders/paid). Do not create the Airtable
+  // Installation Job or send confirmation emails client-side; that happens
+  // server-side, post-payment, in gci-order-hub to avoid dispatching
+  // installers on unpaid/abandoned checkouts.
+  installerId?: string;
+  installerName?: string;
+  fulfillmentType?: 'direct_to_customer' | 'ship_to_installer';
 }
 
 function normalizeVariantId(variantId: string): string {
@@ -77,6 +85,13 @@ export async function createCheckout(
         ...(metadata?.withInstallation ? [{ key: '_installation', value: 'true' }] : []),
         ...(metadata?.tireBrand ? [{ key: '_tire_brand', value: metadata.tireBrand }] : []),
         ...(metadata?.tireModel ? [{ key: '_tire_model', value: metadata.tireModel }] : []),
+        // Read by gci-order-hub/api/order-router.ts extractInstallerMeta() —
+        // names must match exactly (gci_installer_id, gci_installer_name,
+        // gci_fulfillment_type) since that function is shared with the
+        // TIRE- prefix flow and keys are not namespaced per-source.
+        ...(metadata?.installerId ? [{ key: 'gci_installer_id', value: metadata.installerId }] : []),
+        ...(metadata?.installerName ? [{ key: 'gci_installer_name', value: metadata.installerName }] : []),
+        ...(metadata?.fulfillmentType ? [{ key: 'gci_fulfillment_type', value: metadata.fulfillmentType }] : []),
       ]
     }
   };
