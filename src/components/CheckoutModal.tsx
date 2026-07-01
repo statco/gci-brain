@@ -1,115 +1,90 @@
 import React, { useState } from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
-import { airtableService } from '../services/airtableService';
+import { createCheckout } from '../services/shopifyCheckoutService';
+import { resolveInstallationFeeTier } from '../services/installationFeeService';
 
 interface CheckoutModalProps {
   tire: TireProduct;
   quantity: number;
   withInstallation: boolean;
-  total: number;
-  onConfirm: (orderNumber: string) => void;
   onCancel: () => void;
   lang: Language;
   selectedInstaller?: any;
 }
 
+// FIXED 2026-07-01: This component previously faked checkout entirely —
+// generated a local "TM-XXXXXX" order number, wrote an Airtable Installation
+// Job, sent a confirmation email, and showed a success screen, WITHOUT ever
+// calling Shopify's Cart API or collecting real payment. No real order was
+// created for either the tire or the installation fee.
+//
+// This version builds a real cart (tire + the correct installation-fee
+// tier, if selected) and redirects to Shopify's real checkoutUrl, where the
+// customer enters payment on Shopify's own secure checkout. Customer name/
+// email/phone are collected there natively -- no need to duplicate that here.
+//
+// The Airtable Installation Job and confirmation email are now created
+// SERVER-SIDE, AFTER Shopify confirms payment, by gci-order-hub's
+// order-router.ts (orders/paid webhook) -- see extractInstallerMeta() there.
+// This avoids dispatching an installer on an order that was never actually
+// paid for.
 const CheckoutModal: React.FC<CheckoutModalProps> = ({
   tire,
   quantity,
   withInstallation,
-  total,
-  onConfirm,
   onCancel,
   lang,
   selectedInstaller,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [customerInfo, setCustomerInfo] = useState({
-    name: '',
-    email: '',
-    phone: '',
-  });
+  const [error, setError] = useState<string | null>(null);
   const t = translations[lang];
 
+  const feeTier = withInstallation && selectedInstaller
+    ? resolveInstallationFeeTier(selectedInstaller.pricePerTire)
+    : null;
+
   const handleCheckout = async () => {
-    // Validate customer info
-    if (!customerInfo.name || !customerInfo.email || !customerInfo.phone) {
-      alert(t.pleaseFillAllFields || 'Please fill in all fields');
+    if (!tire.shopifyVariantId) {
+      setError(t.checkoutFailed || 'This product is not available for checkout right now.');
       return;
     }
 
     setIsProcessing(true);
+    setError(null);
 
     try {
-      const orderNumber = `TM-${Math.floor(100000 + Math.random() * 900000)}`;
-
-      // Resolve the installer's loyalty coupon (cached on the installer object,
-      // otherwise fetched from Airtable). Non-blocking — null if unavailable.
-      let installerCouponCode: string | null = null;
-      if (withInstallation && selectedInstaller?.id) {
-        installerCouponCode =
-          selectedInstaller.couponCode ||
-          (await airtableService.getInstallerCouponCode(selectedInstaller.id));
+      const lineItems = [{ variantId: tire.shopifyVariantId, quantity }];
+      if (feeTier) {
+        // Per-tire fee -- one fee unit per tire, same quantity as the tires.
+        lineItems.push({ variantId: feeTier.variantId, quantity });
       }
 
-      // Create installation job in Airtable
-      if (withInstallation && selectedInstaller) {
-        console.log('📝 Creating installation job in Airtable...');
-
-        await airtableService.createInstallationJob({
-          CustomerName: customerInfo.name,
-          CustomerEmail: customerInfo.email,
-          CustomerPhone: customerInfo.phone,
-          InstallerId: selectedInstaller.id,
-          TireProduct: `${tire.brand} ${tire.model} (${tire.size})`,
-          Quantity: quantity,
-          InstallationPrice: selectedInstaller.pricePerTire * quantity,
-          Status: 'Pending',
-          ShopifyOrderId: orderNumber,
-          Notes: `Auto-created from AI Match Checkout`,
-          CouponIssued: installerCouponCode || undefined,
-        });
-
-        console.log('✅ Installation job created successfully');
-      }
-
-      // Send confirmation email
-      console.log('📧 Sending confirmation email...');
-      
-      await sendConfirmationEmail({
-        to: customerInfo.email,
-        name: customerInfo.name,
-        orderNumber,
-        tire: `${tire.brand} ${tire.model}`,
-        quantity,
-        total,
+      const checkoutUrl = await createCheckout(lineItems, {
         withInstallation,
-        installerName: selectedInstaller?.name,
-        couponCode: installerCouponCode || undefined,
-        lang,
+        tireBrand: tire.brand,
+        tireModel: tire.model,
+        tireSize: tire.size,
+        quantity,
+        installerId: withInstallation ? selectedInstaller?.id : undefined,
+        installerName: withInstallation ? selectedInstaller?.name : undefined,
+        fulfillmentType: withInstallation ? 'ship_to_installer' : 'direct_to_customer',
       });
 
-      console.log('✅ Email sent successfully');
-
-      // Simulate checkout delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      onConfirm(orderNumber);
-    } catch (error) {
-      console.error('Checkout error:', error);
-      alert(t.checkoutFailed || 'Checkout failed. Please try again.');
+      // Real Shopify checkout -- leaves the SPA. Payment, tax, and the
+      // order confirmation are all handled by Shopify from here on.
+      window.location.href = checkoutUrl;
+    } catch (err) {
+      console.error('Checkout error:', err);
+      setError(t.checkoutFailed || 'Checkout failed. Please try again.');
       setIsProcessing(false);
     }
   };
 
   const tireSubtotal = tire.pricePerUnit * quantity;
-  const installationSubtotal = withInstallation && selectedInstaller
-    ? selectedInstaller.pricePerTire * quantity
-    : 0;
-  const subtotal = tireSubtotal + installationSubtotal;
-  const taxes = subtotal * 0.15;
-  const finalTotal = subtotal + taxes;
+  const installationSubtotal = feeTier ? feeTier.price * quantity : 0;
+  const estimatedSubtotal = tireSubtotal + installationSubtotal;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -131,39 +106,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Customer Information */}
-          <div>
-            <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
-              {t.yourInformation}
-            </h3>
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder={t.fullName || 'Full Name'}
-                value={customerInfo.name}
-                onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
-                required
-              />
-              <input
-                type="email"
-                placeholder={t.email || 'Email'}
-                value={customerInfo.email}
-                onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })}
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
-                required
-              />
-              <input
-                type="tel"
-                placeholder={t.phone || 'Phone Number'}
-                value={customerInfo.phone}
-                onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
-                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-red-500 focus:outline-none transition-colors"
-                required
-              />
-            </div>
-          </div>
-
           {/* Order Summary */}
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
             <h3 className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-sm">
@@ -201,13 +143,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </span>
               </div>
 
-              {withInstallation && (
+              {feeTier && (
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-600 flex items-center gap-1">
                     <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    {t.installationAndBalancing} ({quantity}x ${selectedInstaller?.pricePerTire?.toFixed(2) ?? '0.00'})
+                    {t.installationAndBalancing} ({quantity}x ${feeTier.price.toFixed(2)})
                   </span>
                   <span className="font-semibold text-slate-900">
                     ${installationSubtotal.toFixed(2)}
@@ -215,31 +157,21 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-between text-sm border-t border-slate-200 pt-2">
-                <span className="text-slate-600">{t.subtotal}</span>
-                <span className="font-semibold text-slate-900">
-                  ${subtotal.toFixed(2)}
-                </span>
-              </div>
-
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">{t.taxes}</span>
-                <span className="font-semibold text-slate-900">
-                  ${taxes.toFixed(2)}
-                </span>
-              </div>
-
               <div className="flex justify-between text-lg font-black border-t-2 border-slate-300 pt-3 mt-2">
-                <span className="text-slate-900">{t.total}</span>
+                <span className="text-slate-900">{t.subtotal} ({t.estimated || 'estimated'})</span>
                 <span className="text-red-600">
-                  ${finalTotal.toFixed(2)}
+                  ${estimatedSubtotal.toFixed(2)}
                 </span>
               </div>
+              <p className="text-xs text-slate-500">
+                {t.taxesAndTotalAtCheckout ||
+                  'Exact taxes and total are calculated on the next step, at secure Shopify checkout.'}
+              </p>
             </div>
           </div>
 
           {/* Installation Notice */}
-          {withInstallation && (
+          {feeTier && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
               <div className="flex gap-3">
                 <svg className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -257,6 +189,12 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           )}
 
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-3 pt-4">
             <button
@@ -268,7 +206,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </button>
             <button
               onClick={handleCheckout}
-              disabled={isProcessing || !customerInfo.name || !customerInfo.email || !customerInfo.phone}
+              disabled={isProcessing}
               className="flex-1 px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:bg-slate-400 uppercase tracking-wide shadow-md hover:shadow-lg"
             >
               {isProcessing ? (
@@ -277,7 +215,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  {t.processing || 'Processing...'}
+                  {t.processing || 'Redirecting to secure checkout...'}
                 </span>
               ) : (
                 t.completeOrder
@@ -294,52 +232,5 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
     </div>
   );
 };
-
-// ✅ UPDATED: Email notification function using Resend API
-async function sendConfirmationEmail(data: {
-  to: string;
-  name: string;
-  orderNumber: string;
-  tire: string;
-  quantity: number;
-  total: number;
-  withInstallation: boolean;
-  installerName?: string;
-  couponCode?: string;
-  lang: string;
-}): Promise<void> {
-  try {
-    // Call our Vercel API endpoint
-    const response = await fetch('/api/send-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: data.to,
-        name: data.name,
-        orderNumber: data.orderNumber,
-        tire: data.tire,
-        quantity: data.quantity,
-        total: data.total,
-        withInstallation: data.withInstallation,
-        installerName: data.installerName,
-        couponCode: data.couponCode,
-        lang: data.lang,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.details || 'Email send failed');
-    }
-
-    const result = await response.json();
-    console.log('✅ Email sent successfully:', result.id);
-    
-  } catch (error) {
-    console.error('❌ Email error:', error);
-    // Don't throw - email failure shouldn't block checkout
-    // The user still gets the success page
-  }
-}
 
 export default CheckoutModal;

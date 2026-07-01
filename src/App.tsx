@@ -266,16 +266,15 @@ function TireMatchApp() {
             tire={selectedTire.tire}
             quantity={selectedTire.quantity}
             withInstallation={selectedTire.withInstallation}
-            total={selectedTire.total}
-            onConfirm={(orderNum: string) => {
-              setSelectedTire(prev => prev ? { ...prev, orderNumber: orderNum, installer: selectedInstaller } : prev);
-              setAppState(AppStates.SUCCESS);
-            }}
             onCancel={() => setAppState(selectedInstaller ? AppStates.INSTALLER_SELECT : AppStates.RESULTS)}
             selectedInstaller={selectedInstaller}
             lang={lang}
           />
         )}
+        {/* Note: AppStates.SUCCESS is no longer reached from checkout as of 2026-07-01 --
+            CheckoutModal now redirects to Shopify's real checkout page, where Shopify
+            shows its own order confirmation after real payment. Left in place in case
+            another flow still uses it; safe to remove in a follow-up cleanup pass. */}
         {appState === AppStates.SUCCESS && selectedTire && (
            <SuccessView selectedTire={selectedTire} onReset={resetApp} lang={lang} />
         )}
