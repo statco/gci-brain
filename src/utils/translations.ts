@@ -22,7 +22,8 @@ type TranslationKeys =
   | 'cancel' | 'completeOrder' | 'secureCheckout'
   | 'yourInformation' | 'orderSummaryTitle'
   | 'fullName' | 'email' | 'phone' | 'pleaseFillAllFields'
-  | 'checkoutFailed' | 'processing' | 'tires';
+  | 'checkoutFailed' | 'processing' | 'tires'
+  | 'estimated' | 'taxesAndTotalAtCheckout';
 
 export const translations: Record<Language, Record<TranslationKeys, string>> = {
   en: {
@@ -106,6 +107,8 @@ export const translations: Record<Language, Record<TranslationKeys, string>> = {
     secureCheckout: 'Secure checkout powered by Shopify',
     yourInformation: 'YOUR INFORMATION',
     orderSummaryTitle: 'ORDER SUMMARY',
+    estimated: 'estimated',
+    taxesAndTotalAtCheckout: 'Exact taxes and total are calculated on the next step, at secure Shopify checkout.',
     fullName: 'Full Name',
     email: 'Email',
     phone: 'Phone Number',
@@ -195,6 +198,8 @@ export const translations: Record<Language, Record<TranslationKeys, string>> = {
     secureCheckout: 'Paiement sécurisé par Shopify',
     yourInformation: 'VOS INFORMATIONS',
     orderSummaryTitle: 'RÉSUMÉ DE LA COMMANDE',
+    estimated: 'estimé',
+    taxesAndTotalAtCheckout: 'Les taxes et le total exacts sont calculés à l\'étape suivante, lors du paiement sécurisé Shopify.',
     fullName: 'Nom Complet',
     email: 'Courriel',
     phone: 'Numéro de Téléphone',
