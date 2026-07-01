@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || '';
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 const AIRTABLE_API_URL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}`;
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 const ALLOWED_TABLES = [
   'Installers',
   'Installation Jobs',
@@ -9,12 +10,38 @@ const ALLOWED_TABLES = [
   'Notifications',
   'Outreach Prospects',
 ];
+
+// SECURITY FIX (2026-07): this proxy previously had NO caller
+// authentication and open CORS (Access-Control-Allow-Origin: '*'), and
+// was reachable from the browser (via airtableService.ts, bundled into
+// the client-side app). That meant anyone who found this endpoint could
+// read or write ANY of the tables above -- including Installers, which
+// has installer bank account info -- with no credentials required.
+//
+// The browser-facing use cases (installer search, application submission)
+// have been moved to purpose-built endpoints that never expose sensitive
+// fields (see api/nearby-installers.ts, api/submit-installer-application.ts).
+// This proxy is now ONLY for legitimate server-to-server callers
+// (currently: gci-order-hub's installer-dispatch.ts, after payment is
+// confirmed) and requires a shared secret. Set INTERNAL_API_SECRET to the
+// same value in both gci-brain's and gci-order-hub's Vercel env vars.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // No CORS headers at all -- this is not meant to be called from a
+  // browser anymore. A missing/wrong Origin doesn't block a direct
+  // server-to-server fetch, which is the only caller this should have.
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (!INTERNAL_API_SECRET) {
+    console.error('[airtable] INTERNAL_API_SECRET not configured -- refusing all requests');
+    return res.status(500).json({ error: 'Server misconfigured' });
+  }
+  const providedSecret = req.headers['x-internal-secret'];
+  if (providedSecret !== INTERNAL_API_SECRET) {
+    console.warn('[airtable] rejected request with invalid/missing X-Internal-Secret header');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     return res.status(500).json({ error: 'Airtable credentials not configured' });
   }
