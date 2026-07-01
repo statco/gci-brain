@@ -3,7 +3,7 @@ import React from 'react';
 export async function isCalendlyLinkValid(url: string): Promise<boolean> {
   if (!url || !url.includes('calendly.com')) return false;
   try {
-    const res = await fetch(url, { method: 'HEAD', mode: 'no-cors' });
+    await fetch(url, { method: 'HEAD', mode: 'no-cors' });
     return true; // no-cors won't give status but won't throw if reachable
   } catch {
     return false;

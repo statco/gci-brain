@@ -1,5 +1,5 @@
 import React from 'react';
-import { ProcessingLog, ProcessingStage } from '../types';
+import { ProcessingLog } from '../types';
 
 interface ProcessingOverlayProps {
   logs: ProcessingLog[];

@@ -67,7 +67,21 @@ export async function submitInstallerApplication(formData: {
   insuranceCoverage?: boolean;
   certifications?: string;
   additionalInfo?: string;
-}) {
+  // Sent by InstallerApplicationForm.tsx but NOT currently mapped into the
+  // Airtable `fields` payload below -- flagged as a separate real bug
+  // (silent data loss on every real application) during the 2026-07 type
+  // cleanup. Typed here only to make the actual call-site accurate; not
+  // wired into the Airtable write, which needs the real table schema
+  // confirmed first before adding new columns to write to.
+  serviceRadius?: number;
+  licenseNumber?: string;
+  insuranceExpiry?: string;
+  calendarLink?: string;
+  paymentMethod?: string;
+  bankInfo?: string;
+  hourlyRate?: number;
+  notes?: string;
+}): Promise<{ success: boolean; recordId?: string; error?: string }> {
   try {
     const data = await airtableRequest('POST', APPLICATIONS_TABLE, {
       fields: {

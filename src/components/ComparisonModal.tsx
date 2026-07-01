@@ -10,11 +10,11 @@ interface ComparisonModalProps {
 const ComparisonModal: React.FC<ComparisonModalProps> = ({ tires, onClose, onSelect }) => {
   const features = [
     { label: 'Price', render: (t: TireProduct) => `$${t.pricePerUnit}` },
-    { label: 'Rating', render: (t: TireProduct) => `${t.averageRating} ★ (${t.reviewCount})` },
-    { label: 'Type', render: (t: TireProduct) => t.type },
-    { label: 'Warranty', render: (t: TireProduct) => t.fitmentSpecs.warranty },
-    { label: 'Load/Speed', render: (t: TireProduct) => `${t.fitmentSpecs.loadIndex}${t.fitmentSpecs.speedRating}` },
-    { label: 'UTQG', render: (t: TireProduct) => t.fitmentSpecs.utqg || 'N/A' },
+    { label: 'Rating', render: (t: TireProduct) => t.rating ? `${t.rating} \u2605 (${t.reviews ?? 0})` : 'No ratings yet' },
+    { label: 'Type', render: (t: TireProduct) => t.type || 'N/A' },
+    { label: 'Warranty', render: (t: TireProduct) => t.fitmentSpecs?.warranty || t.warranty || 'N/A' },
+    { label: 'Load/Speed', render: (t: TireProduct) => `${t.fitmentSpecs?.loadIndex || t.loadIndex || ''}${t.fitmentSpecs?.speedRating || t.speedRating || ''}` || 'N/A' },
+    { label: 'UTQG', render: (t: TireProduct) => t.fitmentSpecs?.utqg || 'N/A' },
   ];
 
   return (

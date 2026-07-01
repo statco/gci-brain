@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import type { TireProduct, Language } from '../types';
 import { translations } from '../utils/translations';
 

@@ -1,10 +1,17 @@
+import { ProcessingStages } from './utils/appStates';
+
 // types.ts
 // Core type definitions for GCI Tire AI Match 2.0
 
 // Language support
 export type Language = 'en' | 'fr';
 
-// Processing stages for AI workflow
+// Processing stages for AI workflow.
+// NOTE (2026-07): this string-union form is kept only for the currentStage
+// field below, for backward compatibility. The value actually constructed
+// everywhere else in the app is the ProcessingStages enum (utils/appStates.ts)
+// -- ProcessingLog.stage below uses that, not this. The two were never
+// reconciled; left as-is rather than guessing which callers depend on which.
 export type ProcessingStage = 
   | 'idle'
   | 'understanding'
@@ -16,13 +23,30 @@ export type ProcessingStage =
 
 // Processing log entry
 export interface ProcessingLog {
-  stage: ProcessingStage;
+  stage: ProcessingStages;
   message: string;
-  timestamp: number;
+  status: 'pending' | 'active' | 'completed';
+  timestamp?: number;
   details?: string;
 }
 
 // Tire product from Shopify
+export interface FitmentSpecs {
+  loadIndex?: string;
+  speedRating?: string;
+  utqg?: string;
+  warranty?: string;
+  oemMatch?: boolean;
+}
+
+export interface Review {
+  id: string;
+  user: string;
+  date: string;
+  rating: number;
+  comment: string;
+}
+
 export interface TireProduct {
   id: string;
   title: string;
@@ -31,7 +55,10 @@ export interface TireProduct {
   size: string;
   season: 'All-Season' | 'Winter' | 'Summer';
   pricePerUnit: number;
-  price: number;
+  // Not read anywhere in the app (only pricePerUnit is) -- kept optional
+  // for backward compatibility with anything constructing this shape
+  // externally, rather than deleted outright.
+  price?: number;
   rating?: number;
   reviews?: number;
   imageUrl?: string;
@@ -46,6 +73,22 @@ export interface TireProduct {
   shopifyProductId?: string;
   visualizationUrl?: string;
   fitmentVerified?: boolean;
+  // Not currently populated anywhere in the data layer (geminiService /
+  // aiService) as of 2026-07 -- typed here because components already read
+  // them defensively (guarded with `tire.x &&`). Wiring these up for real is
+  // a data/feature task, not a type-fix; see audit notes. Kept optional so
+  // nothing changes at runtime until they're actually populated.
+  matchScore?: number;
+  tier?: string;
+  has3PMSF?: boolean;
+  type?: string;
+  searchSourceUrl?: string;
+  searchSourceTitle?: string;
+  fitmentSpecs?: FitmentSpecs;
+  // Individual review objects, distinct from the existing `reviews` count
+  // above -- also not yet populated anywhere; ReviewsModal already
+  // gracefully handles the empty case.
+  reviewsList?: Review[];
 }
 
 // Structured vehicle input from the search form

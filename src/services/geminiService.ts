@@ -225,7 +225,8 @@ export async function searchTires(criteria: {
   }
 
   if (criteria.brand) {
-    results = results.filter(p => p.brand.toLowerCase() === criteria.brand.toLowerCase());
+    const brand = criteria.brand;
+    results = results.filter(p => p.brand.toLowerCase() === brand.toLowerCase());
   }
 
   if (criteria.minPrice !== undefined) {

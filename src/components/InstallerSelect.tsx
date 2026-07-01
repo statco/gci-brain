@@ -3,8 +3,6 @@ import type { TireProduct, Language } from '../types';
 import { airtableService } from '../services/airtableService';
 import InstallerMap from './InstallerMap';
 
-const GCI_CUT = 0.20; // 20% admin fee
-
 interface Installer {
   id: string;
   name: string;
@@ -149,8 +147,6 @@ const InstallerSelect: React.FC<InstallerSelectProps> = ({
         {installers.map(inst => {
           const isSelected = selected?.id === inst.id;
           const total = installTotal(inst);
-          const gciCut = total * GCI_CUT;
-          const installerEarns = total - gciCut;
 
           return (
             <div
