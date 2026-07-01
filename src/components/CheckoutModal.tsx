@@ -74,7 +74,16 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       // Real Shopify checkout -- leaves the SPA. Payment, tax, and the
       // order confirmation are all handled by Shopify from here on.
-      window.location.href = checkoutUrl;
+      // FIXED 2026-07-02: this app runs embedded in an iframe on the real
+      // storefront (templates/page.gci-ai-match-landing.liquid on the Dawn
+      // theme -- no <sandbox> attribute, so top-navigation is permitted).
+      // window.location.href here only navigated the iframe itself, and
+      // Shopify's real checkout (shop.app) refuses to load inside ANY
+      // iframe whose top-level ancestor isn't Shopify's own domain --
+      // silently breaking checkout with a blocked-frame page. window.top
+      // targets the actual browser tab instead; this is safe and correct
+      // even when NOT embedded (window.top === window in that case).
+      window.top!.location.href = checkoutUrl;
     } catch (err) {
       console.error('Checkout error:', err);
       setError(t.checkoutFailed || 'Checkout failed. Please try again.');
