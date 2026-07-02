@@ -99,10 +99,30 @@ async function callClaude(prompt: string): Promise<string> {
 }
 
 const CTX = (t: string) =>
-  `GCI Tires (gcitires.com) — Canadian online tire retailer. Brands: Cooper, Nexen, Vredestein, Minerva (Canada Tire exclusive — Road Hazard warranty + 30-day trial). Free shipping. AI Match 2.0. Markets: Ontario + Quebec. Theme: "${t}". Always end with a CTA linking to gcitires.com.`;
+  `GCI Tires (gcitires.com) — Canadian online tire retailer. Brands: Cooper, Nexen, Vredestein, Minerva (Canada Tire exclusive — Road Hazard warranty + 30-day trial). Free shipping. AI Match 2.0. Markets: Ontario + Quebec. Theme: "${t}". Always end with a CTA linking to gcitires.com.\n\nIMPORTANT: Output ONLY the content in the exact format shown below. Do not include any preamble, introduction, explanation, or commentary (e.g. do NOT write things like "Here's a caption for..." before the actual content). Your entire response must be exactly the caption/post text, a blank line, then the hashtags -- nothing else.`;
 
+// FIXED 2026-07-02: found by live-triggering this right after the model
+// fix (PR #130) -- parsePost assumed Claude's response would be exactly
+// "CAPTION\n\n#hashtags" with nothing else. Without an explicit
+// no-preamble instruction (added to CTX above), the new model sometimes
+// added a conversational lead-in first ("Here's a bilingual Instagram
+// caption for GCI Tires:\n\n---"), which parsePost's naive split()
+// mistook for the actual caption -- meaning a real, meaningless post
+// could have gone out via the Make.com webhook this function feeds.
+// The CTX fix above should prevent this at the source; this defensive
+// backstop drops an obvious preamble line if the model still adds one,
+// so a formatting slip degrades gracefully instead of publishing garbage.
 function parsePost(raw: string): { caption: string; hashtags: string } {
-  const parts = raw.split(/\n{2,}/);
+  let text = raw.trim();
+  const firstLine = text.split('\n')[0] || '';
+  const looksLikePreamble =
+    /^(here'?s|voici|bien s[uû]r|certainly|sure)\b/i.test(firstLine) &&
+    firstLine.length < 120 &&
+    (firstLine.endsWith(':') || firstLine.endsWith('...'));
+  if (looksLikePreamble) {
+    text = text.slice(firstLine.length).replace(/^\s*-{2,}\s*\n?/, '').trim();
+  }
+  const parts = text.split(/\n{2,}/);
   return { caption: (parts[0] || '').trim(), hashtags: (parts[1] || '').trim() };
 }
 
@@ -179,13 +199,35 @@ async function makePinterestPin(theme: typeof WEEKLY_THEMES[0]) {
 
 // ─── Make.com webhook delivery ────────────────────────────────────────────────
 
-async function sendToMake(payload: object): Promise<boolean> {
+// FIXED 2026-07-02: last line of defense, on top of the CTX/parsePost
+// fixes above. Refuses to forward anything to the real posting webhook
+// that still looks broken (empty caption, no real hashtags, or a
+// leftover preamble artifact like a lone "---"). Fails loudly instead of
+// silently publishing garbage to a real account.
+function validatePayload(payload: any): string | null {
+  const caption = (payload.caption || '').trim();
+  const hashtags = (payload.hashtags || '').trim();
+  if (caption.length < 15) return `Caption too short/empty: "${caption}"`;
+  if (/^here'?s|^voici|^bien s[uû]r|^certainly|^sure\b/i.test(caption)) {
+    return `Caption still looks like an AI preamble, not real content: "${caption}"`;
+  }
+  if (!/#\w/.test(hashtags)) return `Hashtags field has no real hashtags: "${hashtags}"`;
+  return null; // valid
+}
+
+async function sendToMake(payload: object): Promise<{ ok: boolean; reason?: string }> {
+  const validationError = validatePayload(payload);
+  if (validationError) {
+    console.error(`❌ Refusing to publish -- content failed validation: ${validationError}`);
+    console.error('Payload:', JSON.stringify(payload));
+    return { ok: false, reason: `Content validation failed: ${validationError}` };
+  }
   const res = await fetch(MAKE_WEBHOOK, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return res.ok;
+  return { ok: res.ok, reason: res.ok ? undefined : `Make.com webhook returned ${res.status}` };
 }
 
 // ─── Video scripts (manual posting) ──────────────────────────────────────────
@@ -255,8 +297,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         payload = await makePinterestPin(theme);
       }
 
-      const ok = await sendToMake(payload);
-      if (!ok) throw new Error('Make.com returned non-OK');
+      const { ok, reason } = await sendToMake(payload);
+      if (!ok) throw new Error(reason || 'Make.com returned non-OK');
 
       console.log(`✅ [${platform}] → Make.com`);
       return res.status(200).json({ success: true, platform, theme, payload });
