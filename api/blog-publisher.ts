@@ -19,7 +19,7 @@ const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const SHOPIFY_TOKEN  = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN!;
 const CLAUDE_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const SHOPIFY_BASE   = `https://${SHOPIFY_DOMAIN}/admin/api/2024-01`;
-const CLAUDE_MODEL   = 'claude-sonnet-4-20250514';
+const CLAUDE_MODEL   = 'claude-sonnet-4-6';
 
 // ─── Keyword queues ───────────────────────────────────────────────────────────
 // Rotated weekly — each run picks the next 2 EN + 2 FR topics.

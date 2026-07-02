@@ -27,7 +27,7 @@ export const config = { maxDuration: 120 };
 
 const CLAUDE_KEY   = process.env.ANTHROPIC_API_KEY!;
 const MAKE_WEBHOOK = process.env.MAKE_WEBHOOK_URL!;
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
 // ─── Weekly themes — rotated by ISO week number ───────────────────────────────
 
