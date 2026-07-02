@@ -78,6 +78,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        // typecast lets Airtable auto-create a new select option if the
+        // real value (e.g. NT province -- in the form's PROVINCES list
+        // but not yet an Airtable Province option, found via live
+        // testing 2026-07-02) isn't already a configured choice, instead
+        // of rejecting the whole application. Safer than trying to keep
+        // the form's option lists and Airtable's configured choices
+        // manually in sync forever.
+        typecast: true,
         fields: {
           'Name':              input.businessName,
           'Contact Name':      input.contactName,
