@@ -27,6 +27,30 @@ const AT_TABLE  = 'Outreach Prospects';
 const FROM      = 'GCI Tires <partners@updates.gcitires.ca>';
 const PORTAL    = 'https://gcitires.com/pages/installer-partner';
 
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT  = process.env.TELEGRAM_CHAT_ID   || '';
+
+// FIXED 2026-07-02: found via a real audit -- 13 of 22 real prospects
+// (Ontario/Quebec tire shops that had already been sourced) were stuck
+// at "New" status since 2026-04-25, silently never emailed, because
+// they have no email address on file. The code already handled this
+// safely (skips rather than crashing or falsely marking as sent), but
+// there was no visibility anywhere that it was happening -- same blind
+// spot pattern as the Make.com scenario incident earlier the same day.
+// This alerts only when there's something to actually look at (missing
+// data or a real send failure), not on every routine successful run.
+async function sendTelegramSummary(text: string): Promise<void> {
+  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT) {
+    console.error('[installer-outreach] Telegram not configured, cannot alert:', text);
+    return;
+  }
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: TELEGRAM_CHAT, text, parse_mode: 'Markdown' }),
+  });
+}
+
 const DAYS = { Email1: 0, Email2: 5, Email3: 10 };
 
 // ─── Airtable helpers ──────────────────────────────────────────────────────
@@ -296,14 +320,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const results = await processProspects(false);
-    const sent    = results.filter(r => r.sent);
-    const failed  = results.filter(r => !r.sent && r.error);
+    const sent           = results.filter(r => r.sent);
+    const failed         = results.filter(r => !r.sent && r.error);
+    const skippedNoEmail = results.filter(r => r.action === 'skipped-no-email');
 
-    console.log(`📬 Outreach complete: ${sent.length} sent, ${failed.length} failed, ${results.length - sent.length - failed.length} skipped/waiting`);
+    console.log(`📬 Outreach complete: ${sent.length} sent, ${failed.length} failed, ${skippedNoEmail.length} skipped (no email), ${results.length - sent.length - failed.length - skippedNoEmail.length} waiting`);
+
+    // Only alert Telegram when there's something to actually act on --
+    // routine successful runs (the common case) just log normally,
+    // same philosophy as the Make.com health check added earlier today.
+    if (skippedNoEmail.length > 0 || failed.length > 0) {
+      const lines = [`📬 *Installer Outreach — needs attention*`, ''];
+      if (sent.length > 0) lines.push(`✅ ${sent.length} email(s) sent normally.`);
+      if (skippedNoEmail.length > 0) {
+        lines.push(
+          `⚠️ *${skippedNoEmail.length} prospect(s) have no email on file* -- never contacted, sitting idle:`,
+          ...skippedNoEmail.slice(0, 10).map(r => `   • ${r.shop || r.name} (${r.city})`),
+          skippedNoEmail.length > 10 ? `   ...and ${skippedNoEmail.length - 10} more.` : '',
+        );
+      }
+      if (failed.length > 0) {
+        lines.push(
+          `❌ *${failed.length} send(s) failed*:`,
+          ...failed.slice(0, 5).map(r => `   • ${r.shop || r.name} <${r.email}>: ${r.error}`),
+        );
+      }
+      await sendTelegramSummary(lines.filter(Boolean).join('\n'));
+    }
 
     return res.status(200).json({
       success: true, mode: 'run',
-      sent: sent.length, failed: failed.length,
+      sent: sent.length, failed: failed.length, skippedNoEmail: skippedNoEmail.length,
       waiting: results.filter(r => r.action.startsWith('waiting')).length,
       results,
     });
