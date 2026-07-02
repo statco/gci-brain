@@ -102,6 +102,53 @@ interface GeneratedPost {
   keyword:         string;
 }
 
+// FIXED 2026-07-02: found via live-verifying the model-name fix above --
+// the model fix was 100% confirmed working, but 2/4 posts in that same
+// test run failed with a SEPARATE bug: "Bad control character in string
+// literal in JSON". Claude sometimes writes literal raw newlines inside
+// the bodyHtml JSON string value (for human-readable formatting), which
+// is invalid per the JSON spec -- a raw newline inside a JSON string must
+// be escaped as \n, not left as an actual line break byte.
+//
+// A naive global replace of raw newlines would be WRONG here: JSON
+// allows literal whitespace BETWEEN tokens (e.g. after a comma), and
+// replacing that with a literal backslash-n text sequence would break
+// otherwise-valid syntax. This walks the string tracking whether we're
+// currently inside a string literal (toggling on unescaped double
+// quotes) and only escapes control characters when inside one.
+function sanitizeJsonControlChars(jsonText: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const ch of jsonText) {
+    if (inString) {
+      if (escaped) {
+        result += ch;
+        escaped = false;
+      } else if (ch === '\\') {
+        result += ch;
+        escaped = true;
+      } else if (ch === '"') {
+        result += ch;
+        inString = false;
+      } else if (ch === '\n') {
+        result += '\\n';
+      } else if (ch === '\r') {
+        result += '\\r';
+      } else if (ch === '\t') {
+        result += '\\t';
+      } else {
+        result += ch;
+      }
+    } else {
+      if (ch === '"') inString = true;
+      result += ch;
+    }
+  }
+  return result;
+}
+
 async function generatePost(keyword: string, lang: 'en' | 'fr'): Promise<GeneratedPost> {
   const systemPrompt = lang === 'en'
     ? `You are a Canadian automotive content writer for GCI Tires (gcitires.com), an AI-powered online tire retailer serving Ontario and Quebec. Write SEO-optimized blog posts in clear Canadian English. Always mention free shipping, the GCI AI Match 2.0 tire advisor, and Canada Tire Inc. as our trusted distributor (est. 1928). Brands carried: Cooper, Nexen, Vredestein, Minerva (Canada Tire exclusive), Ovation, Maxtrek, Kenda, Transeagle, Pirelli, GT Radial, Falken, Kelly, Starfire. Tone: knowledgeable, trustworthy, practical, Canadian. Never use American spellings (use "tyre" never, use "tire"; "centre" not "center" for Canadian English context is fine either way). Always include an internal link to the AI Match tool.`
@@ -138,7 +185,7 @@ Retourne UNIQUEMENT du JSON valide avec exactement ces champs (sans markdown, sa
     },
     body: JSON.stringify({
       model:      CLAUDE_MODEL,
-      max_tokens: 2000,
+      max_tokens: 4000,
       system:     systemPrompt,
       messages:   [{ role: 'user', content: userPrompt }],
     }),
@@ -150,7 +197,7 @@ Retourne UNIQUEMENT du JSON valide avec exactement ces champs (sans markdown, sa
 
   // Strip any markdown fences if Claude wrapped output
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  const parsed  = JSON.parse(cleaned);
+  const parsed  = JSON.parse(sanitizeJsonControlChars(cleaned));
 
   return {
     title:           parsed.title,
