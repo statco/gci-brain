@@ -8,7 +8,7 @@ import { cachedResolveImageLink } from '../../../lib/image-cdn';
 // ─── Config ──────────────────────────────────────────────────────────────────
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const SHOPIFY_TOKEN  = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN!;
-const STOREFRONT_URL = 'https://gcitires.com';
+const STOREFRONT_URL = 'https://gcitirescanada.com';
 const GOOGLE_CATEGORY = 'Vehicles & Parts > Vehicle Parts & Accessories > Vehicle Tires';
 
 const COLUMNS = [
