@@ -4,7 +4,7 @@
 **Scope of this repo's CT usage:** catalog and pricing, **read-only.**
 
 Order submission lives in **`gci-order-hub`**, not here. See
-`gci-order-hub/docs/CT-INTEGRATION-CONTEXT.md` for the full picture. This file
+`gci-order-hub/CT-INTEGRATION-CONTEXT.md` for the full picture. This file
 records the CT API facts verified on 2026-07-27 that also apply to this repo.
 
 ---
