@@ -29,6 +29,7 @@
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getSeoSyncMetafields, checkDrift, recordBaseline } from '../lib/seoDrift.js';
 
 export const config = { maxDuration: 300 };
 
@@ -190,15 +191,25 @@ interface ShopifyMetafield {
   value: string;
 }
 
-async function upsertSeoTitleMetafield(productId: number, value: string): Promise<void> {
+async function upsertSeoTitleMetafield(productId: number, value: string): Promise<'written' | 'skipped'> {
   const data: any = await shopifyFetch(
     `/products/${productId}/metafields.json?namespace=global`,
   );
   const existing: ShopifyMetafield | undefined = (data.metafields ?? [])
     .find((m: ShopifyMetafield) => m.key === 'title_tag');
 
+  if (existing?.value === value) return 'skipped'; // already correct — no drift check needed
+
+  // Drift protection — don't overwrite a title_tag a human has edited since
+  // our last write (e.g. via the SEO agency in Shopify admin). See lib/seoDrift.ts.
+  const seoSyncState = await getSeoSyncMetafields(productId);
+  const drift = await checkDrift(productId, 'title_tag', existing?.value ?? '', seoSyncState);
+  if (!drift.safe) {
+    console.log(`  🔒 Product ${productId}: title_tag protected from overwrite (${drift.reason})`);
+    return 'skipped';
+  }
+
   if (existing) {
-    if (existing.value === value) return; // already correct
     await shopifyFetch(`/metafields/${existing.id}.json`, {
       method: 'PUT',
       body:   JSON.stringify({ metafield: { id: existing.id, value } }),
@@ -211,6 +222,8 @@ async function upsertSeoTitleMetafield(productId: number, value: string): Promis
       }),
     });
   }
+  await recordBaseline(productId, 'title_tag', value, seoSyncState);
+  return 'written';
 }
 
 // ─── HANDLER ──────────────────────────────────────────────────────────────────
