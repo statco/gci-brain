@@ -10,6 +10,7 @@ console.log('updateSeo module loaded');
 // GET /api/updateSeo?productId=123456789      — single product
 // ============================================================
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getSeoSyncMetafields, checkDrift, recordBaseline } from '../lib/seoDrift.js';
 export const config = { maxDuration: 300 };
 // ─── SHOPIFY CONFIG ───────────────────────────────────────────────────────────
 const SHOPIFY = {
@@ -233,6 +234,7 @@ interface ChangeRecord {
   imageAltsUpdated:   number;
   descriptionUpdated: boolean;
   aiGenerated:        boolean;
+  skippedFields?:     string[]; // fields protected from overwrite — see lib/seoDrift.ts
 }
 // ─── FETCH ALL PRODUCTS ───────────────────────────────────────────────────────
 async function fetchAllProducts(): Promise<ShopifyProduct[]> {
@@ -298,6 +300,7 @@ async function processProduct(
 
   let imageAltsUpdated   = 0;
   let descriptionUpdated = false;
+  const skippedFields: string[] = [];
 
   if (!dryRun) {
     // ── Metafields ────────────────────────────────────────────────────────────
@@ -312,34 +315,71 @@ async function processProduct(
     }
     const existingTitle = metafields.find(m => m.key === 'title_tag');
     const existingDesc  = metafields.find(m => m.key === 'description_tag');
+
+    // Drift protection — never overwrite a field a human has edited since our
+    // last write. See lib/seoDrift.ts.
+    let seoSyncState;
     try {
-      await upsertMetafield(product.id, existingTitle, 'title_tag', newSeoTitle);
+      seoSyncState = await getSeoSyncMetafields(product.id);
     } catch (err) {
       return {
         change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
-        error: `Product ${product.id}: failed to upsert title_tag — ${String(err)}`,
+        error: `Product ${product.id}: failed to fetch seo_sync state — ${String(err)}`,
       };
     }
-    try {
-      await upsertMetafield(product.id, existingDesc, 'description_tag', newMetaDesc);
-    } catch (err) {
-      return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
-        error: `Product ${product.id}: failed to upsert description_tag — ${String(err)}`,
-      };
+
+    const titleDrift = await checkDrift(product.id, 'title_tag', existingTitle?.value ?? '', seoSyncState);
+    if (titleDrift.safe) {
+      try {
+        await upsertMetafield(product.id, existingTitle, 'title_tag', newSeoTitle);
+        await recordBaseline(product.id, 'title_tag', newSeoTitle, seoSyncState);
+      } catch (err) {
+        return {
+          change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+          error: `Product ${product.id}: failed to upsert title_tag — ${String(err)}`,
+        };
+      }
+    } else {
+      skippedFields.push(`title_tag (${titleDrift.reason})`);
     }
+
+    const descDrift = await checkDrift(product.id, 'description_tag', existingDesc?.value ?? '', seoSyncState);
+    if (descDrift.safe) {
+      try {
+        await upsertMetafield(product.id, existingDesc, 'description_tag', newMetaDesc);
+        await recordBaseline(product.id, 'description_tag', newMetaDesc, seoSyncState);
+      } catch (err) {
+        return {
+          change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+          error: `Product ${product.id}: failed to upsert description_tag — ${String(err)}`,
+        };
+      }
+    } else {
+      skippedFields.push(`description_tag (${descDrift.reason})`);
+    }
+
     // ── Product description (body_html) ───────────────────────────────────────
-    try {
-      await shopifyFetch(`/products/${product.id}.json`, {
-        method: 'PUT',
-        body: JSON.stringify({ product: { id: product.id, body_html: newBodyHtml } }),
-      });
-      descriptionUpdated = true;
-    } catch (err) {
-      return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
-        error: `Product ${product.id}: failed to update body_html — ${String(err)}`,
-      };
+    const bodyDrift = await checkDrift(product.id, 'body_html', product.body_html ?? '', seoSyncState);
+    if (bodyDrift.safe) {
+      try {
+        await shopifyFetch(`/products/${product.id}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({ product: { id: product.id, body_html: newBodyHtml } }),
+        });
+        await recordBaseline(product.id, 'body_html', newBodyHtml, seoSyncState);
+        descriptionUpdated = true;
+      } catch (err) {
+        return {
+          change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+          error: `Product ${product.id}: failed to update body_html — ${String(err)}`,
+        };
+      }
+    } else {
+      skippedFields.push(`body_html (${bodyDrift.reason})`);
+    }
+
+    if (skippedFields.length > 0) {
+      console.log(`  🔒 Product ${product.id}: protected from overwrite — ${skippedFields.join(', ')}`);
     }
     // ── Image alt tags ────────────────────────────────────────────────────────
     for (const image of product.images) {
@@ -358,7 +398,7 @@ async function processProduct(
     descriptionUpdated = true;
   }
   return {
-    change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated, descriptionUpdated, aiGenerated },
+    change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated, descriptionUpdated, aiGenerated, ...(skippedFields.length ? { skippedFields } : {}) },
     error: null,
   };
 }
