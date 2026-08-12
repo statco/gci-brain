@@ -7,14 +7,17 @@
 >
 > **2026-08-08**: gcitires-chatbot chat-timeout fix + first-ever monitoring build-out — see "Session update — 2026-08-08" at the end of this doc.
 >
+> **2026-08-11**: SEO drift protection (gci-brain) + Walmart listing content sync built (gci-walmart-sync, dormant — app still not installed on any real store, see §2). See "Session update — 2026-08-11" at the end of this doc.
+>
 > Last written: 2026-07-01, last updated: 2026-07-29 end-of-session (after
 > the Walmart order-capture root-cause fix + canonical CT PO number format
 > pass — gci-order-hub#50/#51/#52/#54/#55 — and a same-night audit of
 > gci-walmart-sync that led to shadow-mode order capture, now LIVE — see
-> §2's gci-walmart-sync row and §6 item 13). Synced to 3 of 6 copies this
-> session (gci-order-hub, gci-brain, gci-walmart-sync) — gci-command-center,
-> gcitires-chatbot, gci-price-monitor are still stale against everything
-> below. Status markers:
+> §2's gci-walmart-sync row and §6 item 13). Synced to 3 of 6 copies that
+> session (gci-order-hub, gci-brain, gci-walmart-sync); the 2026-08-08 and
+> 2026-08-11 updates above have each only reached the repo(s) noted in their
+> own bullet — gci-command-center, gcitires-chatbot, and gci-price-monitor
+> have not seen any update since 2026-07-29. Status markers:
 > ✅ verified working · 🟡 built but not fully live-verified · ⛔ known broken/blocked ·
 > 🔲 not yet built.
 
@@ -46,7 +49,7 @@ actual current purpose (some don't; see §4).
 | **gci-order-hub** | Order automation for GCI's own Shopify store: Shopify `orders/paid` webhook → routes to CT (TIRE- SKUs) → installer dispatch → Walmart price/inventory cron sync (`/api/walmart-sync`, `/api/walmart-sync-cursor`, `/api/walmart-ship`, etc.) → separately, `/api/walmart-order-sync` (Walmart *order capture*, not price/inventory — every 15 min, mirrors new Walmart orders into a Google Sheet, acknowledges them on Walmart, Telegram-alerts the team) — more routes live than the README documents, check the actual `api/` folder. CJ Dropshipping (NUPROZ- SKU) routing removed 2026-07 — see §3/§4. | `gci-order-hub.vercel.app` | ✅ core routing working. ✅ Walmart order capture fixed 2026-07-29 after being silently broken (§6.12) — verify this stays fixed, it has failed silently before. 🟡 CT auto-PO switch built, dormant (§6). |
 | **gci-command-center** | Internal ops dashboard — Sales/Marketing/Finance/IT/Content, one React app. Pulls Shopify + GA4 + Xero into one place. Also runs the Walmart discount-rotation system (`/promotions`). | `gci-command-center-ofzf` (custom domain `ops.gcitires.com`). The old duplicate plain-`.vercel.app` project was **deleted 2026-07-02** — there is now only one. | ✅ Fully verified 2026-07-02: all 4 dashboard widgets confirmed against real source data (Shopify orders/revenue, GA4 sessions, Xero invoices). Xero re-authed + root-cause fixed (§6.10), GA4 re-authed with a new service account (§5). |
 | **gcitires-chatbot** | Customer-facing AI chat widget embedded on the storefront. Memory/conversation history migrated 2026-07 from Airtable to Supabase (`chatbot_customers`/`chatbot_conversations` tables in the shared `gci-walmart-sync` Supabase project) — fixes the old `/api/memory` timeout problem. | `gcitires-chatbot.vercel.app` | ✅ Migration COMPLETE 2026-07-02. ✅ 2026-08-08: fixed `/api/chat` 30s timeouts caused by unbounded parallel `search_catalog` fan-out (PR #29) and added its first-ever monitoring — `api/health-check.ts` cron (every 30min) + Telegram alerting via new `lib/telegram.ts`. See "Session update — 2026-08-08" at the end of this doc for full detail. |
-| **gci-walmart-sync** | **Standalone commercial Shopify app** (Remix, Shopify App Store template) for Walmart CA Marketplace sync — listings, price, inventory, orders, returns. Built first for GCI, intended to be **published commercially** once ready. **Still not installed on any real Shopify store**, GCI's included. | `app.gcitires.ca` (+ `gci-walmart-sync.vercel.app`) | 🟡 CC-1 through CC-12 built and compiling, feature-complete on paper, no real Shopify merchant has ever installed it. ✅ **2026-07-29**: its order-ingestion cron is now LIVE-capturing GCI's real Walmart orders in **shadow mode** (`docs/SHADOW-MODE.md`) for comparison against gci-order-hub — read that file AND `docs/SCOPE-NOTE.md` before assuming either "just a test app" or "the real pipeline now": both are wrong on their own, see §6 item 13. See its own `docs/SESSION-CONTEXT.md` for full build history. |
+| **gci-walmart-sync** | **Standalone commercial Shopify app** (Remix, Shopify App Store template) for Walmart CA Marketplace sync — listings, price, inventory, orders, returns. Built first for GCI, intended to be **published commercially** once ready. **Still not installed on any real Shopify store**, GCI's included. | `app.gcitires.ca` (+ `gci-walmart-sync.vercel.app`) | 🟡 CC-1 through CC-12 built and compiling, feature-complete on paper, no real Shopify merchant has ever installed it. ✅ **2026-07-29**: its order-ingestion cron is now LIVE-capturing GCI's real Walmart orders in **shadow mode** (`docs/SHADOW-MODE.md`) for comparison against gci-order-hub — read that file AND `docs/SCOPE-NOTE.md` before assuming either "just a test app" or "the real pipeline now": both are wrong on their own, see §6 item 13. 🟡 **2026-08-11**: reactive listing content sync (Title/SEO Title/Description/SEO Description → Walmart productName/shortDescription) built and deployed (gci-walmart-sync#25), fires off the same `PRODUCTS_UPDATE` webhook as price sync — but dormant like everything else here, since the app still isn't installed on a real store; never run against real data. See its own `docs/SESSION-CONTEXT.md` for full build history. |
 | **gci-price-monitor** | Daily competitor tire-price scraper (Python/Playwright), **runs via GitHub Actions, not Vercel** — despite having a `vercel.json`, that file is an unused stub. Reports via Telegram. Persistence migrated 2026-07 from local SQLite to Supabase (`price_monitor_snapshots` table, same shared project) — real day-over-day trend data now possible for the first time. | GitHub Actions cron (`.github/workflows/price_monitor.yml`, daily 8AM EST) | ✅ Merged (gci-price-monitor#4) and verified end-to-end via a real `workflow_dispatch` production run (real scrape, real Supabase insert, confirmed via direct SQL). `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` secrets set on the repo. First real historical trend data started accruing 2026-07-01. |
 
 **Explicitly not part of this system**, despite living in the same Vercel team:
@@ -623,3 +626,119 @@ schedule via Vercel runtime logs (30-min cadence), zero alerts fired
 scoped to the `statco` org was shared directly in chat this session to
 push PR #29's branch and merge-adjacent doc updates. Standard hygiene:
 rotate it next time you're in GitHub token settings.
+
+---
+
+## Session update — 2026-08-11: SEO drift protection (gci-brain) + Walmart listing content sync (gci-walmart-sync)
+
+**Trigger**: Pat reported recurring loss of manually-edited SEO titles,
+meta descriptions, and product descriptions — suspected they were being
+silently overwritten by automation.
+
+**Root cause, confirmed by reading the actual code**: `api/updateSeo.ts`
+and `api/fixTireSize.ts` (gci-brain) both regenerated `title_tag`,
+`description_tag`, and `body_html` from templates/AI on every run, with
+**no way to distinguish a human edit (Pat or the SEO agency, made
+directly in Shopify admin) from a value the automation last wrote
+itself.** `updateSeo.ts` is manual-trigger-only (not in any cron), so
+loss was tied to whenever it got run, not a fixed schedule.
+`fixTireSize.ts` runs daily at 2am ET but only touches products whose
+title still contains a malformed CT size code — so it doesn't recur
+indefinitely per product, but did unconditionally overwrite `title_tag`
+whenever it did fire.
+
+**Fix (PR gci-brain#137, #138, merged and deployed)**: new
+`lib/seoDrift.ts` — before writing any of the three fields, compares the
+field's **current live value** against a **baseline hash** stored in a
+`seo_sync` namespace metafield (same convention as the existing
+`canada_tire.cost_synced_at` freshness stamp — no new DB/infra):
+- No baseline yet → unknown provenance, protect by default, seed
+  baseline, skip write. (This means the very first run after deploy
+  protects *everything currently in place* — nothing was touched by the
+  deploy itself.)
+- Baseline matches live value → nobody's touched it since our last
+  write, safe to regenerate.
+- Baseline differs → a human changed it since, skip write, adopt their
+  value as the new baseline (self-healing — no tagging/process required
+  from Pat or the agency).
+
+PR #138 was a same-session follow-up fix: the first pass nested the
+drift-check/metafield-fetch inside `if (!dryRun)`, so `dry=true` never
+actually previewed anything — `skippedFields` came back empty
+regardless of a product's real state. Fixed so dry-run genuinely reads
+and compares (via a `{ preview: true }` option on `checkDrift()` that
+skips the baseline-seeding write) without writing anything.
+
+**Live-verified**, not just code-reviewed: ran `/api/updateSeo` against
+a real product (Cooper Zeon RS3-G1 215/50R17, id 7957868544048) both
+dry and for real. Confirmed via a separate `Shopify:get-product` read
+(not trusting the endpoint's own response) that `descriptionHtml` was
+genuinely untouched after the real run — matches the original text, not
+the AI-generated replacement the dry run showed it would have produced
+absent this protection.
+
+**Walmart side (PR gci-walmart-sync#25, merged and deployed, but
+currently inert)**: `lib/sync/listing.ts` already had
+`buildWalmartItemPayload()`/`submitItemFeed()` built but dormant (only
+ever exercised by `scripts/test-listing-payload.ts`). Now:
+- `productName`/`shortDescription` prefer the SEO `title_tag`/
+  `description_tag` metafields (falling back to plain title/`body_html`)
+  — Walmart has no separate "SEO field" concept of its own;
+  productName/shortDescription directly drive its search ranking, the
+  same role title_tag/description_tag play for Shopify/Google.
+- New `syncListingForVariant()` fires reactively off the existing
+  `PRODUCTS_UPDATE` webhook handler (same pattern as the existing
+  `syncPriceForVariant()`), with a new `Product.contentHash` column
+  (migration applied directly via Supabase's `execute_sql` — see below)
+  to skip the Walmart feed submission when nothing content-relevant
+  actually changed.
+
+**Attempted a live smoke test of the Walmart side — blocked by scope,
+not a bug.** Queried the `shops` table in gci-walmart-sync's Supabase
+project (`enhbckomwdelktdhnuzq`): it only contains
+`gci-walmart-test.myshopify.com` and `shadow-mode.internal`. **This app
+is still not installed on `gcitirescanada.com`** (confirmed already true
+per §2's gci-walmart-sync row — this session didn't change that, just
+ran into it directly). Made a small reversible test edit to a real
+product's description via the connected Shopify tool to see if the
+webhook would fire; confirmed via Vercel runtime logs that **zero**
+requests hit `/api/webhooks` in the following 15 minutes — expected,
+since Shopify only delivers webhooks to apps actually installed on that
+shop. Reverted the test edit immediately after (`descriptionHtml`
+confirmed back to the exact original text). Pat confirmed this is
+deliberate/expected, not news.
+
+**Practical implication for whenever gci-walmart-sync does go live for
+GCI**: this content-sync code has never run against real data end to
+end. Before trusting it, it should get the same live smoke test done
+here — but pointed at `gci-walmart-test.myshopify.com`, the store this
+app can actually see.
+
+**Database note**: gci-walmart-sync's Supabase project has **no Prisma
+migration history** (`_prisma_migrations` table doesn't exist — schema
+has only ever been tracked via Supabase-native migrations,
+`supabase_migrations.schema_migrations`, 11 entries). Running
+`prisma migrate dev` against it cold is a known footgun (detects the
+live schema as unbaselined drift, can prompt a full reset) — this
+database has real rows (`chatbot_customers` ~32k,
+`price_monitor_snapshots` ~2.8k, etc.). Added the two new columns via
+hand-written SQL through Supabase's migration tool instead, with a
+matching `prisma/migrations/.../migration.sql` file committed so the
+repo's migration history at least *shows* what was applied, even though
+`_prisma_migrations` itself is still unbaselined. **This gap is
+pre-existing, not new** — deferred by design pending an environment with
+real Postgres wire-protocol access (this session's sandbox could only
+reach Postgres via Supabase's HTTPS-based tools, not raw
+`postgresql://` on 5432/6543).
+
+**Outstanding after this session**:
+- Rotate the Supabase DB password for `enhbckomwdelktdhnuzq` — it went
+  through a Claude Code session transcript when env vars were set for
+  the migration attempt.
+- `_prisma_migrations` baseline gap on gci-walmart-sync — deferred, see
+  above.
+- A GitHub PAT scoped to the `statco` org was shared directly in chat
+  this session (used across gci-brain and gci-walmart-sync for the PRs
+  above). Standard hygiene: rotate it.
+- This doc was only updated in **gci-brain and gci-walmart-sync** this
+  session — the other 4 copies do not yet reflect this update.
