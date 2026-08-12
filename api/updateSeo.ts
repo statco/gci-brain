@@ -302,33 +302,41 @@ async function processProduct(
   let descriptionUpdated = false;
   const skippedFields: string[] = [];
 
+  // ── Metafields — fetched in both dry and real runs, so dry-run can
+  // accurately preview what drift protection would do without writing
+  // anything (checkDrift's preview:true option below never seeds/adopts a
+  // baseline). ─────────────────────────────────────────────────────────────
+  let metafields: ShopifyMetafield[];
+  try {
+    metafields = await getProductMetafields(product.id);
+  } catch (err) {
+    return {
+      change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+      error: `Product ${product.id}: failed to fetch metafields — ${String(err)}`,
+    };
+  }
+  const existingTitle = metafields.find(m => m.key === 'title_tag');
+  const existingDesc  = metafields.find(m => m.key === 'description_tag');
+
+  let seoSyncState: ShopifyMetafield[];
+  try {
+    seoSyncState = await getSeoSyncMetafields(product.id);
+  } catch (err) {
+    return {
+      change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
+      error: `Product ${product.id}: failed to fetch seo_sync state — ${String(err)}`,
+    };
+  }
+
+  const titleDrift = await checkDrift(product.id, 'title_tag', existingTitle?.value ?? '', seoSyncState, { preview: dryRun });
+  const descDrift  = await checkDrift(product.id, 'description_tag', existingDesc?.value ?? '', seoSyncState, { preview: dryRun });
+  const bodyDrift  = await checkDrift(product.id, 'body_html', product.body_html ?? '', seoSyncState, { preview: dryRun });
+
+  if (!titleDrift.safe) skippedFields.push(`title_tag (${titleDrift.reason})`);
+  if (!descDrift.safe)  skippedFields.push(`description_tag (${descDrift.reason})`);
+  if (!bodyDrift.safe)  skippedFields.push(`body_html (${bodyDrift.reason})`);
+
   if (!dryRun) {
-    // ── Metafields ────────────────────────────────────────────────────────────
-    let metafields: ShopifyMetafield[];
-    try {
-      metafields = await getProductMetafields(product.id);
-    } catch (err) {
-      return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
-        error: `Product ${product.id}: failed to fetch metafields — ${String(err)}`,
-      };
-    }
-    const existingTitle = metafields.find(m => m.key === 'title_tag');
-    const existingDesc  = metafields.find(m => m.key === 'description_tag');
-
-    // Drift protection — never overwrite a field a human has edited since our
-    // last write. See lib/seoDrift.ts.
-    let seoSyncState;
-    try {
-      seoSyncState = await getSeoSyncMetafields(product.id);
-    } catch (err) {
-      return {
-        change: { id: product.id, title: product.title, seoTitle: newSeoTitle, metaDescription: newMetaDesc, imageAltsUpdated: 0, descriptionUpdated: false, aiGenerated },
-        error: `Product ${product.id}: failed to fetch seo_sync state — ${String(err)}`,
-      };
-    }
-
-    const titleDrift = await checkDrift(product.id, 'title_tag', existingTitle?.value ?? '', seoSyncState);
     if (titleDrift.safe) {
       try {
         await upsertMetafield(product.id, existingTitle, 'title_tag', newSeoTitle);
@@ -339,11 +347,8 @@ async function processProduct(
           error: `Product ${product.id}: failed to upsert title_tag — ${String(err)}`,
         };
       }
-    } else {
-      skippedFields.push(`title_tag (${titleDrift.reason})`);
     }
 
-    const descDrift = await checkDrift(product.id, 'description_tag', existingDesc?.value ?? '', seoSyncState);
     if (descDrift.safe) {
       try {
         await upsertMetafield(product.id, existingDesc, 'description_tag', newMetaDesc);
@@ -354,12 +359,9 @@ async function processProduct(
           error: `Product ${product.id}: failed to upsert description_tag — ${String(err)}`,
         };
       }
-    } else {
-      skippedFields.push(`description_tag (${descDrift.reason})`);
     }
 
     // ── Product description (body_html) ───────────────────────────────────────
-    const bodyDrift = await checkDrift(product.id, 'body_html', product.body_html ?? '', seoSyncState);
     if (bodyDrift.safe) {
       try {
         await shopifyFetch(`/products/${product.id}.json`, {
@@ -374,8 +376,6 @@ async function processProduct(
           error: `Product ${product.id}: failed to update body_html — ${String(err)}`,
         };
       }
-    } else {
-      skippedFields.push(`body_html (${bodyDrift.reason})`);
     }
 
     if (skippedFields.length > 0) {

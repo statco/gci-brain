@@ -109,13 +109,17 @@ export async function checkDrift(
   fieldKey: 'title_tag' | 'description_tag' | 'body_html',
   currentValue: string,
   existingSeoSyncMetafields: ShopifyMetafield[],
+  options: { preview?: boolean } = {},
 ): Promise<DriftCheck> {
   const baselineKey = `${fieldKey}_hash`;
   const baseline = existingSeoSyncMetafields.find(m => m.key === baselineKey);
 
   if (!baseline) {
-    // Unknown provenance — protect it by default, seed baseline, skip write.
-    await upsertBaseline(productId, fieldKey, currentValue, existingSeoSyncMetafields);
+    // Unknown provenance — protect by default. In preview mode, report the
+    // decision without writing anything (no baseline seeded yet).
+    if (!options.preview) {
+      await upsertBaseline(productId, fieldKey, currentValue, existingSeoSyncMetafields);
+    }
     return { safe: false, reason: 'no_baseline_yet' };
   }
 
@@ -123,9 +127,11 @@ export async function checkDrift(
     return { safe: true, reason: 'unchanged_since_last_write' };
   }
 
-  // Value differs from what we last wrote — a human changed it since. Adopt
-  // their value as the new baseline so we stop re-flagging it every run.
-  await upsertBaseline(productId, fieldKey, currentValue, existingSeoSyncMetafields);
+  // Value differs from what we last wrote — a human changed it since. In
+  // preview mode, just report it; a real run would adopt their value here.
+  if (!options.preview) {
+    await upsertBaseline(productId, fieldKey, currentValue, existingSeoSyncMetafields);
+  }
   return { safe: false, reason: 'edited_by_human' };
 }
 
