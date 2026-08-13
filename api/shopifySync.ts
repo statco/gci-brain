@@ -274,6 +274,20 @@ function getTotalQty(p: CTTire): number {
   return p.inventory.reduce((s, l) => s + l.quantity, 0);
 }
 
+// CT's Submit Order accepts a single location per order — no split shipments
+// (see gci-order-hub's resolveLocation(), which enforces the same constraint
+// when actually placing a PO). Summing quantity across all warehouses
+// therefore overstates what a single order can ever draw down: e.g. 1 unit
+// in Toronto + 1 in Montreal reads as "2 in stock" via getTotalQty, but no
+// single CT warehouse can fill a 2-unit order — resolveLocation() would
+// reject it. getMaxLocationQty() reports the true fulfillable ceiling: the
+// most any ONE warehouse holds, which is the largest single-location order
+// resolveLocation() could ever successfully route, for any province (every
+// PROVINCE_ROUTING list falls back across all 7 locations).
+function getMaxLocationQty(p: CTTire): number {
+  return p.inventory.reduce((max, l) => Math.max(max, l.quantity), 0);
+}
+
 function getClosestWarehouse(p: CTTire): string {
   const preferred = ['Sherbrooke', 'Levis', 'Valleyfield'];
   for (const name of preferred) {
@@ -1106,7 +1120,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // zeroed, notifies gci-order-hub to push 0 to Walmart (reactive, non-fatal).
       //
       // Target qty per Shopify ct-sync SKU:
-      //   • CT in-stock                                   → getTotalQty(ct)
+      //   • CT in-stock                                   → getMaxLocationQty(ct)
+      //                                                       (max at any ONE warehouse — CT
+      //                                                       can't split-ship, so summing
+      //                                                       across warehouses would overstate
+      //                                                       what a single order can draw down)
       //   • CT qty 0 or SKU absent from CT feed           → 0
       //   • checkCTDealerCost == out_of_band | no_cost    → 0   (cost gate ⇒ zero)
       // SKUs already at their target are skipped. Zeros are processed first.
@@ -1165,7 +1183,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!cc.ok) {
               target = 0; reason = cc.reason; // 'out_of_band' | 'no_cost'
             } else {
-              target = getTotalQty(ct); // 0 if CT reports no stock
+              target = getMaxLocationQty(ct); // max at any single warehouse — CT can't split-ship; 0 if CT reports no stock anywhere
               reason = target > 0 ? 'in_stock' : 'ct_qty_zero';
             }
           }
