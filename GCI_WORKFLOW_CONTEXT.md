@@ -9,6 +9,8 @@
 >
 > **2026-08-11**: SEO drift protection (gci-brain) + Walmart listing content sync built (gci-walmart-sync, dormant — app still not installed on any real store, see §2). See "Session update — 2026-08-11" at the end of this doc.
 >
+> **2026-08-13**: `inventory-reconcile` (gci-brain) fixed a real oversell gap — was reporting national-summed CT stock instead of the max any single CT warehouse holds, since CT can't split-ship. Closes the bug behind a real customer oversell (Ovation Vi-682 155/80R12, SKU 200E2108). See "Session update — 2026-08-13" at the end of this doc, and the correction added to `gci-order-hub/CT-INTEGRATION-CONTEXT.md` § 5a.
+>
 > Last written: 2026-07-01, last updated: 2026-07-29 end-of-session (after
 > the Walmart order-capture root-cause fix + canonical CT PO number format
 > pass — gci-order-hub#50/#51/#52/#54/#55 — and a same-night audit of
@@ -742,3 +744,73 @@ reach Postgres via Supabase's HTTPS-based tools, not raw
   above). Standard hygiene: rotate it.
 - This doc was only updated in **gci-brain and gci-walmart-sync** this
   session — the other 4 copies do not yet reflect this update.
+
+---
+
+## Session update — 2026-08-13: inventory-reconcile single-warehouse stock fix (gci-brain)
+
+**Trigger**: Pat reported a real customer oversell — Ovation Vi-682
+155/80R12 (SKU `200E2108`), order for 2x accepted by Shopify at checkout,
+then had to be cancelled because Canada Tire only had 1x actually
+fulfillable. Customer accepted 1x and re-ordered; Pat asked for a permanent
+fix, not just a one-off correction.
+
+**Root cause, confirmed by reading the actual code**: `gci-brain`'s hourly
+`inventory-reconcile` cron (`api/shopifySync.ts`, § 3/§ 6 of
+`gci-order-hub/CT-INTEGRATION-CONTEXT.md` previously described this as
+authoritative — see the correction added there) wrote Shopify's stock
+quantity as `getTotalQty(ct)`, the **sum of CT stock across all 7
+warehouses**. But CT's Submit Order API accepts only **one** warehouse per
+order — no split shipments — which `gci-order-hub/api/lib/ct-client.ts`'s
+`resolveLocation()` already enforces when actually placing a PO (it
+explicitly picks a single location that can fill every line, throwing
+`CTInsufficientStockError` if none can).
+
+Consequence: a SKU with 1 unit in Toronto and 1 in Montreal read as "2 in
+stock" in Shopify. `inventory_policy: 'deny'` never caught this — Shopify
+genuinely (if wrongly) believed 2 units existed, so the deny-policy
+backstop never triggered. `resolveLocation()` would correctly reject a
+real 2-unit order downstream, but only after the customer had already
+checked out — a real oversell path, not the "routine, not an error"
+`CTInsufficientStockError` → manual-required outcome the system was
+designed to expect (see `CT-INTEGRATION-CONTEXT.md` § 8's error mapping).
+This gap was not previously documented anywhere in either repo's context
+docs.
+
+**Fix (gci-brain#139, merged)**: new `getMaxLocationQty()` — max quantity
+at any single CT warehouse, not the sum — swapped in as the `in_stock`
+target in `inventory-reconcile`. This is the true fulfillable ceiling: the
+largest single-location order `resolveLocation()` could ever successfully
+route, for any province (every `PROVINCE_ROUTING` list in
+`gci-order-hub/api/lib/ct-client.ts` falls back across all 7 locations, so
+max-across-all-7 is the correct ceiling regardless of destination). Same
+hourly cron, same `setInventory` write path, same `inventory_policy:
+'deny'` backstop — only the target-qty formula changed. `tsc --noEmit`
+passes clean.
+
+**Not yet live-verified against real data.** The fix is merged and will
+apply starting the next hourly cron run. Recommended before fully trusting
+it: a `dryRun=true` run (`?action=inventory-reconcile&dryRun=true`) to
+review `pendingSample` for SKUs whose displayed quantity will drop (any
+SKU with stock spread thin across multiple warehouses rather than
+concentrated in one) — this is expected, correct behavior, not a
+regression, but worth eyeballing once before a live run applies it.
+
+**Cross-reference**: `gci-order-hub/CT-INTEGRATION-CONTEXT.md` § 5a
+("Both merge-gate decisions resolved") has a matching correction appended
+directly under its original "Option C" decision, since that decision's
+reasoning relied on the now-fixed assumption.
+
+**Tradeoff, intentional**: Shopify's displayed stock will now be
+conservative relative to true national CT stock whenever inventory is
+genuinely spread across warehouses — correct today since CT can't
+split-ship; would need revisiting if CT ever adds that capability.
+
+**Session credential note** (same convention as earlier session entries
+in this doc): a GitHub PAT scoped to the `statco` org was shared directly
+in chat this session (used for gci-brain's clone/branch/commit/PR and this
+doc-sync commit). Standard hygiene: rotate it, alongside the other
+rotations already queued (Supabase DB password, `SHOPIFY_ADMIN_API_TOKEN`,
+`CRON_SECRET`).
+
+- This doc was updated in **all 6 repos** this session.
