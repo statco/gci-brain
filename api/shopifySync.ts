@@ -498,7 +498,7 @@ async function syncOneProduct(
   const writes = async (e: ExistingProduct) => {
     await shopifyFetch(`/variants/${e.variantId}.json`, { method: 'PUT', body: JSON.stringify({ variant: buildVariant(e) }) });
     await shopifyFetch(`/products/${e.productId}.json`, { method: 'PUT', body: JSON.stringify({ product: buildProduct(e) }) });
-    await setInventory(e.inventoryItemId, getTotalQty(ct));
+    await setInventory(e.inventoryItemId, getMaxLocationQty(ct)); // single-warehouse cap — CT can't split-ship, see getMaxLocationQty()
     if (!e.hasImages) await attachProductImage(e.productId, ct);
   };
   try {
@@ -737,7 +737,7 @@ const FLOTATION_TITLE_OVERRIDES: Record<string, string> = {
 async function buildPayload(ct: CTTire) {
   const size    = parseCTSizeCode(ct.size);
   const season  = ct.isWinter ? 'Winter' : 'All-Season';
-  const qty     = getTotalQty(ct);
+  const qty     = getMaxLocationQty(ct); // single-warehouse cap — matches the Shopify inventory_quantity this product will actually be created with
   const closest = getClosestWarehouse(ct);
   const msrp    = parseFloat(ct.msrp) || 0;
   const costCheck = checkCTDealerCost(ct.cost, ct.msrp);
@@ -960,7 +960,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
       }
       const productId = data.product?.id;
       const invId     = data.product?.variants?.[0]?.inventory_item_id;
-      if (invId)     await setInventory(invId, getTotalQty(ct));
+      if (invId)     await setInventory(invId, getMaxLocationQty(ct)); // single-warehouse cap — CT can't split-ship, see getMaxLocationQty()
       if (productId) await attachProductImage(productId, ct);
       existingTitles.add(normTitle);
       stats.created++;
@@ -1328,7 +1328,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               data=await shopifyFetch<any>('/products.json',{method:'POST',body:JSON.stringify({product:{...payload.product,handle:retryHandle}})});
             }
             const productId=data.product?.id, invId=data.product?.variants?.[0]?.inventory_item_id;
-            if (invId) await setInventory(invId,getTotalQty(ct));
+            if (invId) await setInventory(invId,getMaxLocationQty(ct)); // single-warehouse cap — CT can't split-ship, see getMaxLocationQty()
             if (productId) await attachProductImage(productId,ct);
             rcTitles.add(normTitle); rcCreated++;
             console.log(`✅ retry-create: created ${sku} — "${payload.product.title}"`);
