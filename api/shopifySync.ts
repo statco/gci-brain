@@ -1653,6 +1653,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'debug-ct-names', sample });
       }
 
+      case 'raw-ct-sample': {
+        // Returns CT's RAW, untyped JSON for specific SKUs — bypasses the
+        // CTTire interface entirely so we can see every field CT actually
+        // sends (e.g. checking for UTQG, load range, tread depth), not just
+        // the fields fetchAllCTTires()/CTTire currently map.
+        const rawSkus = (req.query.skus as string || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (rawSkus.length === 0) return res.status(400).json({ error: 'Query param ?skus= is required (comma-separated SKUs)' });
+        if (rawSkus.length > 50) return res.status(400).json({ error: 'Max 50 SKUs per call' });
+        const fullUrl = `${CT.baseUrl}?script=${CT_SCRIPT}&deploy=${CT_DEPLOY}`;
+        const ctRes = await fetch(fullUrl, {
+          method: 'POST',
+          headers: { 'Authorization':buildAuthHeader(), 'Content-Type':'application/json', 'Accept':'application/json' },
+          body: JSON.stringify({ customerId:CT.customerId, customerToken:CT.customerToken, filters:{ width:'', rimSize:'', aspectRatio:'', size:'', partNumber:rawSkus, brand:'', searchKey:'', isWinter:'', isRunFlat:'', isTire:true, isWheel:false, page:1 } }),
+        });
+        if (!ctRes.ok) throw new Error(`CT API HTTP ${ctRes.status}: ${(await ctRes.text()).slice(0,200)}`);
+        const ctData: any = await ctRes.json();
+        if (!ctData.success) throw new Error(`CT API error: ${JSON.stringify(ctData.error)}`);
+        return res.status(200).json({ success:true, mode:'raw-ct-sample', requestedSkus: rawSkus, count: (ctData.data||[]).length, raw: ctData.data });
+      }
+
       case 'repair-tags': {
         const dryRun=(req.query.dryRun??'true')!=='false';
         const repairOffset=parseInt(req.query.offset as string||'0',10), repairLimit=parseInt(req.query.limit as string||'100',10);
