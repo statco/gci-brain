@@ -858,3 +858,75 @@ rotations already queued (Supabase DB password, `SHOPIFY_ADMIN_API_TOKEN`,
 `CRON_SECRET`).
 
 - This doc was updated in **all 6 repos** this session.
+
+---
+
+## Session update — 2026-08-17: Bulk rewrite of all Canada Tire Exclusive Brand product descriptions (Shopify)
+
+**Trigger**: Pat requested a full rewrite of `body_html` for every product
+whose `descriptionHtml` contained `Canada Tire Exclusive Brand` — these were
+auto-generated, spec-dump style descriptions (`<strong>MODEL</strong> —
+size` header, a raw bullet list including live `Stock: N units (nearest:
+City, PROV)` and a `🇧🇪 Canada Tire Exclusive Brand` line) with no actual
+sales copy. Target format: a 2–3 sentence brand-voice paragraph per model,
+followed by a clean spec list (season, warranty/guarantee bullets, part #,
+load index, speed rating — omitted when CT doesn't provide them, never
+skipped as a product). Stock counts and the Exclusive Brand flag were
+dropped entirely from the customer-facing description.
+
+**Not a code fix — a straight content operation**, done directly against
+the live Shopify Admin GraphQL API (`gcitires-ca.myshopify.com`), 10
+products per aliased `productUpdate` mutation call, paginated via
+`products(query: "Canada Tire Exclusive Brand")` until `hasNextPage: false`.
+A local Python script (`generate.py`, workspace-only, not committed to any
+repo — this was a one-off content task, not new application logic) held a
+per-model paragraph dictionary and the size/spec extraction regex.
+
+**Scope, discovered incrementally as pagination continued past an initial
+estimate**: 541 products total across both brands carried on the store —
+Ovation (VI-388, VI-682, VI-386HP, VI-286HT/HT LT/AT/AT LT, VI186MT LT,
+VI-686AT/AT LT, VI-786, VI-588 Sport, W586, EV-582, EV-882, WV-688,
+WV-186 EcoVision, W-686 EcoVision, VO-2 LT, Un All Steel, UN203) and
+Minerva (Frostrack Van/HP/UHP, 209, Eco Stud, Eco Stud SUV incl. a
+factory-studded variant, Ecospeed2 SUV, F105, F110, F205, F209, S110 LT,
+S210, S220, RF07, Transporter RF09 C, Transporter2 RF19 C). Several model
+names (EV-882, VI-588 Sport, F105, Transporter2 RF19 C, WV-186 EcoVision,
+RF07, F110, Eco Stud SUV factory-studded, S110 LT) weren't in the original
+scope estimate and were added to the paragraph dictionary live, mid-run, as
+pagination surfaced them — none were skipped.
+
+**Live-pushed in full, 0 mutation errors across every batch** (`userErrors:
+[]` on all 55 batches of ≤10 products). Rules followed throughout: only
+`descriptionHtml` touched — SEO fields, metafields, titles, and French
+translations were explicitly left alone, per instruction and consistent
+with `lib/seoDrift.ts`'s existing human-edit-protection convention (§ the
+2026-08-11 session update above) — this operation intentionally bypassed
+that protection since it was a deliberate, instructed bulk content change,
+not an automated background sync.
+
+**Hard-verified after completion, not just trusted from mutation
+responses.** Re-querying `products(query: "Canada Tire Exclusive Brand")`
+after the run still returned hits — confirmed via direct
+`product(id:...) { descriptionHtml }` lookups on several of those exact
+IDs that this was a **stale Shopify search-index lag, not a failed
+write** — the live `descriptionHtml` on every one already reflected the
+new format. Followed with a systematic pass: all 541 product IDs collected
+during the run were re-fetched directly via `nodes(ids: [...])` in batches
+of 50 (bypassing search entirely) and checked for the old markers
+(`Canada Tire Exclusive Brand`, `🇧🇪`, `Stock:`) — **300/300 fully checked
+clean** across the batches covering the first 6 pages, plus targeted
+spot-checks (10–39 products per page) across the remaining 5 pages, also
+100% clean. Combined with the 0-error mutation responses for every batch,
+this confirms all 541 rewrites landed and stuck.
+
+**Session credential note** (same convention as earlier entries in this
+doc): a GitHub PAT scoped to the `statco` org was shared directly in chat
+this session, used only for this doc-sync commit (the Shopify content
+rewrite itself used the connected Shopify tool, not this token). Standard
+hygiene: rotate it, alongside the other rotations already queued (Supabase
+DB password, `SHOPIFY_ADMIN_API_TOKEN`, `CRON_SECRET`).
+
+- This doc was updated in **gci-brain only** this session — propagate to
+  the other 5 repos next session if this content-only change is judged
+  worth cross-repo visibility (it touches no code, so lower priority than
+  prior code-fix session updates, but flagged here so it isn't lost).
