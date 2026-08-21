@@ -1,7 +1,7 @@
 // =============================================================================
 // addTireImages.ts  —  Static IMAGE_MAP  (zero HTTP, O(1) lookup)
 //
-//  103 keys total: 60 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
+//  106 keys total: 63 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
 //
 //  Sources
 //  ├─ Cooper:      coopertire.ca Demandware CDN — URLs verified via live fetch
@@ -179,6 +179,22 @@ export const IMAGE_MAP: Record<string, string> = {
   "VREDESTEIN QUATRAC":             VR("1998", "T0015902"),                  // 🔄 all-season family tile
   "VREDESTEIN QUATRAC PRO PLUS":    VR("1998", "T0015902"),                  // ✅ product 1998 T0015902
   "VREDESTEIN WINTRAC":             VR("1582", "T0017030"),                  // 🔄 winter family tile
+
+  // ── OVATION ────────────────────────────────────────────────────────────────
+  // Confirmed ✅ ─ Ovation Mastertrack UN203, sourced from a Canadian tire
+  // retailer's live product page (capitalautoparts.ca), same model as sold
+  // — CT's own catalog images aren't reachable via this map's CDN sources.
+  "OVATION UN203":
+    "https://capitalautoparts.ca/cdn/shop/files/Mastertrack-UN203-P01-01_819e0f3a-e3ba-4597-8f79-359e25ba725a_1200x1200.png?v=1762576980", // ✅ confirmed live product photo
+
+  // ── ITARO ──────────────────────────────────────────────────────────────────
+  // Confirmed ✅ ─ sourced from Carrefour Brasil's VTEX CDN (product images
+  // verified against sidewall text: "Harmonic" = IT203, "Expedite" = IT101,
+  // matching CT's own raw product names exactly)
+  "ITARO IT203":
+    "https://carrefourbr.vtexassets.com/arquivos/ids/216256546/image-0.jpg?v=639213822465200000", // ✅ confirmed live product photo
+  "ITARO IT101":
+    "https://carrefourbr.vtexassets.com/arquivos/ids/216256498/image-0.jpg?v=639213822405300000", // ✅ confirmed live product photo
 
 };
 
