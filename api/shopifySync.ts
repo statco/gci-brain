@@ -1647,6 +1647,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'check-tags', search, found });
       }
 
+      case 'stock-report': {
+        // READ-ONLY. Reports CT tires at/above a minimum fulfillable stock
+        // level. Uses getMaxLocationQty() (single-warehouse ceiling — same
+        // metric the rest of shopifySync uses for actual Shopify inventory,
+        // see comment above getMaxLocationQty) rather than summed total
+        // across warehouses, since CT can't split-ship a single order.
+        // No product creation, no Shopify writes — pure CT data readout.
+        // GET /api/shopifySync?action=stock-report&minQty=4
+        // GET /api/shopifySync?action=stock-report&minQty=4&notOnShopifyOnly=true
+        const minQty = parseInt(req.query.minQty as string || '4', 10);
+        const notOnShopifyOnly = req.query.notOnShopifyOnly === 'true';
+        const [ctTires, existingMap] = await Promise.all([
+          fetchAllCTTires(),
+          notOnShopifyOnly ? fetchExistingProducts() : Promise.resolve(null),
+        ]);
+        let pool = ctTires;
+        if (notOnShopifyOnly && existingMap) {
+          pool = pool.filter(t => !existingMap.has(t.partNumber));
+        }
+        const atOrAbove = pool
+          .map(ct => ({
+            partNumber: ct.partNumber,
+            brand: ct.brand,
+            model: ct.model,
+            size: ct.size,
+            isWinter: ct.isWinter,
+            maxLocationQty: getMaxLocationQty(ct),
+            totalQty: getTotalQty(ct),
+            onShopify: existingMap ? existingMap.has(ct.partNumber) : undefined,
+          }))
+          .filter(t => t.maxLocationQty >= minQty)
+          .sort((a, b) => b.maxLocationQty - a.maxLocationQty);
+        return res.status(200).json({
+          success: true, mode: 'stock-report', minQty, notOnShopifyOnly,
+          totalCTProducts: ctTires.length,
+          poolSize: pool.length,
+          matchCount: atOrAbove.length,
+          products: atOrAbove,
+        });
+      }
+
       case 'debug-ct-names': {
         const ctSample=await fetchAllCTTires();
         const sample=ctSample.slice(0,10).map(ct=>{ const {loadIndex,speedRating}=parseLoadIndexAndSpeedRating(ct.name||''); return {name:ct.name,brand:ct.brand,model:ct.model,size:ct.size,parsedLoadIndex:loadIndex,parsedSpeedRating:speedRating}; });
