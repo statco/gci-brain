@@ -1,7 +1,7 @@
 // =============================================================================
 // addTireImages.ts  —  Static IMAGE_MAP  (zero HTTP, O(1) lookup)
 //
-//  101 keys total: 58 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
+//  106 keys total: 63 ✅ confirmed  |  16 🔧 inferred  |  27 🔄 fallback  (+3 Vredestein brand)
 //
 //  Sources
 //  ├─ Cooper:      coopertire.ca Demandware CDN — URLs verified via live fetch
@@ -169,12 +169,32 @@ export const IMAGE_MAP: Record<string, string> = {
   "COOPER ENDEAVOR PLUS":           DW("Endeavor_Plus_24499"),               // 🔧 product 24499
   "COOPER EVOLUTION WINTER":        DW("Evolution_Winter_24501"),            // 🔧 product 24501
   "COOPER ZEON RS3-G1":             DWH("dwfdc729c9", "Zeon_RS3-G1_24508"), // 🔧 product 24508 hash confirmed
+  "COOPER PROCONTROL":              DWH("dwe1c6180d", "Pro_Control_24794"),  // ✅ confirmed from coopertire.ca
+  "COOPER PROCONTROL ALL-SEASON":   DWH("dwe1c6180d", "Pro_Control_24794"),  // ✅ same image all sizes
 
   // ── VREDESTEIN ─────────────────────────────────────────────────────────────
   // Images verified from vredestein.com/content/dam/orbit/syncforce/products/
+  "VREDESTEIN ULTRAC":             "https://cdn.shopify.com/s/files/1/0659/0408/2992/files/vredestein-ultrac-vorti___media_library_original_300_300_701af8f1-e83f-4e4e-8058-aa04c3f5ce62.jpg?v=1777747837",  // ✅ Shopify CDN
+  "VREDESTEIN ULTRAC PRO":         "https://cdn.shopify.com/s/files/1/0659/0408/2992/files/vredestein-ultrac-vorti___media_library_original_300_300_701af8f1-e83f-4e4e-8058-aa04c3f5ce62.jpg?v=1777747837",  // ✅ Shopify CDN
   "VREDESTEIN QUATRAC":             VR("1998", "T0015902"),                  // 🔄 all-season family tile
   "VREDESTEIN QUATRAC PRO PLUS":    VR("1998", "T0015902"),                  // ✅ product 1998 T0015902
   "VREDESTEIN WINTRAC":             VR("1582", "T0017030"),                  // 🔄 winter family tile
+
+  // ── OVATION ────────────────────────────────────────────────────────────────
+  // Confirmed ✅ ─ Ovation Mastertrack UN203, sourced from a Canadian tire
+  // retailer's live product page (capitalautoparts.ca), same model as sold
+  // — CT's own catalog images aren't reachable via this map's CDN sources.
+  "OVATION UN203":
+    "https://capitalautoparts.ca/cdn/shop/files/Mastertrack-UN203-P01-01_819e0f3a-e3ba-4597-8f79-359e25ba725a_1200x1200.png?v=1762576980", // ✅ confirmed live product photo
+
+  // ── ITARO ──────────────────────────────────────────────────────────────────
+  // Confirmed ✅ ─ sourced from Carrefour Brasil's VTEX CDN (product images
+  // verified against sidewall text: "Harmonic" = IT203, "Expedite" = IT101,
+  // matching CT's own raw product names exactly)
+  "ITARO IT203":
+    "https://carrefourbr.vtexassets.com/arquivos/ids/216256546/image-0.jpg?v=639213822465200000", // ✅ confirmed live product photo
+  "ITARO IT101":
+    "https://carrefourbr.vtexassets.com/arquivos/ids/216256498/image-0.jpg?v=639213822405300000", // ✅ confirmed live product photo
 
 };
 
