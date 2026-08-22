@@ -112,16 +112,29 @@ async function fetchCTCostMap(): Promise<Map<string, CTCostEntry>> {
   return map;
 }
 
+import { computePriceFloor, type TireType as SharedTireType } from './lib/pricing/landedCost';
+
 const PRICING = {
   netMultiplier: 0.50,    // fallback estimate when CT API unavailable — not used in formula
 
-  shippingBuffers: {
-    passenger:   27,   // was 40 — GCI's actual CT rate table cost
-    light_truck: 43,   // was 50 — LT 13-18" zones 1-6
-    lt_large:    51,   //     NEW — LT 19-22" zones 1-6 (ON/QC sweet-spot, ~70% of LT volume)
-    heavy_truck: 67,   // was 65
-  } as Record<string, number>,
+  // REMOVED 2026-08-22: the old flat shippingBuffers (passenger:27,
+  // light_truck:43, lt_large:51, heavy_truck:67) assumed every order ships
+  // from the cheapest zone bracket (comments literally said "zones 1-6").
+  // That's the confirmed root cause of several historical below-cost orders
+  // (MV864, MV982, etc — see GCI margin analysis, Aug 2026). Freight is now
+  // looked up from CT's actual published rate table (tire type × rim size ×
+  // zone) via lib/pricing/landedCost.ts, using a 'typical-zone' (zone 13)
+  // default that covers the large majority of Canadian destinations without
+  // pricing for the single most remote possible one.
 };
+
+/** CT's rate table only distinguishes 'Passenger' and 'LT' — collapse the
+ * 4-way local classification (passenger/light_truck/lt_large/heavy_truck)
+ * down to that for freight lookup purposes. Rim size (not the lt_large
+ * split) is what actually drives the LT rate tiers in CT's table. */
+function toSharedTireType(localType: string): SharedTireType {
+  return localType === 'passenger' ? 'Passenger' : 'LT';
+}
 
 const SHEETS_CONFIG = {
   sheetName: process.env.PRICE_MONITOR_SHEET_NAME || 'GCI Tires - Price Monitor',
@@ -472,9 +485,9 @@ interface ShopifyProductForPricing {
   cost: number;
   // From metafields (if available)
   tireType: string;
-  floorPrice: number;
+  rimSize: number;
+  floorPrice: number; // legacy field, unused — see calculatePrice()
   netCost: number;
-  shippingBuffer: number;
 }
 
 async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): Promise<ShopifyProductForPricing[]> {
@@ -529,17 +542,18 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
           }
         }
 
-        // Upgrade light_truck → lt_large when rim diameter is ≥ 19"
-        // CT size format: "275/35R21", "265/50R20", "LT265/75R16"
-        if (tireType === 'light_truck') {
-          const sizeStr = (ctEntry?.size || v.sku || '').toString();
-          const rimMatch = sizeStr.match(/R(\d{2})/i);
-          const rimDiam = rimMatch ? parseInt(rimMatch[1], 10) : 0;
-          if (rimDiam >= 19) tireType = 'lt_large';
-        }
+        // Extract rim diameter for ALL products — previously only parsed for
+        // the light_truck→lt_large upgrade check, but the real CT freight
+        // table needs an actual rim size for every SKU, not just LT ones.
+        // CT size format: "275/35R21", "265/50R20", "LT265/75R16".
+        const sizeStrForRim = (ctEntry?.size || v.sku || '').toString();
+        const rimMatch = sizeStrForRim.match(/R(\d{2})/i);
+        const rimSize = rimMatch ? parseInt(rimMatch[1], 10) : 22; // unknown → conservative fallback
 
-        const shippingBuffer = PRICING.shippingBuffers[tireType] ?? PRICING.shippingBuffers['lt_large'];
-        const floorPrice = netCost + shippingBuffer;
+        // Upgrade light_truck → lt_large when rim diameter is ≥ 19"
+        if (tireType === 'light_truck' && rimSize >= 19) {
+          tireType = 'lt_large';
+        }
 
         products.push({
           productId: p.id,
@@ -550,9 +564,9 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
           compareAtPrice: v.compare_at_price ? parseFloat(v.compare_at_price) : null,
           cost: netCost,
           tireType,
-          floorPrice,
+          rimSize,
+          floorPrice: 0, // computed in calculatePrice() now — kept as 0 here for shape compatibility
           netCost,
-          shippingBuffer,
         });
       }
     }
@@ -573,9 +587,18 @@ async function getShopifyProductsForPricing(ctCosts: Map<string, CTCostEntry>): 
   return products;
 }
 
-// ─── CALCULATE PRICE — WALMART MARGIN MODEL ──────────────────────────────────
-// Formula: floor = (netCost + shippingBuffer) / (1 - WALMART_FEE - 0.14)
-//          selling_price = floor * 1.08  (8% competitiveness markup)
+// ─── CALCULATE PRICE — LANDED-COST MARGIN MODEL ──────────────────────────────
+// Formula (see lib/pricing/landedCost.ts for full detail and rationale):
+//   floor = (netCost × (1 + non-recoverable-tax) + freight) ÷ (1 − WALMART_FEE − TARGET_MARGIN)
+//   selling_price = floor
+//
+// CHANGED 2026-08-22: previously used a flat shippingBuffer per tire class
+// (comments literally said "zones 1-6", i.e. the cheapest freight bracket
+// applied universally) and a flat 12% tax guess (only ever correct for BC
+// by coincidence). Both replaced with CT's real published rate table and
+// GCI's actual confirmed tax-registration status (GST/HST registered,
+// PST/QST not registered). Same fix already shipped to gci-order-hub and
+// gci-walmart-sync's safeWalmartPrice() — see those PRs for full context.
 
 interface PriceRecommendation {
   sku: string;
@@ -585,7 +608,7 @@ interface PriceRecommendation {
   currentPrice: number;
   msrp: number;
   netCost: number;
-  shippingBuffer: number;
+  freight: number;
   fixedProfit: number;
   sellingPrice: number;
   savings: number;       // MSRP - sellingPrice (what customer saves)
@@ -601,12 +624,23 @@ function calculatePrice(
   manualOverride?: number
 ): PriceRecommendation {
   const msrp = product.compareAtPrice || product.currentPrice;
-  const { netCost, shippingBuffer } = product;
+  const { netCost } = product;
   const profit = 0; // no longer a fixed per-tire profit — margin is baked into formula
 
   // NUPROZ- SKUs are CJDropshipping products — CJ ships directly to customer, no shipping cost to us
   const isNuproz = product.sku.startsWith('NUPROZ-');
-  const effectiveShipping = isNuproz ? 0 : shippingBuffer;
+
+  const sharedTireType = toSharedTireType(product.tireType);
+  const WALMART_FEE   = 0.10;   // Tires & Wheels contract category, Walmart Marketplace Canada
+  const TARGET_MARGIN = 0.20;   // current target — tune with Patrick if needed
+
+  const { floor: floorPrice, freight } = computePriceFloor(
+    { productCost: netCost, tireType: sharedTireType, rimSize: product.rimSize },
+    WALMART_FEE,
+    TARGET_MARGIN,
+    'typical-zone',
+    isNuproz ? 0 : undefined // CJ dropship: no CT freight applies at all
+  );
 
   let sellingPrice: number;
   let reason: string;
@@ -615,28 +649,18 @@ function calculatePrice(
     sellingPrice = manualOverride;
     reason = `Manual override → $${manualOverride.toFixed(2)}`;
   } else {
-    // Walmart margin model — single formula, no tiered multiplier, no markup.
-    // WALMART_FEE       = 0.10 (standard rate — lock in now, bank the promo 2.5% as bonus margin)
-    // TARGET_MARGIN     = 0.20 (net margin after all fees)
-    // TAX_ON_COGS       = 0.12 (avg GST+PST paid to CT on invoice — non-recoverable below $30k GST threshold)
-    // Formula: (cost × 1.12 + shipping) ÷ (1 − 0.10 − 0.20)
-    // Shopify buyers pay the same price → GCI nets a bonus 7.1% margin (10% vs 2.9% fee gap)
-    const WALMART_FEE   = 0.10;   // was 0.025
-    const TARGET_MARGIN = 0.20;   // was 0.14
-    const TAX_ON_COGS   = 0.12;
-    const floorPrice    = (netCost * (1 + TAX_ON_COGS) + effectiveShipping) / (1 - WALMART_FEE - TARGET_MARGIN);
-    sellingPrice        = floorPrice;   // removed × 1.08 markup — formula already targets 20% net
-    reason = `$${netCost.toFixed(0)} cost × 1.12 tax + $${effectiveShipping} ship${isNuproz ? ' (CJ dropship)' : ''} → floor $${floorPrice.toFixed(2)} (20% net margin)`;
+    sellingPrice = floorPrice;
+    reason = `$${netCost.toFixed(0)} cost + $${freight.toFixed(2)} freight${isNuproz ? ' (CJ dropship, no freight)' : ''} → floor $${floorPrice.toFixed(2)} (20% net margin, QC-worst-case tax)`;
   }
 
   // Round to .99 for cleaner retail look
   sellingPrice = Math.floor(sellingPrice) + 0.99;
 
-  // Safety: never sell below cost + effective shipping (even with manual override)
-  const absolute_floor = netCost + effectiveShipping;
+  // Safety: never sell below cost + freight (even with manual override)
+  const absolute_floor = netCost + freight;
   if (sellingPrice < absolute_floor) {
     sellingPrice = Math.ceil(absolute_floor) + 0.99;
-    reason += ` (raised to cover cost+ship)`;
+    reason += ` (raised to cover cost+freight)`;
   }
 
   const savings     = msrp - sellingPrice;
@@ -657,7 +681,7 @@ function calculatePrice(
     currentPrice: product.currentPrice,
     msrp,
     netCost,
-    shippingBuffer,
+    freight,
     fixedProfit: profit,
     sellingPrice: Math.round(sellingPrice * 100) / 100,
     savings:     Math.round(savings * 100) / 100,
@@ -709,7 +733,7 @@ async function logChangesToSheet(
     `$${c.msrp.toFixed(2)}`,
     `$${c.netCost.toFixed(2)}`,
     `$${c.fixedProfit.toFixed(2)}`,
-    `$${c.shippingBuffer.toFixed(2)}`,
+    `$${c.freight.toFixed(2)}`,
     `$${c.savings.toFixed(2)} (${c.savingsPct.toFixed(0)}% off)`,
     `${c.changeAmount >= 0 ? '+' : ''}$${c.changeAmount.toFixed(2)}`,
     `${c.changePct >= 0 ? '+' : ''}${c.changePct.toFixed(1)}%`,
@@ -869,7 +893,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             netCost: p.netCost,
             costSource: ctEntry ? 'CT_API_REAL' : 'FALLBACK_50PCT',
             ctApiCost: ctEntry?.cost || null,
-            shippingBuffer: p.shippingBuffer,
+            freight: rec.freight,
+            rimSize: p.rimSize,
             tireType: p.tireType,
             calculatedPrice: rec.sellingPrice,
             changeAmount: rec.changeAmount,
