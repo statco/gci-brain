@@ -130,6 +130,33 @@ function productDescriptionFallback(productTitle: string, season: string, vehicl
 
 // ─── REMAINING STATIC HELPERS ─────────────────────────────────────────────────
 
+// Brands CT sells as their own exclusive line — gets the road-hazard /
+// satisfaction-guarantee bullets. Keep this in sync with shopifySync.ts's
+// CDA_EXCLUSIVE_BRANDS (same two brands, same reasoning — duplicated here
+// rather than shared since the two files don't currently share a lib).
+const CDA_EXCLUSIVE_BRANDS = new Set(['Minerva', 'Ovation']);
+
+// Builds the spec-list <ul> that follows the AI-written paragraph, per the
+// 2026-08-17 description convention (see GCI_WORKFLOW_CONTEXT.md session
+// update): season, warranty/guarantee bullets, part #, load index, speed
+// rating — omitted individually when CT doesn't provide them, but the list
+// itself is never skipped for a product. No stock counts, no raw
+// "Exclusive Brand" flag line (dropped in that same convention change).
+function buildSpecList(product: ShopifyProduct, season: string): string {
+  const { li, sr } = extractLoadIndex(product.tags);
+  const partNumber  = product.variants?.[0]?.sku || '';
+  const isCdaExclusive = CDA_EXCLUSIVE_BRANDS.has(product.vendor);
+  const items = [
+    `<li>Season: ${SEASON_LABELS[season] || 'All-Season'}</li>`,
+    isCdaExclusive ? `<li>✅ Road Hazard Warranty — 1 year or 2/32nds</li>` : '',
+    isCdaExclusive ? `<li>✅ 30-Day Customer Satisfaction Guarantee</li>`   : '',
+    partNumber ? `<li>Part #: ${partNumber}</li>` : '',
+    li ? `<li>Load Index: ${li}</li>`    : '',
+    sr ? `<li>Speed Rating: ${sr}</li>`  : '',
+  ].filter(Boolean).join('');
+  return `<ul>${items}</ul>`;
+}
+
 // Extract load index and speed rating from tags
 function extractLoadIndex(tags: string): { li: string; sr: string } {
   const tagArr = tags.split(',').map(t => t.trim());
@@ -219,6 +246,8 @@ interface ShopifyProduct {
   tags:      string;
   images:    ShopifyImage[];
   body_html: string;
+  vendor:    string;
+  variants:  Array<{ sku: string }>;
 }
 interface ShopifyMetafield {
   id:        number;
@@ -239,7 +268,7 @@ interface ChangeRecord {
 // ─── FETCH ALL PRODUCTS ───────────────────────────────────────────────────────
 async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const all: ShopifyProduct[] = [];
-  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,tags,images,body_html`;
+  let url: string = `${SHOPIFY.baseUrl}/products.json?limit=250&fields=id,title,tags,images,body_html,vendor,variants`;
   let page = 0;
   while (url) {
     page++;
@@ -293,8 +322,14 @@ async function processProduct(
   // ── AI copy (with static fallback) ────────────────────────────────────────
   const aiCopy      = await generateAiCopy(product.title, season, vehicle);
   const newMetaDesc = aiCopy?.metaDescription ?? metaDescriptionFallback(product.title, season, vehicle);
-  const newBodyHtml = aiCopy?.description     ?? productDescriptionFallback(product.title, season, vehicle);
   const aiGenerated = aiCopy !== null;
+  // Per the 2026-08-17 description convention: paragraph + spec list. Only
+  // built when the AI paragraph actually generated — productDescriptionFallback()
+  // intentionally returns '' to mean "leave body_html alone" when the
+  // Anthropic call fails, so body_html is left out of the write entirely in
+  // that case (previously this fell through and wrote an empty string,
+  // wiping body_html on any AI-call failure — fixed as part of this change).
+  const newBodyHtml = aiGenerated ? `${aiCopy.description}${buildSpecList(product, season)}` : null;
 
   console.log(`  ${aiGenerated ? '🤖 AI copy' : '📄 fallback copy'} for "${product.title}"`);
 
@@ -335,6 +370,7 @@ async function processProduct(
   if (!titleDrift.safe) skippedFields.push(`title_tag (${titleDrift.reason})`);
   if (!descDrift.safe)  skippedFields.push(`description_tag (${descDrift.reason})`);
   if (!bodyDrift.safe)  skippedFields.push(`body_html (${bodyDrift.reason})`);
+  if (newBodyHtml === null) skippedFields.push(`body_html (no_ai_paragraph)`);
 
   if (!dryRun) {
     if (titleDrift.safe) {
@@ -362,7 +398,7 @@ async function processProduct(
     }
 
     // ── Product description (body_html) ───────────────────────────────────────
-    if (bodyDrift.safe) {
+    if (bodyDrift.safe && newBodyHtml !== null) {
       try {
         await shopifyFetch(`/products/${product.id}.json`, {
           method: 'PUT',
@@ -418,7 +454,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log(`🔍 updateSeo — single product mode productId=${productId} dry=${dryRun}`);
     let product: ShopifyProduct;
     try {
-      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags,images,body_html`);
+      const data: any = await shopifyFetch<any>(`/products/${productId}.json?fields=id,title,tags,images,body_html,vendor,variants`);
       product = data.product as ShopifyProduct;
       if (!product) throw new Error('Product not found');
     } catch (err) {
