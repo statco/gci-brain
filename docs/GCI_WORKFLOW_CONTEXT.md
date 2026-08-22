@@ -1,4 +1,14 @@
 # GCI Tires — Complete Workflow & System Context
+
+> **⚠️ STALE DUPLICATE — CORRECTED 2026-08-22, DO NOT TRUST OTHERWISE.** This file
+> is an older, un-synced copy of `GCI_WORKFLOW_CONTEXT.md` at the repo root, which
+> is the canonical, actively-maintained version duplicated across all 6 GCI repos.
+> Read that one first. This copy is kept only because deleting it outright risked
+> losing whatever else in it hasn't been reconciled yet — but its GST claim below
+> was **wrong and was the likely root cause of a real pricing bug** (see the
+> canonical doc's "Session update — 2026-08-22" entry for the full story). Treat
+> everything else in this file with the same suspicion until reconciled.
+
 > Last updated: June 27, 2026 — commit 5badd4f
 > Purpose: Full system picture for any future Claude/AI session working on GCI Tires.
 > Read this FIRST before touching any file in any repo.
@@ -13,10 +23,11 @@
 | Store | gcitires.ca / gcitires-ca.myshopify.com |
 | Business model | Pure dropship — Canada Tire (CT) wholesale account |
 | Revenue streams | 1. Tire sales (Shopify + Walmart CA) 2. Installation platform fee (20% cut) |
-| GST registration | **Below $30k threshold — NOT registered.** Tax paid to CT = hard cost, no ITC. |
+| GST registration | **CORRECTED 2026-08-22: GCI IS GST/HST-registered and claims ITCs — GST/HST is fully recoverable.** GCI is NOT registered for PST/QST, so those (not GST/HST) are the real non-recoverable tax cost, and only in QC/BC/SK/MB. ~~Below $30k threshold — NOT registered. Tax paid to CT = hard cost, no ITC.~~ *(struck through, not deleted, so the correction is traceable — this wrong assumption is the confirmed root cause of gci-brain's old flat-12%-tax pricing bug, fixed in PR #146.)* |
 | AI app | match.gcitires.com (React/Vite, gci-brain repo, Vercel) |
 
 ---
+
 
 ## 1. The 10 Repos (statco org on GitHub)
 
