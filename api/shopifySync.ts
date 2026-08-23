@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTireImageUrl } from './addTireImages.js';
+import { computePriceFloor, roundTo99, type TireType as SharedTireType } from './lib/pricing/landedCost.js';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { classifyTire } = require('../lib/classifyTire.cjs') as typeof import('../lib/classifyTire.js');
 
@@ -1645,6 +1646,101 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           nextUrl=m?m[1]:null;
         }
         return res.status(200).json({ success:true, mode:'check-tags', search, found });
+      }
+
+      case 'price-diff-report': {
+        // READ-ONLY. Compares every live ct-sync Shopify price against what
+        // the corrected landed-cost formula (lib/pricing/landedCost.ts —
+        // same module bulkPriceUpdate.ts already uses, see PR #146) would
+        // set instead. No writes — Phase 2 of the pricing cleanup: see the
+        // real financial exposure before touching anything live.
+        // GET /api/shopifySync?action=price-diff-report
+        const [ctTires, existingMap] = await Promise.all([
+          fetchAllCTTires(),
+          fetchExistingProducts(),
+        ]);
+        const ctByPartNumber = new Map(ctTires.map(t => [t.partNumber, t]));
+
+        const WALMART_FEE_LOCAL   = 0.10; // matches bulkPriceUpdate.ts's current constant
+        const TARGET_MARGIN_LOCAL = 0.20;
+
+        function toSharedTireTypeLocal(localType: string): SharedTireType {
+          return localType === 'passenger' ? 'Passenger' : 'LT';
+        }
+        function extractRimSize(ctSize: string): number {
+          const m = ctSize.toString().match(/^(\d{3})(\d{2})(\d{2})$/);
+          return m ? parseInt(m[3], 10) : 22; // unrecognized format → conservative fallback, same as bulkPriceUpdate.ts
+        }
+
+        const diffs: any[] = [];
+        let matched = 0, unmatched = 0;
+
+        for (const [sku, existing] of existingMap.entries()) {
+          const ct = ctByPartNumber.get(sku);
+          if (!ct) { unmatched++; continue; }
+          matched++;
+
+          const netCost    = parseFloat(ct.cost);
+          const localType  = classifyTireType(ct.performanceCategory, ct.size);
+          const sharedType = toSharedTireTypeLocal(localType);
+          const rimSize    = extractRimSize(ct.size);
+
+          const { floor } = computePriceFloor(
+            { productCost: netCost, tireType: sharedType, rimSize },
+            WALMART_FEE_LOCAL, TARGET_MARGIN_LOCAL, 'typical-zone'
+          );
+          const newPrice     = roundTo99(floor);
+          const currentPrice = parseFloat(existing.price);
+          if (!isFinite(currentPrice) || currentPrice <= 0) continue;
+
+          const delta    = newPrice - currentPrice;
+          const deltaPct = (delta / currentPrice) * 100;
+
+          diffs.push({
+            sku, brand: ct.brand, model: ct.model, size: ct.size,
+            tireType: localType, netCost, currentPrice, newPrice,
+            delta: +delta.toFixed(2), deltaPct: +deltaPct.toFixed(1),
+            productId: existing.productId,
+          });
+        }
+
+        const increases   = diffs.filter(d => d.delta > 0.01);
+        const decreases   = diffs.filter(d => d.delta < -0.01);
+        const noChange    = diffs.filter(d => Math.abs(d.delta) <= 0.01);
+        const sumIncrease = increases.reduce((s,d)=>s+d.delta, 0);
+        const sumDecrease = decreases.reduce((s,d)=>s+d.delta, 0);
+
+        const byBrand: Record<string, { count:number; sumDelta:number }> = {};
+        for (const d of diffs) {
+          if (!byBrand[d.brand]) byBrand[d.brand] = { count:0, sumDelta:0 };
+          byBrand[d.brand].count++;
+          byBrand[d.brand].sumDelta += d.delta;
+        }
+        const brandSummary = Object.entries(byBrand).map(([brand, b]) => {
+          const brandDiffs = diffs.filter(d => d.brand === brand);
+          const avgPct = brandDiffs.reduce((s,d)=>s+d.deltaPct,0) / brandDiffs.length;
+          return { brand, count: b.count, avgDeltaPct: +avgPct.toFixed(1), sumDelta: +b.sumDelta.toFixed(2) };
+        }).sort((a,b) => a.avgDeltaPct - b.avgDeltaPct);
+
+        const biggestIncreases = [...increases].sort((a,b)=>b.delta-a.delta).slice(0,25);
+        const biggestDecreases = [...decreases].sort((a,b)=>a.delta-b.delta).slice(0,25);
+
+        return res.status(200).json({
+          success: true, mode: 'price-diff-report',
+          totalShopifyProducts: existingMap.size,
+          matched, unmatched,
+          summary: {
+            increaseCount: increases.length,
+            decreaseCount: decreases.length,
+            noChangeCount: noChange.length,
+            sumIncreaseAmount: +sumIncrease.toFixed(2),
+            sumDecreaseAmount: +sumDecrease.toFixed(2),
+            netChangeAmount: +(sumIncrease + sumDecrease).toFixed(2),
+          },
+          brandSummary,
+          biggestIncreases,
+          biggestDecreases,
+        });
       }
 
       case 'cost-ratio-report': {
