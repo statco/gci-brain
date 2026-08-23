@@ -1216,7 +1216,38 @@ reference — found only 3 references total, all three already correct. Nothing 
 remove; the old suspended ID really was fully cleaned out previously, not just
 hidden in a comment.
 
-### 5. Competitor analysis (informational, no code)
+### 4.5. Variant "Size" option bug — found via a screenshot, fixed same session (gci-brain#150, MERGED)
+
+Pat screenshotted a live product (Ovation UN203 205/75R15) showing `2057515/R`
+as its Size selector instead of `205/75R15`. Traced to `parseCTSizeCode()`: its
+regex required a trailing `/R` on CT's raw `size` field, but that field is
+always plain 7-digit numeric (`"2057515"`, confirmed repeatedly this session via
+`raw-ct-sample`) — so the regex **never matched real data**, and always fell
+through to a fallback (`parseTireSize()`) that mishandles bare numeric input with
+no delimiter (`width="2057515", aspect="", rim=""` → `"2057515/R"`).
+
+That malformed value gets silently repaired for the product **title**
+(`formatTireSize()`'s regex happens to match `"2057515/R"` and fixes it on a
+second pass) — but is used as-is for the variant **`Size` option**, which is set
+once at creation and never revisited by any update path. Explains exactly what
+Pat saw: correct title, broken Size selector, on the same product.
+
+**Audited scope before fixing** (per Pat's explicit ask): 411 of 2,346 ct-sync
+products (17.5%) had this malformed live. Not the whole catalog — `option1` is
+set-once-at-creation only, so this affected whichever products were created
+after this regression was introduced (or via whatever path hit the bug); the
+rest were created correctly before it and never got touched again.
+
+**Fixed**: `parseCTSizeCode()`'s regex corrected to match the real 7-digit format
+directly (mirrors `extractRimSize()`'s already-correct pattern elsewhere in this
+file) — stops new products from being created broken. **Backfilled** all 411
+existing live variants directly via the Shopify Admin API (REST
+`/variants/{id}.json`, `option1` field — the GraphQL `productVariantUpdate`
+mutation doesn't exist on the 2024-01 API version, learned this the hard way
+mid-backfill). Full re-scan afterward confirmed **zero** malformed Size options
+remain anywhere in the catalog.
+
+
 
 Delivered a standalone comparison vs. `blackcircles.ca` (Pat's designated
 follow-competitor). Key finding: catalog overlap is only 2 brands (Cooper, Nexen)
@@ -1232,7 +1263,8 @@ cheapest fix available, ahead of anything requiring engineering work.
 ### Session PRs (all gci-brain, all MERGED)
 `#142` stock-report · `#143` Ovation/Itaro images · `#144` addTireImages sync ·
 `#145` description spec-list fix · `#147` pricing formula unification ·
-`#148` cost-ratio-report + price-diff-report + clearance detection
+`#148` cost-ratio-report + price-diff-report + clearance detection ·
+`#150` parseCTSizeCode variant-option fix
 
 ### Session credential note (same convention as prior entries)
 
