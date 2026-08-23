@@ -1671,6 +1671,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const m = ctSize.toString().match(/^(\d{3})(\d{2})(\d{2})$/);
           return m ? parseInt(m[3], 10) : 22; // unrecognized format → conservative fallback, same as bulkPriceUpdate.ts
         }
+        function maxLocationQtyLocal(inv: { quantity: number }[]): number {
+          return inv.reduce((max, i) => Math.max(max, i.quantity || 0), 0);
+        }
+
+        // Heuristic for "this SKU is probably CT clearance/final-sale stock,
+        // not a normal-pricing item" — CT's own dealer portal shows explicit
+        // Clearance/Final Sale badges for items matching this pattern (very
+        // low cost relative to MSRP + very low remaining stock), but the
+        // RESTlet API we call doesn't expose that flag directly (confirmed
+        // via raw-ct-sample on a screenshotted example: 166600004, cost
+        // $49.97 vs MSRP $210, qty 3 — no clearance field in the raw
+        // response). Thresholds chosen from the observed screenshot example
+        // and this session's biggest-decrease outliers, not a CT-documented
+        // rule — revisit if it over/under-flags in practice.
+        const CLEARANCE_RATIO_THRESHOLD = 0.25; // cost/MSRP below this
+        const CLEARANCE_MAX_QTY         = 4;    // matches CT's own "1-4 tires" pricing tier
 
         const diffs: any[] = [];
         let matched = 0, unmatched = 0;
@@ -1681,6 +1697,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           matched++;
 
           const netCost    = parseFloat(ct.cost);
+          const msrp       = parseFloat(ct.msrp);
+          const maxQty     = maxLocationQtyLocal(ct.inventory);
+          const costRatio  = (isFinite(msrp) && msrp > 0) ? netCost / msrp : null;
+          const likelyClearance = costRatio !== null
+            && costRatio < CLEARANCE_RATIO_THRESHOLD
+            && maxQty <= CLEARANCE_MAX_QTY;
+
           const localType  = classifyTireType(ct.performanceCategory, ct.size);
           const sharedType = toSharedTireTypeLocal(localType);
           const rimSize    = extractRimSize(ct.size);
@@ -1698,7 +1721,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           diffs.push({
             sku, brand: ct.brand, model: ct.model, size: ct.size,
-            tireType: localType, netCost, currentPrice, newPrice,
+            tireType: localType, netCost, msrp, maxQty,
+            costRatioPct: costRatio !== null ? +(costRatio * 100).toFixed(1) : null,
+            likelyClearance,
+            currentPrice, newPrice,
             delta: +delta.toFixed(2), deltaPct: +deltaPct.toFixed(1),
             productId: existing.productId,
           });
@@ -1710,36 +1736,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const sumIncrease = increases.reduce((s,d)=>s+d.delta, 0);
         const sumDecrease = decreases.reduce((s,d)=>s+d.delta, 0);
 
+        // Split out likely-clearance SKUs so they don't distort the "normal
+        // catalog" picture — these need manual review (own decision on
+        // whether/how to sell clearance stock), not blind bulk repricing.
+        const clearanceFlagged = diffs.filter(d => d.likelyClearance);
+        const normalDiffs      = diffs.filter(d => !d.likelyClearance);
+        const normalIncreases  = normalDiffs.filter(d => d.delta > 0.01);
+        const normalDecreases  = normalDiffs.filter(d => d.delta < -0.01);
+        const normalSumIncrease = normalIncreases.reduce((s,d)=>s+d.delta, 0);
+        const normalSumDecrease = normalDecreases.reduce((s,d)=>s+d.delta, 0);
+
         const byBrand: Record<string, { count:number; sumDelta:number }> = {};
-        for (const d of diffs) {
+        for (const d of normalDiffs) {
           if (!byBrand[d.brand]) byBrand[d.brand] = { count:0, sumDelta:0 };
           byBrand[d.brand].count++;
           byBrand[d.brand].sumDelta += d.delta;
         }
         const brandSummary = Object.entries(byBrand).map(([brand, b]) => {
-          const brandDiffs = diffs.filter(d => d.brand === brand);
+          const brandDiffs = normalDiffs.filter(d => d.brand === brand);
           const avgPct = brandDiffs.reduce((s,d)=>s+d.deltaPct,0) / brandDiffs.length;
           return { brand, count: b.count, avgDeltaPct: +avgPct.toFixed(1), sumDelta: +b.sumDelta.toFixed(2) };
         }).sort((a,b) => a.avgDeltaPct - b.avgDeltaPct);
 
-        const biggestIncreases = [...increases].sort((a,b)=>b.delta-a.delta).slice(0,25);
-        const biggestDecreases = [...decreases].sort((a,b)=>a.delta-b.delta).slice(0,25);
+        const biggestIncreases = [...normalIncreases].sort((a,b)=>b.delta-a.delta).slice(0,25);
+        const biggestDecreases = [...normalDecreases].sort((a,b)=>a.delta-b.delta).slice(0,25);
+        const clearanceItems   = [...clearanceFlagged].sort((a,b)=>a.delta-b.delta);
 
         return res.status(200).json({
           success: true, mode: 'price-diff-report',
           totalShopifyProducts: existingMap.size,
           matched, unmatched,
+          clearanceFlaggedCount: clearanceFlagged.length,
           summary: {
-            increaseCount: increases.length,
-            decreaseCount: decreases.length,
+            // "Normal" catalog only — clearance-flagged SKUs excluded, see
+            // clearanceItems below for those.
+            increaseCount: normalIncreases.length,
+            decreaseCount: normalDecreases.length,
             noChangeCount: noChange.length,
-            sumIncreaseAmount: +sumIncrease.toFixed(2),
-            sumDecreaseAmount: +sumDecrease.toFixed(2),
-            netChangeAmount: +(sumIncrease + sumDecrease).toFixed(2),
+            sumIncreaseAmount: +normalSumIncrease.toFixed(2),
+            sumDecreaseAmount: +normalSumDecrease.toFixed(2),
+            netChangeAmount: +(normalSumIncrease + normalSumDecrease).toFixed(2),
           },
           brandSummary,
           biggestIncreases,
           biggestDecreases,
+          clearanceItems,
         });
       }
 
