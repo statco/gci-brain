@@ -64,6 +64,11 @@ const BATCH_MS   = 300;
 const SHOPIFY_PAYMENT_FEE  = 0.029;
 const TARGET_NET_MARGIN    = 0.20;   // was 0.15
 const WALMART_FEE          = 0.10;   // was 0.12 — standard rate (bank the promo 2.5% as bonus margin)
+// LEGACY — no longer used by calculatePrice()/shopifyFloor/walmartFloor as of
+// the 2026-08-23 landed-cost unification (see comment above calculatePrice).
+// Still referenced by the read-only 'status' and 'cost-analysis' diagnostic
+// actions and by getShippingBuffer() below (currently unused by any live
+// write path) — left in place rather than deleted to avoid touching those.
 const TAX_RATE_ON_COGS     = 0.12;   // avg GST+PST paid to CT on invoice (non-recoverable below $30k GST threshold)
 
 const SHIPPING_BUFFERS: Record<string, number> = {
@@ -89,19 +94,39 @@ const VENDOR_MAP: Record<string, string> = {
   'KELLY':       'Kelly',
 };
 
-// ─── PRICING — WALMART MARGIN MODEL ─────────────────────────────────────────
-// Formula: (cost × 1.12 + shipping) ÷ (1 − WALMART_FEE − TARGET_NET_MARGIN)
-//   • cost × 1.12       = CT dealer cost + avg 12% tax GCI pays on CT invoice (non-recoverable)
-//   • WALMART_FEE       = 0.10  (standard rate — lock in now, bank the promo 2.5% as bonus)
-//   • TARGET_NET_MARGIN = 0.20  (net margin after all fees)
-//   • Shopify buyers pay the same price → net GCI a 7.1% bonus margin (10% vs 2.9% fee gap)
+// ─── PRICING — LANDED-COST MARGIN MODEL ─────────────────────────────────────
+// CHANGED 2026-08-23: previously used a flat 12% "non-recoverable tax" guess
+// (only ever matched BC by coincidence) and a flat per-tire-class shipping
+// buffer (implicitly assumed the cheapest freight zone applied everywhere).
+// Both replaced with lib/pricing/landedCost.ts — the same module
+// bulkPriceUpdate.ts already uses (PR #146) — so this file and
+// bulkPriceUpdate.ts can no longer silently diverge and fight each other on
+// the nightly cron. See landedCost.ts for full formula detail/rationale.
 //
-// tireType: 'passenger' | 'light_truck' | 'lt_large' | 'heavy_truck'
-// Pass 'lt_large' for LT tires with rim diameter ≥ 19" (e.g. 275/35R21, 265/50R20).
-// All call sites have ct.performanceCategory and ct.size in scope to derive this.
-function calculatePrice(cost: number, tireType: string = 'light_truck'): number {
-  const ship = SHIPPING_BUFFERS[tireType] ?? SHIPPING_BUFFERS['lt_large'];
-  const raw  = (cost * (1 + TAX_RATE_ON_COGS) + ship) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
+// Also fixes a latent bug found while making this change: the old
+// lt_large-upgrade logic (LT rim >=19" gets a bigger shipping buffer) used
+// `ct.size.match(/R(\d{2})/i)` — but CT's raw size field is plain numeric
+// ("2456020"), never contains "R", so that regex never matched and the
+// upgrade never actually fired. extractRimSize() below parses the real
+// WWWAARR numeric format instead, and the shared rate table already varies
+// by rim size within LT (13-22), so the separate lt_large bucket isn't
+// needed anymore — computePriceFloor handles it via rimSize directly.
+//
+// tireType passed in should be classifyTireType()'s output (still used
+// elsewhere for tagging) — mapped here to the shared module's 2-bucket
+// Passenger/LT split, matching bulkPriceUpdate.ts's toSharedTireType().
+function toSharedTireType(localTireType: string): SharedTireType {
+  return localTireType === 'passenger' ? 'Passenger' : 'LT';
+}
+function extractRimSize(ctSize: string): number {
+  const m = (ctSize || '').toString().match(/^(\d{3})(\d{2})(\d{2})$/);
+  return m ? parseInt(m[3], 10) : 22; // unrecognized format → conservative fallback
+}
+function calculatePrice(cost: number, localTireType: string = 'light_truck', ctSize: string = ''): number {
+  const { floor: raw } = computePriceFloor(
+    { productCost: cost, tireType: toSharedTireType(localTireType), rimSize: extractRimSize(ctSize) },
+    WALMART_FEE, TARGET_NET_MARGIN, 'typical-zone'
+  );
   // Charm pricing: nearest dollar − $0.01 (e.g. $653.99)
   // Guard: only apply if result is ≥ 98% of raw (prevents under-pricing on high-cost tires)
   const rounded = Math.round(raw);
@@ -748,15 +773,18 @@ async function buildPayload(ct: CTTire) {
       : { skip: 'no_cost' as const };
   }
   const netCost = costCheck.cost; // real CT dealer cost, stored unmodified — never MSRP, never halved
-  const tireType       = classifyTireType(ct.performanceCategory, ct.size);
-  const shippingBuffer = getShippingBuffer(ct.performanceCategory, ct.size);
-  // For lt_large: LT tires with rim ≥ 19" use the $51 buffer instead of $43
-  const rimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
-  const rimDiam  = rimMatch ? parseInt(rimMatch[1], 10) : 0;
-  const priceTireType = (tireType === 'light_truck' && rimDiam >= 19) ? 'lt_large' : tireType;
-  const sellingPrice  = calculatePrice(netCost, priceTireType);
-  const shopifyFloor  = (netCost + shippingBuffer) / (1 - SHOPIFY_PAYMENT_FEE - TARGET_NET_MARGIN);
-  const walmartFloor  = (netCost + shippingBuffer) / (1 - WALMART_FEE - TARGET_NET_MARGIN);
+  const tireType        = classifyTireType(ct.performanceCategory, ct.size);
+  const sharedTireType  = toSharedTireType(tireType);
+  const rimSizeForFloor = extractRimSize(ct.size);
+  const sellingPrice  = calculatePrice(netCost, tireType, ct.size);
+  const { floor: shopifyFloor, freight: shippingBuffer } = computePriceFloor(
+    { productCost: netCost, tireType: sharedTireType, rimSize: rimSizeForFloor },
+    SHOPIFY_PAYMENT_FEE, TARGET_NET_MARGIN, 'typical-zone'
+  );
+  const { floor: walmartFloor } = computePriceFloor(
+    { productCost: netCost, tireType: sharedTireType, rimSize: rimSizeForFloor },
+    WALMART_FEE, TARGET_NET_MARGIN, 'typical-zone'
+  );
   const aboveMsrp     = sellingPrice > msrp + 0.01;
   const title = formatTireSize(toTitleCase(`${ct.brand} ${ct.model} ${size}`.trim()));
   // Use a hardcoded override as the final title when this SKU has one (flotation
@@ -990,10 +1018,7 @@ async function runSync(mode: 'full'|'daily', offset: number = 0, chunkSize: numb
     }
     const netCost  = costCheck.cost; // real CT dealer cost, stored unmodified
     const upTireType  = classifyTireType(ct.performanceCategory, ct.size);
-    const upRimMatch  = (ct.size || '').toString().match(/R(\d{2})/i);
-    const upRimDiam   = upRimMatch ? parseInt(upRimMatch[1], 10) : 0;
-    const upPriceTT   = (upTireType === 'light_truck' && upRimDiam >= 19) ? 'lt_large' : upTireType;
-    const newSellingPrice = calculatePrice(netCost, upPriceTT);
+    const newSellingPrice = calculatePrice(netCost, upTireType, ct.size);
     const newPrice        = newSellingPrice.toFixed(2);
     const priceChanged    = newPrice !== ex.price;
     const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
@@ -1391,10 +1416,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const netCost=costCheck.cost; // real dealer cost (override or CT), stored unmodified
           if (costSource==='override') { ucOverridden++; console.log(`✏️  update-chunk: ${sku} using override cost $${netCost} (CT returned $${ct.cost})`); }
           const ucTireType = classifyTireType(ct.performanceCategory, ct.size);
-          const ucRimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
-          const ucRimDiam  = ucRimMatch ? parseInt(ucRimMatch[1], 10) : 0;
-          const ucPriceTT  = (ucTireType === 'light_truck' && ucRimDiam >= 19) ? 'lt_large' : ucTireType;
-          const newSellingPrice=calculatePrice(netCost, ucPriceTT), newPrice=newSellingPrice.toFixed(2);
+          const newSellingPrice=calculatePrice(netCost, ucTireType, ct.size), newPrice=newSellingPrice.toFixed(2);
           const priceChanged=newPrice!==ex.price;
           const {loadIndex:upLI,speedRating:upSR}=parseLoadIndexAndSpeedRating(ct.name||'');
           const existingTagStr=ex.tags||''; let updatedTags=existingTagStr;
@@ -1664,13 +1686,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const WALMART_FEE_LOCAL   = 0.10; // matches bulkPriceUpdate.ts's current constant
         const TARGET_MARGIN_LOCAL = 0.20;
 
-        function toSharedTireTypeLocal(localType: string): SharedTireType {
-          return localType === 'passenger' ? 'Passenger' : 'LT';
-        }
-        function extractRimSize(ctSize: string): number {
-          const m = ctSize.toString().match(/^(\d{3})(\d{2})(\d{2})$/);
-          return m ? parseInt(m[3], 10) : 22; // unrecognized format → conservative fallback, same as bulkPriceUpdate.ts
-        }
+        // toSharedTireType() and extractRimSize() now come from module scope
+        // (added by the Phase 1 formula-unification merge) — this action
+        // used to define its own local copies; removed to avoid drift.
         function maxLocationQtyLocal(inv: { quantity: number }[]): number {
           return inv.reduce((max, i) => Math.max(max, i.quantity || 0), 0);
         }
@@ -1705,7 +1723,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             && maxQty <= CLEARANCE_MAX_QTY;
 
           const localType  = classifyTireType(ct.performanceCategory, ct.size);
-          const sharedType = toSharedTireTypeLocal(localType);
+          const sharedType = toSharedTireType(localType);
           const rimSize    = extractRimSize(ct.size);
 
           const { floor } = computePriceFloor(
@@ -2329,10 +2347,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           const netCost = costCheck.cost; // real CT dealer cost, stored unmodified
           const dsTireType = classifyTireType(ct.performanceCategory, ct.size);
-          const dsRimMatch = (ct.size || '').toString().match(/R(\d{2})/i);
-          const dsRimDiam  = dsRimMatch ? parseInt(dsRimMatch[1], 10) : 0;
-          const dsPriceTT  = (dsTireType === 'light_truck' && dsRimDiam >= 19) ? 'lt_large' : dsTireType;
-          const newSellingPrice = calculatePrice(netCost, dsPriceTT);
+          const newSellingPrice = calculatePrice(netCost, dsTireType, ct.size);
           const newPrice = newSellingPrice.toFixed(2);
           const priceChanged = newPrice !== ex.price;
           const { loadIndex: upLI, speedRating: upSR } = parseLoadIndexAndSpeedRating(ct.name || '');
