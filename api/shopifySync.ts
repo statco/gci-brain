@@ -12,7 +12,7 @@
 import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTireImageUrl } from './addTireImages.js';
-import { computePriceFloor, type TireType as SharedTireType } from './lib/pricing/landedCost.js';
+import { computePriceFloor, roundTo99, type TireType as SharedTireType } from './lib/pricing/landedCost.js';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { classifyTire } = require('../lib/classifyTire.cjs') as typeof import('../lib/classifyTire.js');
 
@@ -1668,6 +1668,200 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           nextUrl=m?m[1]:null;
         }
         return res.status(200).json({ success:true, mode:'check-tags', search, found });
+      }
+
+      case 'price-diff-report': {
+        // READ-ONLY. Compares every live ct-sync Shopify price against what
+        // the corrected landed-cost formula (lib/pricing/landedCost.ts —
+        // same module bulkPriceUpdate.ts already uses, see PR #146) would
+        // set instead. No writes — Phase 2 of the pricing cleanup: see the
+        // real financial exposure before touching anything live.
+        // GET /api/shopifySync?action=price-diff-report
+        const [ctTires, existingMap] = await Promise.all([
+          fetchAllCTTires(),
+          fetchExistingProducts(),
+        ]);
+        const ctByPartNumber = new Map(ctTires.map(t => [t.partNumber, t]));
+
+        const WALMART_FEE_LOCAL   = 0.10; // matches bulkPriceUpdate.ts's current constant
+        const TARGET_MARGIN_LOCAL = 0.20;
+
+        // toSharedTireType() and extractRimSize() now come from module scope
+        // (added by the Phase 1 formula-unification merge) — this action
+        // used to define its own local copies; removed to avoid drift.
+        function maxLocationQtyLocal(inv: { quantity: number }[]): number {
+          return inv.reduce((max, i) => Math.max(max, i.quantity || 0), 0);
+        }
+
+        // Heuristic for "this SKU is probably CT clearance/final-sale stock,
+        // not a normal-pricing item" — CT's own dealer portal shows explicit
+        // Clearance/Final Sale badges for items matching this pattern (very
+        // low cost relative to MSRP + very low remaining stock), but the
+        // RESTlet API we call doesn't expose that flag directly (confirmed
+        // via raw-ct-sample on a screenshotted example: 166600004, cost
+        // $49.97 vs MSRP $210, qty 3 — no clearance field in the raw
+        // response). Thresholds chosen from the observed screenshot example
+        // and this session's biggest-decrease outliers, not a CT-documented
+        // rule — revisit if it over/under-flags in practice.
+        const CLEARANCE_RATIO_THRESHOLD = 0.25; // cost/MSRP below this
+        const CLEARANCE_MAX_QTY         = 4;    // matches CT's own "1-4 tires" pricing tier
+
+        const diffs: any[] = [];
+        let matched = 0, unmatched = 0;
+
+        for (const [sku, existing] of existingMap.entries()) {
+          const ct = ctByPartNumber.get(sku);
+          if (!ct) { unmatched++; continue; }
+          matched++;
+
+          const netCost    = parseFloat(ct.cost);
+          const msrp       = parseFloat(ct.msrp);
+          const maxQty     = maxLocationQtyLocal(ct.inventory);
+          const costRatio  = (isFinite(msrp) && msrp > 0) ? netCost / msrp : null;
+          const likelyClearance = costRatio !== null
+            && costRatio < CLEARANCE_RATIO_THRESHOLD
+            && maxQty <= CLEARANCE_MAX_QTY;
+
+          const localType  = classifyTireType(ct.performanceCategory, ct.size);
+          const sharedType = toSharedTireType(localType);
+          const rimSize    = extractRimSize(ct.size);
+
+          const { floor } = computePriceFloor(
+            { productCost: netCost, tireType: sharedType, rimSize },
+            WALMART_FEE_LOCAL, TARGET_MARGIN_LOCAL, 'typical-zone'
+          );
+          const newPrice     = roundTo99(floor);
+          const currentPrice = parseFloat(existing.price);
+          if (!isFinite(currentPrice) || currentPrice <= 0) continue;
+
+          const delta    = newPrice - currentPrice;
+          const deltaPct = (delta / currentPrice) * 100;
+
+          diffs.push({
+            sku, brand: ct.brand, model: ct.model, size: ct.size,
+            tireType: localType, netCost, msrp, maxQty,
+            costRatioPct: costRatio !== null ? +(costRatio * 100).toFixed(1) : null,
+            likelyClearance,
+            currentPrice, newPrice,
+            delta: +delta.toFixed(2), deltaPct: +deltaPct.toFixed(1),
+            productId: existing.productId,
+          });
+        }
+
+        const increases   = diffs.filter(d => d.delta > 0.01);
+        const decreases   = diffs.filter(d => d.delta < -0.01);
+        const noChange    = diffs.filter(d => Math.abs(d.delta) <= 0.01);
+        const sumIncrease = increases.reduce((s,d)=>s+d.delta, 0);
+        const sumDecrease = decreases.reduce((s,d)=>s+d.delta, 0);
+
+        // Split out likely-clearance SKUs so they don't distort the "normal
+        // catalog" picture — these need manual review (own decision on
+        // whether/how to sell clearance stock), not blind bulk repricing.
+        const clearanceFlagged = diffs.filter(d => d.likelyClearance);
+        const normalDiffs      = diffs.filter(d => !d.likelyClearance);
+        const normalIncreases  = normalDiffs.filter(d => d.delta > 0.01);
+        const normalDecreases  = normalDiffs.filter(d => d.delta < -0.01);
+        const normalSumIncrease = normalIncreases.reduce((s,d)=>s+d.delta, 0);
+        const normalSumDecrease = normalDecreases.reduce((s,d)=>s+d.delta, 0);
+
+        const byBrand: Record<string, { count:number; sumDelta:number }> = {};
+        for (const d of normalDiffs) {
+          if (!byBrand[d.brand]) byBrand[d.brand] = { count:0, sumDelta:0 };
+          byBrand[d.brand].count++;
+          byBrand[d.brand].sumDelta += d.delta;
+        }
+        const brandSummary = Object.entries(byBrand).map(([brand, b]) => {
+          const brandDiffs = normalDiffs.filter(d => d.brand === brand);
+          const avgPct = brandDiffs.reduce((s,d)=>s+d.deltaPct,0) / brandDiffs.length;
+          return { brand, count: b.count, avgDeltaPct: +avgPct.toFixed(1), sumDelta: +b.sumDelta.toFixed(2) };
+        }).sort((a,b) => a.avgDeltaPct - b.avgDeltaPct);
+
+        const biggestIncreases = [...normalIncreases].sort((a,b)=>b.delta-a.delta).slice(0,25);
+        const biggestDecreases = [...normalDecreases].sort((a,b)=>a.delta-b.delta).slice(0,25);
+        const clearanceItems   = [...clearanceFlagged].sort((a,b)=>a.delta-b.delta);
+
+        return res.status(200).json({
+          success: true, mode: 'price-diff-report',
+          totalShopifyProducts: existingMap.size,
+          matched, unmatched,
+          clearanceFlaggedCount: clearanceFlagged.length,
+          summary: {
+            // "Normal" catalog only — clearance-flagged SKUs excluded, see
+            // clearanceItems below for those.
+            increaseCount: normalIncreases.length,
+            decreaseCount: normalDecreases.length,
+            noChangeCount: noChange.length,
+            sumIncreaseAmount: +normalSumIncrease.toFixed(2),
+            sumDecreaseAmount: +normalSumDecrease.toFixed(2),
+            netChangeAmount: +(normalSumIncrease + normalSumDecrease).toFixed(2),
+          },
+          brandSummary,
+          biggestIncreases,
+          biggestDecreases,
+          clearanceItems,
+        });
+      }
+
+      case 'cost-ratio-report': {
+        // READ-ONLY. Audits CT's cost/MSRP ratio across the whole catalog
+        // to check whether the ~78-80% ratio seen on a handful of SKUs this
+        // session (vs. the documented normal ~43-46%) is isolated to a few
+        // items or a real pattern — e.g. a batch where CT's cost already
+        // has freight baked in, which would double-count against the
+        // separate SHIPPING_BUFFERS add-on in calculatePrice().
+        // No writes. GET /api/shopifySync?action=cost-ratio-report
+        const ctTires = await fetchAllCTTires();
+        const withRatio = ctTires
+          .map(ct => {
+            const cost = parseFloat(ct.cost);
+            const msrp = parseFloat(ct.msrp);
+            if (!isFinite(cost) || !isFinite(msrp) || msrp <= 0) return null;
+            return { partNumber: ct.partNumber, brand: ct.brand, model: ct.model,
+                     size: ct.size, cost, msrp, ratio: cost / msrp };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        const buckets: Record<string, number> = {
+          'under_40pct': 0, '40_50pct': 0, '50_60pct': 0, '60_70pct': 0,
+          '70_80pct': 0, '80_90pct': 0, 'over_90pct': 0,
+        };
+        for (const t of withRatio) {
+          const p = t.ratio * 100;
+          if (p < 40) buckets['under_40pct']++;
+          else if (p < 50) buckets['40_50pct']++;
+          else if (p < 60) buckets['50_60pct']++;
+          else if (p < 70) buckets['60_70pct']++;
+          else if (p < 80) buckets['70_80pct']++;
+          else if (p < 90) buckets['80_90pct']++;
+          else buckets['over_90pct']++;
+        }
+
+        const byBrand: Record<string, { count: number; avgRatio: number; ratios: number[] }> = {};
+        for (const t of withRatio) {
+          if (!byBrand[t.brand]) byBrand[t.brand] = { count: 0, avgRatio: 0, ratios: [] };
+          byBrand[t.brand].count++;
+          byBrand[t.brand].ratios.push(t.ratio);
+        }
+        const brandSummary = Object.entries(byBrand).map(([brand, d]) => ({
+          brand, count: d.count,
+          avgRatioPct: +(d.ratios.reduce((a,b)=>a+b,0) / d.ratios.length * 100).toFixed(1),
+        })).sort((a,b) => b.avgRatioPct - a.avgRatioPct);
+
+        const highRatioItems = withRatio
+          .filter(t => t.ratio >= 0.70)
+          .sort((a,b) => b.ratio - a.ratio)
+          .map(t => ({ ...t, ratioPct: +(t.ratio*100).toFixed(1) }));
+
+        return res.status(200).json({
+          success: true, mode: 'cost-ratio-report',
+          totalCTProducts: ctTires.length,
+          totalWithValidRatio: withRatio.length,
+          overallAvgRatioPct: +(withRatio.reduce((a,t)=>a+t.ratio,0) / withRatio.length * 100).toFixed(1),
+          buckets,
+          brandSummary,
+          highRatioCount: highRatioItems.length,
+          highRatioItems,
+        });
       }
 
       case 'stock-report': {
