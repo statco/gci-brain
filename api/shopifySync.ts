@@ -1647,6 +1647,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success:true, mode:'check-tags', search, found });
       }
 
+      case 'cost-ratio-report': {
+        // READ-ONLY. Audits CT's cost/MSRP ratio across the whole catalog
+        // to check whether the ~78-80% ratio seen on a handful of SKUs this
+        // session (vs. the documented normal ~43-46%) is isolated to a few
+        // items or a real pattern — e.g. a batch where CT's cost already
+        // has freight baked in, which would double-count against the
+        // separate SHIPPING_BUFFERS add-on in calculatePrice().
+        // No writes. GET /api/shopifySync?action=cost-ratio-report
+        const ctTires = await fetchAllCTTires();
+        const withRatio = ctTires
+          .map(ct => {
+            const cost = parseFloat(ct.cost);
+            const msrp = parseFloat(ct.msrp);
+            if (!isFinite(cost) || !isFinite(msrp) || msrp <= 0) return null;
+            return { partNumber: ct.partNumber, brand: ct.brand, model: ct.model,
+                     size: ct.size, cost, msrp, ratio: cost / msrp };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        const buckets: Record<string, number> = {
+          'under_40pct': 0, '40_50pct': 0, '50_60pct': 0, '60_70pct': 0,
+          '70_80pct': 0, '80_90pct': 0, 'over_90pct': 0,
+        };
+        for (const t of withRatio) {
+          const p = t.ratio * 100;
+          if (p < 40) buckets['under_40pct']++;
+          else if (p < 50) buckets['40_50pct']++;
+          else if (p < 60) buckets['50_60pct']++;
+          else if (p < 70) buckets['60_70pct']++;
+          else if (p < 80) buckets['70_80pct']++;
+          else if (p < 90) buckets['80_90pct']++;
+          else buckets['over_90pct']++;
+        }
+
+        const byBrand: Record<string, { count: number; avgRatio: number; ratios: number[] }> = {};
+        for (const t of withRatio) {
+          if (!byBrand[t.brand]) byBrand[t.brand] = { count: 0, avgRatio: 0, ratios: [] };
+          byBrand[t.brand].count++;
+          byBrand[t.brand].ratios.push(t.ratio);
+        }
+        const brandSummary = Object.entries(byBrand).map(([brand, d]) => ({
+          brand, count: d.count,
+          avgRatioPct: +(d.ratios.reduce((a,b)=>a+b,0) / d.ratios.length * 100).toFixed(1),
+        })).sort((a,b) => b.avgRatioPct - a.avgRatioPct);
+
+        const highRatioItems = withRatio
+          .filter(t => t.ratio >= 0.70)
+          .sort((a,b) => b.ratio - a.ratio)
+          .map(t => ({ ...t, ratioPct: +(t.ratio*100).toFixed(1) }));
+
+        return res.status(200).json({
+          success: true, mode: 'cost-ratio-report',
+          totalCTProducts: ctTires.length,
+          totalWithValidRatio: withRatio.length,
+          overallAvgRatioPct: +(withRatio.reduce((a,t)=>a+t.ratio,0) / withRatio.length * 100).toFixed(1),
+          buckets,
+          brandSummary,
+          highRatioCount: highRatioItems.length,
+          highRatioItems,
+        });
+      }
+
       case 'stock-report': {
         // READ-ONLY. Reports CT tires at/above a minimum fulfillable stock
         // level. Uses getMaxLocationQty() (single-warehouse ceiling — same
