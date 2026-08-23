@@ -1138,24 +1138,52 @@ everything else. Purely cosmetic, no content change beyond the clearance line ab
 
 ### 4. Product page: tire-specs metafield display + dead-code cleanup
 
-Added a new snippet (`gci-tire-specs.liquid`) rendering **UTQG / Speed Rating /
-Load Range / Tread Depth** under the price, reading `product.metafields.custom.*`
-— each field shows independently only when populated, and literal placeholder
-strings some products carry (`"NOT_AVAILABLE"`, `"-"`) are filtered out too, not
-just genuinely-blank values. Verified live via a temporary test value on a known
-product, then removed the test value. **Note for future sessions**: these 4
-metafields are manually-curated — nothing in either codebase writes to them
-automatically. As of this session only 5 products (some Nexen Roadian GTX SKUs)
-have any values, and those are still in **draft** status (unpublished).
+**Correction to this session's own work, below — read this before touching
+`custom.utqg`/`custom.speed_rating`/`custom.load_range`/`custom.tread_depth`
+display again.** Built a new snippet (`gci-tire-specs.liquid`) rendering these 4
+metafields under the price — **without first checking whether this already
+existed**. It did: `templates/product.json`'s `main` section already had 4
+`custom_liquid` blocks (`custom_liquid_kQCADk`/`F3f6H3`/`eeaVT6`/`UpHqxQ`, sitting
+between `price` and `buy_buttons`) doing the exact same thing, one block per field,
+predating this session. Result: **duplicate spec rows on every product page**, and
+the new one visually collided with the theme's shipping/tax note directly below
+it (screenshotted by Pat — text overlapping, underline cutting through content).
+**Removed same-session**: render call in `sections/main-product.liquid` reverted,
+`snippets/gci-tire-specs.liquid` deleted. The pre-existing `custom_liquid` blocks
+are the only version live now, unchanged, still working as they were before this
+session touched anything.
 
-Investigating the product template surfaced a disabled, hardcoded-fake-data
-"AI-generated" spec block (`ai_gen_block_9cff040` — bilingual spec table, postal-code
-shipping estimator, installer-finder button, all with placeholder values like
-`"225/65R17"`, never wired to real data) sitting inert in `templates/product.json`.
-Removed it (section + orphaned block file) since it wasn't live and had no real
-data behind it — but it represents a genuinely bigger feature concept (3PMSF cert,
-noise level, warranty display, shipping estimator) than what was built here, worth
-a real future build if wanted, not silently lost.
+**Known gap, not fixed**: unlike the (now-deleted) new snippet, the pre-existing
+`custom_liquid` blocks don't filter placeholder-string values (`"-"`, `"N/A"`,
+etc.) — a product with `custom.load_range` literally set to `"-"` shows
+`Load Range: -` verbatim (visible in Pat's screenshot). Offered to fix this on the
+existing blocks; awaiting a decision as of this doc-sync.
+
+**Correction to an earlier claim in this same doc-sync pass**: previously stated
+here that only 5 products (draft, unpublished) had any of these 4 metafields
+populated, based on a 100-product GraphQL sample. **Wrong** — Pat's own
+screenshot (Ovation Vi-386HP 235/60R18, live at $225.99) shows a published
+product with real values for all 4 fields. The 100-product sample was incomplete,
+not representative — don't trust that "only 5, all draft" figure; the actual
+number of live, populated products is unknown as of this doc-sync and would need
+a full-catalog check, not a sample, to state accurately.
+
+**Takeaway for future sessions**: before adding *any* new product-page display
+element, check `templates/product.json`'s block list first — this theme has
+several one-off `custom_liquid`/`ai_gen_block` blocks with real, working logic
+that won't show up in a search of `.liquid` snippet files alone, since their
+content lives in the template JSON's block settings, not a separate file.
+
+Separately (this part unaffected by the above), investigating the product
+template surfaced a disabled, hardcoded-fake-data "AI-generated" spec block
+(`ai_gen_block_9cff040` — bilingual spec table, postal-code shipping estimator,
+installer-finder button, all with placeholder values like `"225/65R17"`, never
+wired to real data) sitting inert in `templates/product.json`. Removed it (section
++ orphaned block file) since it wasn't live and had no real data behind it — but
+it represents a genuinely bigger feature concept (3PMSF cert, noise level,
+warranty display, shipping estimator) than either spec-row implementation above,
+worth a real future build if wanted, not silently lost.
+
 
 Found **12 more `ai_gen_block_*.liquid` files** in the theme (from Shopify's AI
 section generator, presumably iterative drafts). Investigated all: **8 were
