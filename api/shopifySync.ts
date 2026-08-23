@@ -329,7 +329,22 @@ function parseTireSize(raw: string | number): string {
 
 function parseCTSizeCode(rawCode: string | number): string {
   const raw = String(rawCode ?? '');
-  const match = raw.match(/^(\d{3})(\d{2})(\d{2})\/R$/);
+  // CT's raw size field is always plain 7-digit numeric ("2057515") — it has
+  // never once been observed with a trailing "/R" in any raw-ct-sample check
+  // this session. The previous regex (`^(\d{3})(\d{2})(\d{2})\/R$`) required
+  // that suffix, so it NEVER matched real CT data and this function always
+  // fell through to parseTireSize(), which produces a malformed value like
+  // "2057515/R" for a bare numeric string (no delimiter to split on, so
+  // width="2057515", aspect="", rim="" → "2057515/R"). That malformed value
+  // gets silently repaired for the product TITLE (formatTireSize()'s regex
+  // happens to match "2057515/R" and fixes it), but was used AS-IS for the
+  // variant "Size" option (`option1`), which only gets set once at creation
+  // and is never revisited by any update path — confirmed live on 411 of
+  // 2,346 ct-sync products (2026-08-23 audit) showing e.g. "2256516/R"
+  // instead of "225/65R16". Fixed here to match the real format directly —
+  // same 7-digit pattern already used correctly elsewhere in this file
+  // (extractRimSize()).
+  const match = raw.match(/^(\d{3})(\d{2})(\d{2})$/);
   if (!match) return parseTireSize(raw);
   return `${match[1]}/${match[2]}R${match[3]}`;
 }
