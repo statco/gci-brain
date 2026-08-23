@@ -1020,3 +1020,225 @@ GitHub PAT scoped to the `statco` org was shared directly in chat this session,
 used to clone all 6 repos, push the 3 fix branches, open/verify all 3 PRs via the
 GitHub API, and (after merge) push this doc-sync commit. **Rotate it** — flagged
 to Pat at both the start and end of the session.
+
+## Session update — 2026-08-23
+
+### 1. CTSync handle-collision/duplicate investigation → 4 new products created
+
+Started from a review of `shopifySync.ts`'s handle-collision defense (catch-and-retry
+on Shopify's "handle already taken" error, timestamp-suffix retry) and duplicate
+prevention (title-normalization guard checks all statuses, not just active — a
+deliberate earlier fix). Found a real gap: the guard only catches *exact* title
+matches, so "Cooper Endeavor 225/50R17" vs. "...225/50R17 All-Season Tire" sail past
+it as separate products — confirmed live on 19 SKU-duplicate pairs (`duplicateSkuAudit.ts`
+scan), all already archived on the higher-`productId` side, so `remove-tag` was the
+only live action needed (no `archive-duplicate` changes required).
+
+Also built a `stock-report` action (min-qty CT stock query, gci-brain#142) to find
+import candidates, which led to creating 4 new products this session:
+**HF-ST44SR, HF-ST42SR** (Ovation UN203 — ST/trailer tires), **16005081, 16005392**
+(Itaro IT203/IT101). Along the way:
+
+- Fixed the store's `.myshopify.com` handle everywhere it was documented wrong
+  (`gcitires.myshopify.com` → **`gcitires-ca.myshopify.com`**, live store name
+  "GCI Tires Canada") — this was stale in `.env.local.example` and this doc.
+- Closed an image gap: Ovation/Itaro weren't in the static `IMAGE_MAP`, so these 4
+  products got created with no image (gci-brain#143 — sourced real product photos,
+  verified against sidewall text on the CT-provided names).
+- Found and fixed `src/services/addTireImages.ts` silently drifted from the `api/`
+  copy `shopifySync.ts` actually imports (missing Cooper Procontrol, Vredestein
+  entries) — the AI Match tool's image lookups were affected (gci-brain#144).
+- Found and fixed a real gap between the documented Aug-17 description convention
+  (paragraph + spec list) and what `updateSeo.ts`'s `generateAiCopy()` actually
+  produced (paragraph only, spec list silently dropped for every product this path
+  touches) — gci-brain#145. **Also fixes a latent bug**: an Anthropic API failure
+  previously caused `productDescriptionFallback()`'s empty-string return to blank
+  out `body_html` entirely instead of leaving it untouched as intended.
+  **Known gap, not fixed this session**: `buildPayload()` in `shopifySync.ts` (used
+  at product *creation* via `retry-create`/`full-import`) still generates the old
+  spec-dump-style `body_html` directly — `updateSeo.ts`'s fix only applies on a
+  subsequent SEO-backfill pass, not at creation time. New products will need that
+  backfill run manually (or scheduled) until `buildPayload()` itself is aligned.
+
+### 2. Pricing formula: found a 4th unfixed consumer, unified it, repriced the catalog
+
+The 2026-08-22 landed-cost fix (gci-order-hub#74, gci-walmart-sync#26, gci-brain#146)
+fixed three repos' price-setting code — but **missed a fourth**: `shopifySync.ts`
+itself (the file that actually sets live Shopify prices via the daily 3am cron and
+`retry-create`/`update-chunk`) was still running the pre-fix flat-12%-tax +
+flat-per-tire-class-shipping formula. Any correct price `bulkPriceUpdate.ts` set was
+being silently reverted by the next cron run.
+
+**Audited before touching anything** (gci-brain#148, `cost-ratio-report` +
+`price-diff-report` actions, both read-only): CT cost/MSRP ratio is bimodal by
+brand (Nexen/Ovation/Itaro ~78%, Cooper/Minerva ~44-47%) — not a data error, and
+not (per Pat, correcting an initial hypothesis) a "some brands don't pay freight"
+pattern — CT charges real freight on everything, calculated by origin warehouse ×
+destination × size × weight, per the same rate table `landedCost.ts` already uses.
+
+**Fixed** (gci-brain#147): unified `calculatePrice()`/`shopifyFloor`/`walmartFloor`
+onto the same `lib/pricing/landedCost.ts` module as `bulkPriceUpdate.ts`. Also fixed
+two more latent bugs found while making this change:
+- The `light_truck` → `lt_large` rim-≥19" shipping upgrade used
+  `ct.size.match(/R(\d{2})/i)` — but CT's raw `size` field is plain numeric
+  (`"2456020"`, never contains `R`), so this regex **never matched in production**.
+  Replaced with correct `WWWAARR`-format parsing; the shared rate table already
+  varies freight by rim size within `LT` (13-22), so the separate `lt_large` bucket
+  isn't needed anymore.
+- `shopifyFloor`/`walmartFloor` previously had **no tax applied at all** (inconsistent
+  with `calculatePrice()`'s own formula) — both metafields now go through
+  `computePriceFloor()` directly.
+
+Verified independently (Python re-derivation against the real rate table for a known
+live SKU) before merging: `18732NXK` (Nexen Roadian ATX 245/60R20) → $421.99 vs. old
+$405.99 (+3.9%), matching the average Nexen movement the audit predicted.
+
+**Executed full-catalog repricing** after merge (all-at-once, per Pat's explicit
+call — considered and rejected a staged rollout given the numbers below): looped
+`daily-sync` across all 40 chunks (offset 0→1950, 50/chunk) rather than waiting on
+the natural ~40-day cron rotation. **1,513 of 1,970 products updated, 0 errors.**
+Net catalog-wide movement: **+$27,491** (1,614 increases, only 5 real decreases —
+the old formula was under-charging most of the country, since real freight often
+exceeds what the flat per-tire-class guess assumed, outweighing QC's 9.975% tax
+being higher than the old blended 12%).
+
+**Known gap**: `landedCost.ts`/`freightRates.ts` is now a **4th independent copy**
+(one per repo: `gci-order-hub`, `gci-walmart-sync`, `gci-brain/bulkPriceUpdate.ts`,
+and now `gci-brain/shopifySync.ts` too) — the shared-package recommendation from the
+Aug-22 entry is more pressing now, not less.
+
+### 3. Clearance/final-sale detection — 39 SKUs, storefront + policy updated
+
+The price-diff audit's biggest "decreases" turned out to be genuine CT clearance
+stock (confirmed via a screenshot of CT's dealer portal — cost $49.97/MSRP $210,
+qty 3, tagged "Clearance"/"Final Sale"/"No returns accepted" in their UI), not a
+script bug. CT's RESTlet API doesn't expose a clearance flag directly
+(`raw-ct-sample` confirmed), so it's inferred: **cost/MSRP < 25% AND max
+single-location qty ≤ 4** (CT's own "1-4 tires" pricing tier) — a judgment call from
+observed examples, not a CT-documented rule; revisit if it over/under-flags.
+
+Applied end-to-end, live:
+- 39 products tagged `clearance-final-sale` (Shopify Admin API, direct)
+- New theme snippet `gci-clearance-badge.liquid` — visible orange/red badge,
+  mirrors CT's own convention, gated on the tag
+- `product-shipping-badge.liquid` made conditional: normal products keep
+  "Easy Returns," tagged products show "Final Sale — no returns accepted" instead
+  (previously showed "Easy Returns" unconditionally on **every** product, including
+  these 39 — a real customer-facing conflict, now fixed)
+- Refund policy (`/policies/refund-policy`) updated: added clearance/final-sale to
+  the non-returnable-items list
+
+**While in the policy pages**: found and cleaned leftover `font-claude-response-body`
+/ Tailwind-utility CSS classes across **all 6** shop policies (Contact, Legal
+Notice, Privacy, Refund, Shipping, Terms) — content had clearly been pasted in from
+a Claude chat response at some point, carrying Claude.ai's own UI classes into live
+policy HTML. Preserved the legitimate Dawn theme structural wrappers
+(`page`/`page-body`/`policy`, only present on the Shipping policy) while stripping
+everything else. Purely cosmetic, no content change beyond the clearance line above.
+
+### 4. Product page: tire-specs metafield display + dead-code cleanup
+
+**Correction to this session's own work, below — read this before touching
+`custom.utqg`/`custom.speed_rating`/`custom.load_range`/`custom.tread_depth`
+display again.** Built a new snippet (`gci-tire-specs.liquid`) rendering these 4
+metafields under the price — **without first checking whether this already
+existed**. It did: `templates/product.json`'s `main` section already had 4
+`custom_liquid` blocks (`custom_liquid_kQCADk`/`F3f6H3`/`eeaVT6`/`UpHqxQ`, sitting
+between `price` and `buy_buttons`) doing the exact same thing, one block per field,
+predating this session. Result: **duplicate spec rows on every product page**, and
+the new one visually collided with the theme's shipping/tax note directly below
+it (screenshotted by Pat — text overlapping, underline cutting through content).
+**Removed same-session**: render call in `sections/main-product.liquid` reverted,
+`snippets/gci-tire-specs.liquid` deleted. The pre-existing `custom_liquid` blocks
+are the only version live now, unchanged, still working as they were before this
+session touched anything.
+
+**Known gap, not fixed**: unlike the (now-deleted) new snippet, the pre-existing
+`custom_liquid` blocks don't filter placeholder-string values (`"-"`, `"N/A"`,
+etc.) — a product with `custom.load_range` literally set to `"-"` shows
+`Load Range: -` verbatim (visible in Pat's screenshot). Offered to fix this on the
+existing blocks; awaiting a decision as of this doc-sync.
+
+**Correction to an earlier claim in this same doc-sync pass**: previously stated
+here that only 5 products (draft, unpublished) had any of these 4 metafields
+populated, based on a 100-product GraphQL sample. **Wrong** — Pat's own
+screenshot (Ovation Vi-386HP 235/60R18, live at $225.99) shows a published
+product with real values for all 4 fields. The 100-product sample was incomplete,
+not representative — don't trust that "only 5, all draft" figure; the actual
+number of live, populated products is unknown as of this doc-sync and would need
+a full-catalog check, not a sample, to state accurately.
+
+**Takeaway for future sessions**: before adding *any* new product-page display
+element, check `templates/product.json`'s block list first — this theme has
+several one-off `custom_liquid`/`ai_gen_block` blocks with real, working logic
+that won't show up in a search of `.liquid` snippet files alone, since their
+content lives in the template JSON's block settings, not a separate file.
+
+Separately (this part unaffected by the above), investigating the product
+template surfaced a disabled, hardcoded-fake-data "AI-generated" spec block
+(`ai_gen_block_9cff040` — bilingual spec table, postal-code shipping estimator,
+installer-finder button, all with placeholder values like `"225/65R17"`, never
+wired to real data) sitting inert in `templates/product.json`. Removed it (section
++ orphaned block file) since it wasn't live and had no real data behind it — but
+it represents a genuinely bigger feature concept (3PMSF cert, noise level,
+warranty display, shipping estimator) than either spec-row implementation above,
+worth a real future build if wanted, not silently lost.
+
+
+Found **12 more `ai_gen_block_*.liquid` files** in the theme (from Shopify's AI
+section generator, presumably iterative drafts). Investigated all: **8 were
+completely unreferenced** anywhere in any of the 22 template/section-group JSON
+files (confirmed via brute-force content scan, not just template.json spot-checks)
+— deleted, safe. **4 are live**, all in `header-group.json` (renders on **every**
+page, not just homepage) except one (homepage only):
+
+| Block | Purpose |
+|---|---|
+| `ai_gen_block_799c80a` | Hero banner — "Buy your tires online in Canada" CTA |
+| `ai_gen_block_7ddd389` | Value-prop icon strip (3PMSF, delivery, **installer network**, AI assistant) |
+| `ai_gen_block_6b10f66` | "AI Assistant" CTA → opens Tidio chat |
+| `ai_gen_block_6ac5ca5` | Google Customer Reviews opt-in script (thank-you page) |
+
+Initially flagged the installer-network claim as possibly inaccurate (this session's
+Blackcircles comparison assumed ship-to-door was the only model) — **corrected**:
+confirmed via this doc's own §3/§6 that GCI has a real, built installer-dispatch
+system (Airtable "GCI Installer Portal" base, `/api/nearby-installers` +
+`/api/submit-installer-application` in `gci-brain`, `gci-order-hub` dispatches paid
+`TIRE-`-prefixed orders to installers). The copy is accurate; no change made.
+
+Also flagged, then resolved as a non-issue: `ai_gen_block_6ac5ca5`'s hardcoded GMC
+merchant ID (`5823993728`) looked like it might not match the suspended ID
+(`5729993911`) mentioned in `theme.liquid`'s own historical cleanup comment.
+**Confirmed with Pat**: `5823993728` ("GCI Tires Canada") is the correct, currently
+active Merchant Center account. Brute-force scanned all 229 theme text files plus
+the entire `gci-brain` codebase for the old ID or any other `merchant_id`
+reference — found only 3 references total, all three already correct. Nothing to
+remove; the old suspended ID really was fully cleaned out previously, not just
+hidden in a comment.
+
+### 5. Competitor analysis (informational, no code)
+
+Delivered a standalone comparison vs. `blackcircles.ca` (Pat's designated
+follow-competitor). Key finding: catalog overlap is only 2 brands (Cooper, Nexen)
+— Blackcircles doesn't carry Ovation/Itaro/Minerva/Kenda/Transeagle at all, so the
+landed-cost formula (not their pricing) is the right anchor for 7 of GCI's 9
+brands. Blackcircles' own per-tire pricing isn't scrapable (JS-rendered,
+booking/garage-dependent, not a flat number) — flagged as a real limitation, not
+guessed around. Biggest concrete gap found: GCI's homepage claims "100+ years
+experience, 1,000+ tires installed" directly next to a **0-review Trustpilot
+page**, vs. Blackcircles' 4.7/5 across 3,500+ reviews — recommended as the fastest,
+cheapest fix available, ahead of anything requiring engineering work.
+
+### Session PRs (all gci-brain, all MERGED)
+`#142` stock-report · `#143` Ovation/Itaro images · `#144` addTireImages sync ·
+`#145` description spec-list fix · `#147` pricing formula unification ·
+`#148` cost-ratio-report + price-diff-report + clearance detection
+
+### Session credential note (same convention as prior entries)
+
+A GitHub PAT and a Shopify Admin API token were shared directly in chat this
+session (the PAT was rotated once mid-session after the first one stopped working —
+likely rotated on Pat's end independently, not a leak). Used to clone/push/PR
+`gci-brain`, and to read/write Shopify directly (products, theme assets, policies,
+metafields) for everything in §3/§4 above that a `gci-brain` API endpoint didn't
+already cover. **Rotate both** — flagged to Pat multiple times through the session.
