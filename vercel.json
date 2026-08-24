@@ -76,6 +76,10 @@
     {
       "path": "/api/social-scheduler?action=post&platform=pinterest",
       "schedule": "0 18 * * 1-5"
+    },
+    {
+      "path": "/api/reviews/auto-request-cron?dryRun=false",
+      "schedule": "0 14 * * *"
     }
   ],
   "headers": [
