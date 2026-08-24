@@ -104,7 +104,6 @@ Return ONLY valid HTML with no markdown, using this exact structure:
 <li>Season: ${season}</li>
 <li>Size: ${size}</li>
 <li>Free shipping across Canada</li>
-<li>Part of the Canada Tire Inc. catalog (est. 1928)</li>
 </ul>
 </div>`;
 
