@@ -1229,10 +1229,106 @@ experience, 1,000+ tires installed" directly next to a **0-review Trustpilot
 page**, vs. Blackcircles' 4.7/5 across 3,500+ reviews — recommended as the fastest,
 cheapest fix available, ahead of anything requiring engineering work.
 
+### 6. "Canada Tire Inc. (est. 1928)" distributor mention removed (gci-brain#151, MERGED)
+
+Pat flagged (screenshot) this adds no value on product pages. Traced to
+`scripts/generateSeoDescriptions.ts` — a standalone script (not part of the live
+serverless app) whose AI prompt hardcoded `<li>Part of the Canada Tire Inc.
+catalog (est. 1928)</li>` into every description it generated.
+
+**Scope audited before touching anything live**: 1,352 of 2,648 products (51%)
+had this text live, in two structural variants — most (1,206) had it folded into
+flowing AI-paraphrased prose with varied wording (`catalog established in 1928`,
+`catalog (est. 1928)`, etc. — the AI didn't consistently follow the script's
+intended `<ul><li>` structure), the rest (146) had the script's literal `<li>`
+tag. Fixed via sentence-boundary filtering for the first group, direct `<li>`
+removal for the second — both dry-run tested against the full affected set
+before any live write. **Verified 0 remaining** across a full 2,648-product
+re-scan after applying.
+
+Also fixed `blog-publisher.ts`'s EN/FR system prompts, which instructed every
+*future* blog post to include the same distributor mention — left unfixed, this
+would have reintroduced the issue in blog content going forward even with the
+script and live data both cleaned up.
+
+### 7. Review system: root cause found, automated (gci-brain#152, MERGED)
+
+Pat flagged (screenshot) that "Be the first to review this product" does
+nothing when clicked. Investigation found GCI already has a **complete,
+well-built verified-purchase review system** — `api/reviews/{request,submit,
+moderate,list,export}.ts`, a real submission form (`snippets/review-form.liquid`,
+token-gated via `?review=<token>` in the URL), a moderation admin UI
+(`ReviewsModeration.jsx`), and a branded review-request email template
+(Resend, dark theme, matches the site). **None of it was broken.**
+
+**Root cause**: `/api/reviews/request` — the endpoint that emails a customer
+their personal tokenized review link — was never called by anything. No cron,
+no order webhook, no admin trigger button anywhere in either codebase. Zero
+customers have ever received a review-request email since launch, so the
+token-gated write-review path has been unreachable by design (not by bug)
+since day one. Meanwhile a separate, purely-decorative read-only widget
+(`gci-reviews-section`, injected directly in `body_html`) still shows "Be the
+first to review this product" with no click handler at all — implying an
+action nobody could actually take.
+
+Presented Pat two honest paths: (1) automate the existing verified-purchase
+flow, or (2) open review submission to any visitor (requires loosening
+`submit.ts`'s token requirement, changes the trust model). **Pat chose (1)** —
+verified-only stays, automate the trigger.
+
+**Built**: `api/reviews/auto-request-cron.ts` — finds orders fulfilled exactly
+5 days prior via Shopify GraphQL, dedups against the same `Review_Requests`
+Airtable table `request.ts` itself already writes to (so a customer never gets
+two request emails for one order even across overlapping cron windows), then
+calls the *existing* `/api/reviews/request` endpoint per qualifying order — no
+duplicated email/token logic. Cron: daily, 14:00 UTC (10am ET), `dryRun=false`
+explicit in `vercel.json`; the handler itself defaults to `dryRun=true` when
+called without the param, as a safety default for manual/ad-hoc testing.
+
+**Blocked mid-build, then resolved**: Shopify's Protected Customer Data
+restriction — the custom app wasn't approved to read `orders.email` (returns
+`null` silently on REST, a hard GraphQL error on the same field) until Pat (a)
+upgraded the Shopify plan and (b) separately approved the `customers`
+scope (`read_customers`/`write_customers`) in the app's own configuration
+screen — **two distinct steps**, the plan upgrade alone did not fix it.
+Confirmed via Pat's screenshots which scope was actually needed (not
+`customer_merge`, which is a different, unrelated scope with a similar-looking
+PII warning).
+
+**Tested against real order data on a preview deployment before merge, not
+just "doesn't crash"**: confirmed the precise date-matching logic correctly
+*excluded* the one order in the search window because its real fulfillment
+date (Aug 18) didn't exactly match the 5-day target (Aug 19) — validates the
+matching precision, not just successful execution. Also separately confirmed
+2 of the 4 most recent real orders have no email on file at all (likely
+guest/alternate checkout) — the cron already handles this via
+`skippedNoEmail`, no error, no bad send.
+
+**What to expect**: starting the day after merge, any order fulfilled exactly
+5 days prior gets an automatic review-request email. Order volume is low
+(~3/week per gci-order-hub's own notes), so reviews will trickle in gradually,
+not arrive all at once.
+
+### Also investigated this session, no fix needed
+
+A `walmart-order-sync ERROR` Telegram alert (Pat screenshot, gci-order-hub) was
+traced to a single transient Google Sheets 503 (not a Walmart problem, despite
+the alert name) during the PO#→order-ID lookup `/api/walmart-order-sync`
+depends on. Confirmed via Vercel logs: the failing run was immediately followed
+15 minutes later by a clean successful run picking up exactly where the failed
+one left off — **zero data loss**, by design (rolling 48h lookback window, not
+a forward-only cursor — see the 2026-08-06 entry above for why that distinction
+matters). Hasn't recurred in 7 days. Pat's call: leave as-is. The one real
+improvement available — clarifying the alert text so it doesn't read as a
+Walmart-side outage — was offered and explicitly declined for now.
+
 ### Session PRs (all gci-brain, all MERGED)
 `#142` stock-report · `#143` Ovation/Itaro images · `#144` addTireImages sync ·
 `#145` description spec-list fix · `#147` pricing formula unification ·
-`#148` cost-ratio-report + price-diff-report + clearance detection
+`#148` cost-ratio-report + price-diff-report + clearance detection ·
+`#150` parseCTSizeCode variant-option fix ·
+`#151` Canada Tire Inc. mention removal ·
+`#152` automated review-request cron
 
 ### Session credential note (same convention as prior entries)
 
