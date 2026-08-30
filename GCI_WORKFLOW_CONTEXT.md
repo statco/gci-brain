@@ -1554,26 +1554,37 @@ cycle, `0 fail` on every price PUT, multiple complete 318-SKU cycles
 (~13-14 min each) with no gaps. The pipeline is confirmed healthy end to
 end: correct price computed, Walmart accepting every write.
 
-**Open, unresolved as of this doc update — 4 SKUs still read stale via
-`/v3/items`, despite confirmed successful writes**: `166159006`,
-`AP21550017WHYPA02`, `16092NXK`, `AP25545019YHYPA02`. Cost fields
-(`unitCost` vs `ctCost`) confirmed identical for all 4 — rules out a cost
-divergence explanation. All 4 confirmed `ACTIVE` + `ct-sync` tagged — rules
-out a Shopify-visibility explanation. Two of these four
-(`AP21550017WHYPA02`, `AP25545019YHYPA02`) are the same two SKUs #82's own
-mid-fix bug pushed to a wrong price ($433.99/$576.99) before self-correcting
-— worth knowing if their current live price doesn't match *any* value
-pushed today, since that's stronger evidence of a Walmart-side read/cache
-issue than a single stale write would be. Leading theory: a caching or
-indexing quirk on Walmart's `/v3/items` read endpoint specific to these 4
-listings, not a bug in this codebase — but not yet confirmed.
-**Next step for whoever picks this up**: check these 4 SKUs directly in
-Walmart Seller Center's UI (not the API). If Seller Center also shows the
-stale price, that's real and worth a support ticket to Walmart (cite the
-timestamped `200 OK` write log lines as evidence the writes are landing on
-our end). If Seller Center shows the correct price, it's a read-side-only
-quirk in `/v3/items` — lower urgency, since real customers would already be
-seeing the right price.
+**RESOLVED 2026-08-30, same day — but by manual intervention, not by
+confirming the root cause.** Pat corrected all 4 SKUs (`166159006`,
+`AP21550017WHYPA02`, `16092NXK`, `AP25545019YHYPA02`) directly in Walmart
+Seller Center, setting each to its live Shopify price. Whether the
+underlying issue was genuinely a Walmart-side `/v3/items` read/cache quirk
+(the leading theory below) or something else was never actually confirmed
+— worth being honest about that gap rather than treating this as a closed
+diagnosis. Two of these four (`AP21550017WHYPA02`, `AP25545019YHYPA02`) are
+the same two SKUs #82's own mid-fix bug pushed to a wrong price
+($433.99/$576.99) before self-correcting — plausibly relevant if this ever
+recurs on the same SKUs.
+
+**One expected follow-on, not a bug**: for `AP21550017WHYPA02` specifically,
+`safeWalmartPrice()` computes $1 above the raw Shopify price ($348.99 vs.
+$347.99) — an intentional buffer to keep Walmart strictly above Shopify
+rather than exactly tied. Since Pat's manual correction matched Shopify
+exactly, the live cursor will bump this one SKU by $1 on its next pass.
+Expected, correct behavior — flagged in advance so it doesn't look like a
+recurrence of the bug if noticed.
+
+Original investigation notes, preserved for context:
+Cost fields (`unitCost` vs `ctCost`) were confirmed identical for all 4 —
+ruled out a cost divergence explanation. All 4 were confirmed `ACTIVE` +
+`ct-sync` tagged — ruled out a Shopify-visibility explanation. Leading
+theory was a caching or indexing quirk on Walmart's `/v3/items` read
+endpoint specific to these 4 listings — plausible given the pipeline's
+writes were confirmed 100% successful via Vercel logs across multiple full
+cycles, but this was never independently verified against Walmart Seller
+Center before the manual fix made it moot. If this pattern recurs on other
+SKUs, checking Seller Center directly (not just the API) before assuming
+it's a codebase bug remains the right first step.
 
 **Session credential note**: same GitHub PAT used across both halves of
 this thread (#82 and #83) plus this doc update. Rotate it — same standing
