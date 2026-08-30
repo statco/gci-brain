@@ -5,6 +5,10 @@
 > identically across all 6 repos below so it's available no matter which one you
 > land in first. If you update it, update all 6 copies.
 >
+> **2026-08-30**: Walmart CA bulk retire endpoint shipped (gci-order-hub#80, #81, MERGED) — pivoted from an infeasible reversible-unpublish ask (confirmed no publish/unpublish toggle exists for this Walmart GMP account) to a general retire endpoint; real cleanup executed live (2056 SKUs retired, 0 failures). Also found and fixed the tireType/rimSize wiring gap flagged as "Known gap #2" in the 2026-08-22 entry below — every safeWalmartPrice() caller was silently defaulting to the most conservative (LT, rim 22) fallback, discovered via a real reported price gap on Walmart SKU 300E3009 ($261.99 vs. a real $174.99 Shopify price). Fix verified live at scale: 265 of 318 currently-listed Walmart SKUs (83%) were mispriced by this bug, now corrected — gci-order-hub#82, **not yet merged as of this doc update**. See "Session update — 2026-08-30" at the end of this doc.
+>
+> **2026-08-23/24**: gci-brain found a 4th unfixed consumer of the old (pre-Aug-22-fix) pricing formula — `shopifySync.ts` itself — and unified it onto the shared landed-cost formula (gci-brain#147), then repriced the full catalog (1,513/1,970 products updated, net +$27,491). Also: clearance/final-sale detection (39 SKUs), a stale "Canada Tire Inc." distributor mention removed from 1,352 products, and the review-request email flow automated. See "Session update — 2026-08-23" at the end of this doc.
+>
 > **2026-08-22**: Landed-cost price floor fix, shipped as PRs to all 3 pricing-relevant repos and MERGED — gci-order-hub#74, gci-walmart-sync#26, gci-brain#146. Replaces three DIFFERENT, all-wrong price floor formulas (flat cost×1.15, flat cost×1.05, flat shippingBuffer+12% tax) with one shared, correct landed-cost formula using CT's real published freight rate table and GCI's confirmed tax-registration status (GST/HST registered, PST/QST not). Confirmed root cause of ≥4 historical below-cost orders. See "Session update — 2026-08-22" at the end of this doc — **this is the first session-update entry propagated to all 6 repos at once**, closing the propagation gap called out in every entry below.
 >
 > **2026-08-08**: gcitires-chatbot chat-timeout fix + first-ever monitoring build-out — see "Session update — 2026-08-08" at the end of this doc.
@@ -13,11 +17,12 @@
 >
 > **2026-08-13**: `inventory-reconcile` (gci-brain) fixed a real oversell gap — was reporting national-summed CT stock instead of the max any single CT warehouse holds, since CT can't split-ship. Closes the bug behind a real customer oversell (Ovation Vi-682 155/80R12, SKU 200E2108). First fix (#139) was incomplete — 3 other write paths had the same bug, caught by Codex review and closed in #140. See "Session update — 2026-08-13" at the end of this doc, and the correction added to `gci-order-hub/CT-INTEGRATION-CONTEXT.md` § 5a.
 >
-> Last written: 2026-07-01, last updated: 2026-08-22 end-of-session (see
-> the 2026-08-22 bullet above — first fully-propagated update since
-> 2026-07-29; the 2026-08-08, 2026-08-11, and 2026-08-13 entries below had
-> each only reached the repo(s) noted in their own bullet until now, but
-> ARE now present in all 6 copies as of this session's propagation pass).
+> Last written: 2026-07-01, last updated: 2026-08-30 end-of-session (see the
+> 2026-08-30 bullet above). The 2026-08-23/24 entry had only reached
+> gci-brain until this session's propagation pass caught the other 3 repos
+> this session has access to (gci-order-hub, gci-price-monitor,
+> gcitires-chatbot) up to date — **gci-command-center and gci-walmart-sync
+> still need this same catch-up**, this session had no access to either.
 > Status markers:
 > ✅ verified working · 🟡 built but not fully live-verified · ⛔ known broken/blocked ·
 > 🔲 not yet built.
@@ -1338,3 +1343,170 @@ likely rotated on Pat's end independently, not a leak). Used to clone/push/PR
 `gci-brain`, and to read/write Shopify directly (products, theme assets, policies,
 metafields) for everything in §3/§4 above that a `gci-brain` API endpoint didn't
 already cover. **Rotate both** — flagged to Pat multiple times through the session.
+
+---
+
+## Session update — 2026-08-30
+
+### 1. Walmart CA bulk retire endpoint (`gci-order-hub#80`, `#81` — both MERGED)
+
+**Started from**: a request to build a *reversible* unpublish/republish endpoint
+for Walmart CA SKUs via the `MP_MAINTENANCE` feed — hide specific SKUs from
+Walmart.ca temporarily, without permanently retiring/recreating the listing.
+
+**Investigated live against the real account, found this doesn't exist for this
+Walmart Global Marketplace Partner (GMP) account** — three independent signals,
+not a guess:
+1. The Get Spec API (`POST /v3/items/spec`) and the item-taxonomy utility
+   (`GET /v3/utilities/taxonomy`) both error out for this account/market
+   (`GMP_ITEM_QUERY_API`/`MARKET_NOT_SUPPORTED`) — these are US-domestic-only
+   utilities, not available to GMP accounts.
+2. Live feed-submission trial-and-error against the real `MP_MAINTENANCE`
+   feed (spec version confirmed as literally `1.0`, not the mainstream 4.x/5.x
+   Item Spec lineage) tested **22 candidate field names** for a
+   publish/orderable toggle (`Visible`, `publishedStatus`, `orderable`,
+   `isPublished`, `active`, `status`, `enabled`, `hidden`, etc.) — every one
+   rejected as an unrecognized field.
+3. Seller Center's own UI (Catalog → item row → "..." menu) has **no
+   Pause/Deactivate/Unpublish action at all** — only Edit / Retire / Delete /
+   Update lag time, identical on both Published and already-Unpublished items.
+   Confirmed directly via the UI's own tooltip that "Unpublished" is
+   **Walmart's own automated judgment** ("We've removed your item from
+   Marketplace due to its high price"), not a seller-settable flag — this
+   turned out to be directly relevant to the pricing bug found later this same
+   session, see §2 below.
+
+**Pivoted per explicit instruction** ("instead of unpublishing we move to
+retire or delete the item") — built `api/walmart-delist.ts` instead: a
+general-purpose bulk retire endpoint using the already-proven `retireItem()`/
+`DELETE /v3/items/{sku}` mechanism (same one `walmart-retire.ts` already used),
+generalized beyond that file's `TIRE-`-prefix-only scope. Three input modes:
+`{ skus }`, `{ tag }` (Shopify-tag-driven), and `{ keepSkus }` (inverted
+selection — "retire everything currently listed except this keep list", built
+for a real cleanup request: a spreadsheet of 322 SKUs with 4+ units of healthy
+stock, retire everything else).
+
+**Two real bugs found and fixed during live testing against the real
+account** (not caught by review alone):
+- **Chunk size 300 timed out** — a real `dryRun=false` run retiring 300 SKUs
+  (each needing a retire call + a lifecycle-verification re-check) didn't
+  reliably finish inside Vercel's 300s `maxDuration`; dropped to 100, matching
+  `walmart-retire.ts`'s own proven value.
+- **Pagination drift silently skipped ~850 of ~1756 target SKUs** — the
+  endpoint filtered the input list down to "currently listed" (a live check)
+  *before* slicing by `offset`/`limit`; as earlier chunks got retired between
+  separate paged calls, the filtered array shrank and reindexed, so
+  `offset=N` stopped mapping to the same items call to call. Fixed by building
+  a **stable candidate list once per request**, slicing offset/limit from
+  that first, and only resolving "still listed" within the already-sliced
+  chunk.
+
+**Executed the real cleanup after both fixes**: retired **2056 SKUs, 0
+failures**, verified complete by summing `acceptedCount` (855) +
+`skippedNotListed` (1201) across all paginated batches = exactly 2056, the
+full candidate count. One test SKU (`MV861`) was retired for real via Seller
+Center's own UI during the investigation — confirmed acceptable, no cleanup
+needed.
+
+### 2. Walmart price-floor bug: `tireType`/`rimSize` never wired through, closing a known Aug-22 gap (`gci-order-hub#82` — OPEN, not yet merged)
+
+**Trigger**: a real reported price gap — Walmart SKU `300E3009` (Ovation
+W-686 Ecovision 185/65R15) listed at **$261.99** vs. its real live Shopify
+price of **$174.99** — with the explicit business constraint that Walmart
+auto-delists/unpublishes listings its own algorithm reads as priced too high
+(see §1's Seller Center tooltip finding above — same mechanism).
+
+**Root cause — this exact gap was already flagged and waiting**: the
+2026-08-22 landed-cost session (this doc, that entry) explicitly listed as
+"Known gap #2": *"Callers don't pass real tireType/rimSize yet in most call
+sites... they get the safe-but-maximally-conservative fallback (LT, rim 22)
+for now."* Confirmed **every single caller** of `safeWalmartPrice()` across
+the repo still omitted these params — `walmart-sync.ts`, `api/lib/listed-sync.ts`
+(the live 2-minute cron path via `walmart-sync-cursor.ts`), `walmart-price-audit.ts`,
+`walmart-price-correct.ts`, `walmart-oversell-monitor.ts`, and
+`walmart-client.ts`'s `updatePrice()`/`bulkPriceFeed()`. Verified by hand and
+by direct computation that the LT/rim-22 fallback reproduces the live
+$261.99 exactly; the real class (Passenger, rim 15) computes ~$175.99,
+matching the real Shopify price.
+
+**Fixed**: added `parseTireSpecFromTags()` to `api/lib/shopify.ts` (parses
+real tire type + rim size from Shopify product tags/variant title), added
+`tireType`/`rimSize` to `ShopifyVariantData`/`WalmartPriceItem`, threaded
+through every call site above. Also extended `walmart-price-audit.ts` — it
+previously only flagged Walmart prices sitting too far *below* Shopify
+(dumping risk); added a symmetric "overpriced" direction (Walmart price
+sitting >5% above the *correct* floor) which is what actually catches the
+300E3009-shaped bug, since that SKU was priced too HIGH, not too low.
+
+**A second, real bug surfaced live, mid-fix — caught before it could do more
+damage, not before it did some**: the first parser version only matched
+`vehicle_type:Passenger`/`vehicle_type:Light Truck` tags and a
+cleanly-formatted `"185/65R15"`-style size tag. Real store data uses a
+**second, inconsistent tag convention** — `tire-type-passenger` (no
+`vehicle_type:` prefix) plus a malformed size tag like `"1856515/R"` — used
+by a large slice of the catalog, including 300E3009 itself. A live dry-run
+correction pass using the first parser version pushed **two real SKUs**
+(`AP21550017WHYPA02`, `AP25545019YHYPA02`) to a still-wrong, LT/22-inflated
+price ($433.99/$576.99) before this was caught by cross-checking `safePrice`
+against the real Shopify price for every corrected row. Fixed by matching
+tire type via substring across both tag conventions, and parsing rim size
+from the variant **title** (consistently formatted across every batch
+checked) instead of the unreliable tags. Re-ran live: both SKUs self-corrected
+on the next pass ($348.99/$490.99).
+
+**Verified at scale, live, after the fix**: a full live correction pass found
+**265 of 318 currently-listed Walmart SKUs (83%) mispriced** by this bug,
+all corrected. Cross-checked every corrected row's `safePrice` against its
+real Shopify price to confirm no residual fallback inflation — found 26 rows
+(`NXK`-suffixed Nexen SKUs) where the corrected price legitimately sits
+8-11% above the Shopify price; confirmed via direct tag lookup these
+products carry a genuine `light-truck` tag (alongside a leftover,
+inconsistent `tire-type-passenger` tag from the same import) — real LT
+freight cost, not a bug; hand-verified the exact computed floor for one
+(`17970NXK`: cost $154.40, LT, rim 17 → $338.99, matches exactly).
+
+**Added regression tests**: `api/lib/pricing.test.ts` gained a case anchoring
+the exact $261.99-vs-$174.99 numbers; new `api/lib/shopify.test.ts` anchors
+the tag-parsing fix against the real tag/title shapes for every SKU involved
+plus the original `vehicle_type:` convention, so this specific class of bug
+(assumed tag format vs. real, inconsistent tag format across import
+batches) can't silently regress.
+
+**Not yet merged as of this doc update** — PR #82 is open, all above
+verified live against the real account (not just tested in isolation).
+
+**Cross-reference / known-gaps note**: this closes Known gap #2 from the
+2026-08-22 entry above, for `gci-order-hub` only. `landedCost.ts`/
+`freightRates.ts` is unchanged by this fix and remains duplicated across
+repos (`gci-order-hub`, `gci-walmart-sync`, `gci-brain/bulkPriceUpdate.ts`,
+`gci-brain/shopifySync.ts` — see the 2026-08-23 entry above) — this session's
+fix only touches `gci-order-hub`'s copy and callers; the other repos' copies
+were not touched and may have the same tireType/rimSize gap independently if
+`gci-walmart-sync` is ever activated for real (see its repo-map row — still
+not installed on any real store as of this doc).
+
+**Also found while reading this doc for context this session, not fixed,
+flagged for whoever touches `gci-brain/api/shopifySync.ts` next**:
+`gci-brain`'s own `CLAUDE.md` (checked into that repo, read as project
+instructions) describes a "tiered `calculatePrice()`" formula (2.10x/1.72x/
+1.58x flat multipliers by cost bracket) as the intended fix for that file's
+pricing — but the actual merged code (`gci-brain#147`, per the 2026-08-23
+entry above) already replaced that exact function with the shared
+`landedCost.ts` formula instead, before `CLAUDE.md`'s version ever shipped as
+written. This is the same "documented plan ≠ what's actually live" shape as
+the deprecated-model incident (§6.4, earlier in this doc) — if a future
+session applies that `CLAUDE.md` literally, it would regress a fix that's
+already live. Worth a deliberate look (fix the file or delete it) next time
+someone is in that repo; out of scope for this session (different repo, not
+what was asked).
+
+**Session credential note** (same convention as prior entries in this doc):
+a GitHub PAT scoped to the `statco` org was used this session for
+`gci-order-hub`'s clone/branch/commit/PR work and this doc-sync commit
+(propagated to all 4 repos this session has access to). Standard hygiene:
+rotate it, alongside the other rotations already queued in this doc.
+
+- This doc was updated in **gci-order-hub, gci-brain, gci-price-monitor, and
+  gcitires-chatbot** this session (the 4 repos in scope) — **not** yet in
+  **gci-command-center** or **gci-walmart-sync**, which this session had no
+  access to; propagate there next time either is touched.
