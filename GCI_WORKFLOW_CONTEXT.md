@@ -1472,8 +1472,10 @@ plus the original `vehicle_type:` convention, so this specific class of bug
 (assumed tag format vs. real, inconsistent tag format across import
 batches) can't silently regress.
 
-**Not yet merged as of this doc update** — PR #82 is open, all above
-verified live against the real account (not just tested in isolation).
+**Merged** — PR #82 merged 2026-08-30 11:09 UTC. All above verified live
+against the real account (not just tested in isolation). (Continued below —
+a second, structural bug was found immediately after this merged, by a
+parallel session picking up the same 300E3009 thread.)
 
 **Cross-reference / known-gaps note**: this closes Known gap #2 from the
 2026-08-22 entry above, for `gci-order-hub` only. `landedCost.ts`/
@@ -1510,3 +1512,69 @@ rotate it, alongside the other rotations already queued in this doc.
   gcitires-chatbot** this session (the 4 repos in scope) — **not** yet in
   **gci-command-center** or **gci-walmart-sync**, which this session had no
   access to; propagate there next time either is touched.
+
+### 3. Same 300E3009 thread, continued: a second, structural bug found after #82 merged (`gci-order-hub#83` — MERGED)
+
+**Trigger**: a parallel session picked up this exact thread right after #82
+merged, to verify the fix against live data before trusting it. Found that
+fixing what `safeWalmartPrice()` computes (#82's fix) didn't fully fix the
+problem, because **three separate places in the codebase could each
+independently decide what price to actually push to Walmart**, and they
+didn't agree:
+
+1. `api/lib/listed-sync.ts` (`runListedSyncChunk`, used by the scheduled
+   `walmart-sync-cursor` cron — the only actually-scheduled pricing job) —
+   called `safeWalmartPrice()` only as a binary exposure-hold gate (skip the
+   whole write if the computed value looked suspect vs `ctCost * 1.15`).
+   The function's actual return value was **never** the price sent to
+   Walmart — the raw Shopify price was pushed instead, unchanged, every
+   cycle. This is why the live cursor never self-corrected drift: "not
+   exposed" just meant "push the same stale raw price again."
+2. `api/walmart-sync.ts`'s default (no `?mode=`) full-catalog path — a
+   complete duplicate of the same logic. Not scheduled in `vercel.json`, but
+   still manually callable.
+3. `api/walmart-price-audit.ts` — pushed `safeWalmartPrice()`'s actual
+   value (the correct behavior), but auto-corrected by default
+   (`dryRun=true` required to avoid writing), independently of paths 1/2.
+
+**Fixed** (PR #83, merged 2026-08-30 12:10 UTC, ~30 min after #82):
+`listed-sync.ts` now pushes `safeWalmartPrice()`'s computed value as the
+actual price for every SKU with known cost (holds only when cost is
+genuinely unknown, not "looked suspiciously low"). The duplicate
+full-catalog path in `walmart-sync.ts` was deleted outright (~200 lines) —
+returns 410 pointing at the chunked `?mode=listed` form. All write
+capability was removed from `walmart-price-audit.ts`; it's now a pure
+read-only report, redundant as a corrector since the cursor computes the
+identical price automatically every 2 minutes. **Net result: exactly one
+function in this codebase ever decides and writes a Walmart price.**
+
+**Verified live after both fixes**: Vercel runtime logs for
+`walmart-sync-cursor` checked across a full hour — every chunk, every
+cycle, `0 fail` on every price PUT, multiple complete 318-SKU cycles
+(~13-14 min each) with no gaps. The pipeline is confirmed healthy end to
+end: correct price computed, Walmart accepting every write.
+
+**Open, unresolved as of this doc update — 4 SKUs still read stale via
+`/v3/items`, despite confirmed successful writes**: `166159006`,
+`AP21550017WHYPA02`, `16092NXK`, `AP25545019YHYPA02`. Cost fields
+(`unitCost` vs `ctCost`) confirmed identical for all 4 — rules out a cost
+divergence explanation. All 4 confirmed `ACTIVE` + `ct-sync` tagged — rules
+out a Shopify-visibility explanation. Two of these four
+(`AP21550017WHYPA02`, `AP25545019YHYPA02`) are the same two SKUs #82's own
+mid-fix bug pushed to a wrong price ($433.99/$576.99) before self-correcting
+— worth knowing if their current live price doesn't match *any* value
+pushed today, since that's stronger evidence of a Walmart-side read/cache
+issue than a single stale write would be. Leading theory: a caching or
+indexing quirk on Walmart's `/v3/items` read endpoint specific to these 4
+listings, not a bug in this codebase — but not yet confirmed.
+**Next step for whoever picks this up**: check these 4 SKUs directly in
+Walmart Seller Center's UI (not the API). If Seller Center also shows the
+stale price, that's real and worth a support ticket to Walmart (cite the
+timestamped `200 OK` write log lines as evidence the writes are landing on
+our end). If Seller Center shows the correct price, it's a read-side-only
+quirk in `/v3/items` — lower urgency, since real customers would already be
+seeing the right price.
+
+**Session credential note**: same GitHub PAT used across both halves of
+this thread (#82 and #83) plus this doc update. Rotate it — same standing
+instruction as every other entry in this doc.
