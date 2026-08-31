@@ -5,7 +5,7 @@
 > identically across all 6 repos below so it's available no matter which one you
 > land in first. If you update it, update all 6 copies.
 >
-> **2026-08-30**: Walmart CA bulk retire endpoint shipped (gci-order-hub#80, #81, MERGED) — pivoted from an infeasible reversible-unpublish ask (confirmed no publish/unpublish toggle exists for this Walmart GMP account) to a general retire endpoint; real cleanup executed live (2056 SKUs retired, 0 failures). Also found and fixed the tireType/rimSize wiring gap flagged as "Known gap #2" in the 2026-08-22 entry below — every safeWalmartPrice() caller was silently defaulting to the most conservative (LT, rim 22) fallback, discovered via a real reported price gap on Walmart SKU 300E3009 ($261.99 vs. a real $174.99 Shopify price). Fix verified live at scale: 265 of 318 currently-listed Walmart SKUs (83%) were mispriced by this bug, now corrected — gci-order-hub#82, **not yet merged as of this doc update**. See "Session update — 2026-08-30" at the end of this doc.
+> **2026-08-30**: Walmart CA bulk retire endpoint shipped (gci-order-hub#80, #81, MERGED) — pivoted from an infeasible reversible-unpublish ask (confirmed no publish/unpublish toggle exists for this Walmart GMP account) to a general retire endpoint; real cleanup executed live (2056 SKUs retired, 0 failures). Also found and fixed the tireType/rimSize wiring gap flagged as "Known gap #2" in the 2026-08-22 entry below — every safeWalmartPrice() caller was silently defaulting to the most conservative (LT, rim 22) fallback, discovered via a real reported price gap on Walmart SKU 300E3009 ($261.99 vs. a real $174.99 Shopify price). Fix verified live at scale: 265 of 318 currently-listed Walmart SKUs (83%) were mispriced by this bug, now corrected — gci-order-hub#82, MERGED. See "Session update — 2026-08-30" at the end of this doc.
 >
 > **2026-08-23/24**: gci-brain found a 4th unfixed consumer of the old (pre-Aug-22-fix) pricing formula — `shopifySync.ts` itself — and unified it onto the shared landed-cost formula (gci-brain#147), then repriced the full catalog (1,513/1,970 products updated, net +$27,491). Also: clearance/final-sale detection (39 SKUs), a stale "Canada Tire Inc." distributor mention removed from 1,352 products, and the review-request email flow automated. See "Session update — 2026-08-23" at the end of this doc.
 >
@@ -1408,7 +1408,7 @@ full candidate count. One test SKU (`MV861`) was retired for real via Seller
 Center's own UI during the investigation — confirmed acceptable, no cleanup
 needed.
 
-### 2. Walmart price-floor bug: `tireType`/`rimSize` never wired through, closing a known Aug-22 gap (`gci-order-hub#82` — OPEN, not yet merged)
+### 2. Walmart price-floor bug: `tireType`/`rimSize` never wired through, closing a known Aug-22 gap (`gci-order-hub#82` — MERGED)
 
 **Trigger**: a real reported price gap — Walmart SKU `300E3009` (Ovation
 W-686 Ecovision 185/65R15) listed at **$261.99** vs. its real live Shopify
